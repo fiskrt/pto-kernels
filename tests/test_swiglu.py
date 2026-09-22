@@ -19,9 +19,7 @@ TEST_CASES = [
 ]
 # Exercise unaligned tails with one-row, multirow and multiple-column tiles.
 TEST_CASES += [
-    (batch, width)
-    for batch in [2, 48]
-    for width in [1, 15, 17, 31, 33, 129, 16385]
+    (batch, width) for batch in [2, 48] for width in [1, 15, 17, 31, 33, 129, 16385]
 ]
 
 
