@@ -31,7 +31,7 @@ the launched kernel. All 21 tests pass. Latencies: 76.919 / 98.894 / 228.839 /
 750.282 us at T=128/256/1024/4096, respectively (1.36x / 1.43x / 1.34x / 1.15x
 against the original baseline). Numerical errors unchanged.
 
-## Validated staged and fused pipeline checkpoint — commit recorded below
+## 4a68a0b — shared products, cube recurrence, and optional fused pipeline
 
 Share KK/QK Gram products across grouped value heads; invert two 64x64
 diagonal blocks and join them exactly; overlap WY and state-input preparation
