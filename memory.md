@@ -249,3 +249,8 @@ Caught that mistake in initial attempt and fixed it. S in L0B survives from
 W*S to first joint product. Added finite/zero-decay alternation regression.
 Latencieswithinitial37.468/46.568/95.733/292.657us. Next interleave independent
 64x64 diagonal inverses, preserving arithmetic but amortizing pipeline flags.
+
+Paired diagonal inverses pass25strict tests but save only~2us at4096 and
+regress128 startup; reverted extra scheduling code. Next vector trim caches
+exp(g) once for W/Q/decay and constructs decayI directly inhalf, avoiding
+float conversions of an identity matrix. Exact-zero decay uses vector fill.

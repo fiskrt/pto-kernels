@@ -32,19 +32,23 @@ AICORE inline void mega_prepare_chunk(
     using BP = Tile<TileType::Vec, half, 1, R, BLayout::RowMajor, 1, DYNAMIC>;
     VF values, keys, coeff, mask;
     VH data, raw;
-    G gates;
+    G gates, exp_gates;
     Row betas, row;
     BH beta_h;
     constexpr int GAddr = 5 * F, BAddr = GAddr + C * sizeof(float);
     constexpr int RAddr = BAddr + R * sizeof(float), BHAddr = RAddr + R * sizeof(float);
     TASSIGN(values, 0); TASSIGN(keys, F); TASSIGN(coeff, 2 * F); TASSIGN(mask, 3 * F);
     TASSIGN(data, 4 * F); TASSIGN(raw, 4 * F + F / 2);
+    TASSIGN(exp_gates, GAddr + 2048);
     TASSIGN(gates, GAddr); TASSIGN(betas, BAddr); TASSIGN(row, RAddr); TASSIGN(beta_h, BHAddr);
     int stripe = get_subblockid() * R, count = min(R, valid - stripe);
     GP gp(valid); TASSIGN(gp, GAddr);
     GlobalTensor<float, S, Str> ggm(g + head * tokens + pos, {1, 1, 1, 1, valid}, {1, 1, 1, valid, 1});
     TLOAD(gp, ggm); pipe_barrier(PIPE_ALL);
     float last = gates.GetValue(valid - 1);
+    // All three consumers use the same prefix exponentials.
+    TEXP(exp_gates, gates);
+    set_flag(PIPE_V, PIPE_S, EVENT_ID0); wait_flag(PIPE_V, PIPE_S, EVENT_ID0);
 #ifdef GDN_ADAPTIVE_INVERSE
     int inverse_terms = 2;
 #endif
@@ -57,7 +61,9 @@ AICORE inline void mega_prepare_chunk(
         GlobalTensor<float, S, Str> fgm(full + stripe * C, {1, 1, 1, R, C}, {1, 1, 1, C, 1});
         TLOAD(bp, bgm); TLOAD(mask, fgm); pipe_barrier(PIPE_ALL);
         TCVT(betas, beta_h, RoundMode::CAST_NONE); PipeBarrierVec();
-        Row grow; TASSIGN(grow, GAddr + stripe * sizeof(float));
+        Row grow, grow_exp;
+        TASSIGN(grow, GAddr + stripe * sizeof(float));
+        TASSIGN(grow_exp, GAddr + 2048 + stripe * sizeof(float));
         Col row_col, beta_col;
         TASSIGN(row_col, RAddr); TASSIGN(beta_col, BAddr);
         TMOV(row, grow); PipeBarrierVec();
@@ -117,8 +123,7 @@ AICORE inline void mega_prepare_chunk(
         GlobalTensor<half, S, Str> kgm(k + raw_offset, {1, 1, 1, count, C}, {1, 1, 1, kh * C, 1});
         TLOAD(part, kgm); pipe_barrier(PIPE_ALL);
         TCVT(keys, data, RoundMode::CAST_NONE);
-        TEXP(row, grow); PipeBarrierVec();
-        TMUL(row, row, betas); PipeBarrierVec();
+        TMUL(row, grow_exp, betas); PipeBarrierVec();
         TMULS(row, row, -1.0f); PipeBarrierVec();
         TROWEXPANDMUL(values, keys, row_col); PipeBarrierVec();
         TCVT(data, values, RoundMode::CAST_NONE); pipe_barrier(PIPE_ALL);
@@ -142,20 +147,23 @@ AICORE inline void mega_prepare_chunk(
         GlobalTensor<half, S, Str> qgm(q + raw_offset, {1, 1, 1, count, C}, {1, 1, 1, kh * C, 1});
         TLOAD(part, qgm); pipe_barrier(PIPE_ALL);
         TCVT(values, data, RoundMode::CAST_NONE);
-        TEXP(row, grow); PipeBarrierVec();
+        TMOV(row, grow_exp); PipeBarrierVec();
         TROWEXPANDMUL(values, values, row_col); PipeBarrierVec();
         TCVT(data, values, RoundMode::CAST_NONE); pipe_barrier(PIPE_ALL);
         GlobalTensor<half, S, Str> qout(scaled_q + output_offset,
             {1, 1, 1, count, C}, {1, 1, 1, C, 1});
         TSTORE(qout, part); pipe_barrier(PIPE_ALL);
     }
-    GlobalTensor<half, S, Str> igm(neg_i + stripe * C, {1, 1, 1, R, C}, {1, 1, 1, C, 1});
-    TLOAD(data, igm); pipe_barrier(PIPE_ALL);
-    TCVT(values, data, RoundMode::CAST_NONE);
-    TEXP(gates, gates); pipe_barrier(PIPE_ALL);
-    float exp_last = gates.GetValue(valid - 1);
-    TMULS(values, values, -exp_last); PipeBarrierVec();
-    TCVT(data, values, RoundMode::CAST_NONE); pipe_barrier(PIPE_ALL);
+    float exp_last = exp_gates.GetValue(valid - 1);
+    if (exp_last < 0x1p-25f) {
+        TEXPANDS(data, static_cast<half>(0)); pipe_barrier(PIPE_ALL);
+    } else {
+        GlobalTensor<half, S, Str> igm(neg_i + stripe * C, {1, 1, 1, R, C}, {1, 1, 1, C, 1});
+        TLOAD(data, igm); pipe_barrier(PIPE_ALL);
+        // Identity entries are exactly 0/-1, so half multiplication gives the
+        // same stored diagonal without two matrix-wide dtype conversions.
+        TMULS(data, data, static_cast<half>(-exp_last)); pipe_barrier(PIPE_ALL);
+    }
     GlobalTensor<half, S, Str> dgm(decay + stripe * C,
         {1, 1, 1, R, C}, {1, 1, 1, C, 1});
     TSTORE(dgm, data); pipe_barrier(PIPE_ALL);

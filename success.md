@@ -157,3 +157,13 @@ and zero half-decay matrices. Initial-state medians:37.468/46.568/95.733/
 292.657us; actual errors unchanged. T4096 is2.95x faster than the original
 initial-state baseline. Flag:GDN_REUSE_OPERANDS (requires adaptive metadata
 and joint products). Raw results:benchmark_data/gdn_mega/reuse_initial.json.
+
+## Share prefix exponentials and simplify decay construction (commit recorded next)
+
+W, Q, and final decay reuse one exp(g) vector. Construct decayI directly in
+half precision instead of converting the entire identity to float and back;
+fill zero directly when its half value is zero. A vector-to-scalar event
+orders exp(g) before short-tail scalar reads. exp(g_i-g_j) remains unchanged.
+25 selected strict tests pass. Initial-state medians:36.726/45.199/94.346/
+292.951us; shorter cases improve, long case is unchanged. Actual errors are
+unchanged. Raw results:benchmark_data/gdn_mega/vector_trim_initial.json.
