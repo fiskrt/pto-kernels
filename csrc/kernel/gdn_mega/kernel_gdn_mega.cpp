@@ -21,6 +21,15 @@
 #ifndef GDN_KERNEL_NAME
 #define GDN_KERNEL_NAME gdn_mega
 #endif
+// Keep the staged implementations available for controlled comparisons.
+#ifndef GDN_LEGACY_STAGES
+#define GDN_SHARED_GRAMS 1
+#define GDN_SHARED_OUTPUT 1
+#define GDN_BLOCKED_INVERSE 1
+#define GDN_INVERSE_BASE64 1
+#define GDN_WY_INPUTS 1
+#define GDN_CUBE_STATE 1
+#endif
 // Note the codegen parser does not support arguments of form "type *name", only "type* name"
 // clang-format off
 #ifndef GM_ADDR
@@ -349,14 +358,23 @@ namespace mk_o {
 #include "chunk_o.cpp"
 }
 
+#include "packed_io.cpp"
 #include "gate_scan.cpp"
 #include "inverse_doubling.cpp"
+#include "inverse_blocked.cpp"
+#include "shared_grams.cpp"
+#include "wy_inputs.cpp"
+#include "state_cube.cpp"
+#include "output_cube.cpp"
+#include "fused_pipeline.cpp"
 
 AICORE inline void mega_solve_tril(__gm__ half *out, __gm__ half *in, __gm__ half *minus_id, uint32_t matrix_size,
                                    uint32_t num_matrices, uint32_t num_bsnd_heads, __gm__ int32_t *cu_seqlens,
                                    uint32_t is_lower)
 {
-#ifndef GDN_LEGACY_INVERSE
+#if defined(GDN_BLOCKED_INVERSE)
+    mega_inverse_blocked(out, in, minus_id, num_matrices, num_bsnd_heads, cu_seqlens);
+#elif !defined(GDN_LEGACY_INVERSE)
     mega_inverse_doubling(out, in, minus_id, num_matrices, num_bsnd_heads, cu_seqlens);
 #else
     if (num_matrices <= get_block_num())
@@ -427,6 +445,18 @@ AICORE inline void mega_kernel_impl(GM_ADDR q_ptr, GM_ADDR k_ptr, GM_ADDR v_ptr,
                                      reinterpret_cast<__gm__ half *>(beta_t_ptr), total_tokens);
 #endif
 
+#ifdef GDN_SHARED_GRAMS
+    mega_shared_grams<H, C, D>(reinterpret_cast<__gm__ half*>(k_ptr),
+#ifdef GDN_FUSED_PIPELINE
+                              reinterpret_cast<__gm__ half*>(v_new_ptr),
+#else
+                              reinterpret_cast<__gm__ half*>(A_inv_f32_ptr),
+#endif
+                              reinterpret_cast<__gm__ int32_t*>(cu_seqlens_ptr), num_matrices, num_key_heads,
+                              reinterpret_cast<__gm__ half*>(q_ptr),
+                              reinterpret_cast<__gm__ half*>(A_inv_f32_ptr) + total_tokens * H * C);
+#endif
+
 #ifdef MEGA_STOP_AFTER_TRANSPOSE
     pipe_barrier(PIPE_ALL);
     return;
@@ -434,7 +464,29 @@ AICORE inline void mega_kernel_impl(GM_ADDR q_ptr, GM_ADDR k_ptr, GM_ADDR v_ptr,
 
     SyncAllImpl<false>();
 
+#ifdef GDN_FUSED_PIPELINE
+    mega_fused_pipeline<H, C>(
+        reinterpret_cast<__gm__ half*>(q_ptr), reinterpret_cast<__gm__ half*>(k_ptr), reinterpret_cast<__gm__ half*>(v_ptr),
+        reinterpret_cast<__gm__ float*>(g_t_ptr), reinterpret_cast<__gm__ half*>(beta_t_ptr),
+        reinterpret_cast<__gm__ half*>(v_new_ptr), reinterpret_cast<__gm__ half*>(A_inv_f32_ptr) + total_tokens * H * C,
+        reinterpret_cast<__gm__ float*>(msk_lower_ptr), reinterpret_cast<__gm__ float*>(msk_full_ptr),
+        reinterpret_cast<__gm__ half*>(minus_id_ptr), reinterpret_cast<__gm__ half*>(A_ptr),
+        reinterpret_cast<__gm__ half*>(w_ptr), reinterpret_cast<__gm__ half*>(u_ptr),
+        reinterpret_cast<__gm__ half*>(A_inv_f32_ptr), reinterpret_cast<__gm__ half*>(A_inv_ptr),
+        reinterpret_cast<__gm__ half*>(o_ptr), reinterpret_cast<__gm__ half*>(h_ws_ptr),
+        reinterpret_cast<__gm__ half*>(fs_ptr), reinterpret_cast<__gm__ half*>(h0_ptr), has_initial_state,
+        reinterpret_cast<__gm__ int32_t*>(cu_seqlens_ptr), batch_size, num_key_heads, total_tokens,
+        reinterpret_cast<__gm__ half*>(kkt_ws_ptr));
+    pipe_barrier(PIPE_ALL);
+    return;
+#endif
     GDN_MARK(1);
+#ifdef GDN_SHARED_GRAMS
+    mega_gate_grams<H, C>(reinterpret_cast<__gm__ half*>(A_inv_f32_ptr),
+                         reinterpret_cast<__gm__ float*>(g_t_ptr), reinterpret_cast<__gm__ half*>(beta_t_ptr),
+                         reinterpret_cast<__gm__ float*>(msk_lower_ptr), reinterpret_cast<__gm__ half*>(A_ptr),
+                         reinterpret_cast<__gm__ int32_t*>(cu_seqlens_ptr), num_matrices, num_key_heads, total_tokens);
+#else
     mk_kkt::kkt_kernel<H, D, C>(
         reinterpret_cast<__gm__ half *>(k_ptr), reinterpret_cast<__gm__ half *>(beta_t_ptr),
         reinterpret_cast<__gm__ float *>(g_t_ptr), reinterpret_cast<__gm__ float *>(msk_lower_ptr),
@@ -453,6 +505,8 @@ AICORE inline void mega_kernel_impl(GM_ADDR q_ptr, GM_ADDR k_ptr, GM_ADDR v_ptr,
 #endif
 #endif
 
+#endif // GDN_SHARED_GRAMS
+
 #ifdef MEGA_STOP_AFTER_KKT
     pipe_barrier(PIPE_ALL);
     return;
@@ -461,6 +515,19 @@ AICORE inline void mega_kernel_impl(GM_ADDR q_ptr, GM_ADDR k_ptr, GM_ADDR v_ptr,
     SyncAllImpl<false>();
 
     GDN_MARK(2);
+#ifdef GDN_WY_INPUTS
+    mega_prepare_wy<H, C, D>(reinterpret_cast<__gm__ half*>(k_ptr), reinterpret_cast<__gm__ half*>(v_ptr),
+                             reinterpret_cast<__gm__ float*>(g_t_ptr), reinterpret_cast<__gm__ half*>(beta_t_ptr),
+                             reinterpret_cast<__gm__ half*>(w_ptr), reinterpret_cast<__gm__ half*>(u_ptr),
+                             reinterpret_cast<__gm__ int32_t*>(cu_seqlens_ptr), num_matrices, num_key_heads, total_tokens);
+#endif
+
+#ifdef GDN_CUBE_STATE
+    mega_prepare_state<H, C, D>(reinterpret_cast<__gm__ half*>(k_ptr), reinterpret_cast<__gm__ float*>(g_t_ptr),
+                                reinterpret_cast<__gm__ half*>(minus_id_ptr), reinterpret_cast<__gm__ half*>(A_inv_f32_ptr),
+                                reinterpret_cast<__gm__ half*>(s_ptr), reinterpret_cast<__gm__ int32_t*>(cu_seqlens_ptr),
+                                num_matrices, num_key_heads, total_tokens);
+#endif
     mega_solve_tril(reinterpret_cast<__gm__ half *>(A_inv_ptr), reinterpret_cast<__gm__ half *>(A_ptr),
                     reinterpret_cast<__gm__ half *>(minus_id_ptr), C, num_matrices, H,
                     reinterpret_cast<__gm__ int32_t *>(cu_seqlens_ptr), 1);
@@ -477,13 +544,18 @@ AICORE inline void mega_kernel_impl(GM_ADDR q_ptr, GM_ADDR k_ptr, GM_ADDR v_ptr,
     return;
 #endif
 
-    SyncAllImpl<false>();
+    // The inverse/preparation barrier above already orders the WY inputs.
 
 #ifdef MEGA_STOP_AFTER_SYNC_BEFORE_WY
     return;
 #endif
 
     GDN_MARK(3);
+#ifdef GDN_WY_INPUTS
+    mega_wy_matmul<H, C, D>(reinterpret_cast<__gm__ half*>(A_inv_ptr), reinterpret_cast<__gm__ half*>(w_ptr),
+                            reinterpret_cast<__gm__ half*>(u_ptr), reinterpret_cast<__gm__ int32_t*>(cu_seqlens_ptr),
+                            num_matrices);
+#else
     mk_wy::wy_fast_kernel<H, D, C>(
         reinterpret_cast<__gm__ half *>(k_ptr), reinterpret_cast<__gm__ half *>(v_ptr),
         reinterpret_cast<__gm__ half *>(beta_t_ptr), reinterpret_cast<__gm__ float *>(g_t_ptr),
@@ -506,6 +578,8 @@ AICORE inline void mega_kernel_impl(GM_ADDR q_ptr, GM_ADDR k_ptr, GM_ADDR v_ptr,
     }
 #endif
 
+#endif // GDN_WY_INPUTS
+
 #ifdef MEGA_STOP_AFTER_WY
     pipe_barrier(PIPE_ALL);
     return;
@@ -514,6 +588,21 @@ AICORE inline void mega_kernel_impl(GM_ADDR q_ptr, GM_ADDR k_ptr, GM_ADDR v_ptr,
     SyncAllImpl<false>();
 
     GDN_MARK(4);
+#ifdef GDN_SHARED_OUTPUT
+    mega_gate_grams<H, C, true>(reinterpret_cast<__gm__ half*>(A_inv_f32_ptr) + total_tokens * H * C,
+                               reinterpret_cast<__gm__ float*>(g_t_ptr), reinterpret_cast<__gm__ half*>(beta_t_ptr),
+                               reinterpret_cast<__gm__ float*>(msk_full_ptr), reinterpret_cast<__gm__ half*>(A_ptr),
+                               reinterpret_cast<__gm__ int32_t*>(cu_seqlens_ptr), num_matrices, num_key_heads, total_tokens,
+                               reinterpret_cast<__gm__ half*>(q_ptr), reinterpret_cast<__gm__ half*>(A_inv_ptr));
+#endif
+#ifdef GDN_CUBE_STATE
+    mega_state_cube<H, C, D>(reinterpret_cast<__gm__ half*>(A_inv_f32_ptr), reinterpret_cast<__gm__ half*>(w_ptr),
+                             reinterpret_cast<__gm__ half*>(u_ptr), reinterpret_cast<__gm__ half*>(s_ptr),
+                             reinterpret_cast<__gm__ half*>(v_new_ptr), reinterpret_cast<__gm__ half*>(fs_ptr),
+                             reinterpret_cast<__gm__ half*>(h0_ptr), has_initial_state,
+                             reinterpret_cast<__gm__ half*>(minus_id_ptr), reinterpret_cast<__gm__ int32_t*>(cu_seqlens_ptr),
+                             batch_size);
+#else
     mk_h::chunk_h_kernel<H, D, C>(
         reinterpret_cast<__gm__ half *>(k_ptr), reinterpret_cast<__gm__ half *>(w_ptr),
         reinterpret_cast<__gm__ half *>(u_ptr), reinterpret_cast<__gm__ float *>(g_t_ptr),
@@ -521,6 +610,8 @@ AICORE inline void mega_kernel_impl(GM_ADDR q_ptr, GM_ADDR k_ptr, GM_ADDR v_ptr,
         reinterpret_cast<__gm__ half *>(fs_ptr), reinterpret_cast<__gm__ half *>(h0_ptr), has_initial_state,
         reinterpret_cast<__gm__ half *>(h_ws_ptr), reinterpret_cast<__gm__ int32_t *>(cu_seqlens_ptr), batch_size,
         seq_len, total_tokens, num_key_heads);
+
+#endif // GDN_CUBE_STATE
 
 #ifdef MEGA_STOP_AFTER_H
     pipe_barrier(PIPE_ALL);
@@ -530,6 +621,12 @@ AICORE inline void mega_kernel_impl(GM_ADDR q_ptr, GM_ADDR k_ptr, GM_ADDR v_ptr,
     SyncAllImpl<false>();
 
     GDN_MARK(5);
+#ifdef GDN_SHARED_OUTPUT
+    mega_output_cube<H, C, D>(reinterpret_cast<__gm__ half*>(A_inv_ptr), reinterpret_cast<__gm__ half*>(A_ptr),
+                              reinterpret_cast<__gm__ half*>(v_new_ptr), reinterpret_cast<__gm__ half*>(s_ptr),
+                              reinterpret_cast<__gm__ half*>(o_ptr), reinterpret_cast<__gm__ int32_t*>(cu_seqlens_ptr),
+                              num_matrices);
+#else
     mk_o::chunk_o_kernel<H, D, C>(
         reinterpret_cast<__gm__ half *>(q_ptr), reinterpret_cast<__gm__ half *>(k_ptr),
         reinterpret_cast<__gm__ half *>(v_new_ptr), reinterpret_cast<__gm__ half *>(s_ptr),
@@ -549,6 +646,7 @@ AICORE inline void mega_kernel_impl(GM_ADDR q_ptr, GM_ADDR k_ptr, GM_ADDR v_ptr,
 #endif
     }
 #endif
+#endif // GDN_SHARED_OUTPUT
     pipe_barrier(PIPE_ALL);
     GDN_MARK(6);
 #if defined(GDN_STAGE_TIMING) && defined(__DAV_CUBE__)

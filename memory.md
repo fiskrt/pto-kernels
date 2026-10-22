@@ -79,3 +79,80 @@ single-head experimental binary is ~20 us faster due to code/dispatch layout.
 Future changes must measure full supported dispatch too. Investigate separate
 kernel entrypoints per head, chosen by the host, to avoid putting all seven
 large specializations in a single device entrypoint.
+
+## Ongoing experiments after 6453a98
+
+- Shared KKT Gram computation once per key head, concurrent with gate scan;
+  vector gating uses all cores. Tests pass for H16 including ragged/weak gates.
+- Blocked inverse (two 64x64 diagonal inverses + one offdiagonal join) is faster
+  than four 32x32 blocks: fewer tiny matrix instructions outweigh extra FLOPs.
+- WY input-side scaling overlaps vector preparation with cube inverse work.
+  Numerical output relative RMSE rises slightly from .00038 to .000435.
+- Cube-only state recurrence keeps state in L1. Uses negative W, U@I + (-W)@S,
+  then S@decayI + Ktilde.T@Vnew. Prep stores scaled K in A_inv_f32 scratch and
+  decay matrices temporarily in s; cube overwrites s with actual incoming states.
+  All 14 selected H16 tests pass. No tolerance relaxation. Timings with all
+  experimental macros: 54.288 / 78.317 / 187.010 / 623.784 us. Long workload
+  stage ticks: gates1082, KKT3541, inverse8756, WY3100, state7322, output6926.
+- Current experiment CMake config: HEAD=16, MANUAL_SYNC=OFF,
+  DEFINITIONS=GDN_SHARED_GRAMS;GDN_BLOCKED_INVERSE;GDN_INVERSE_BASE64;GDN_WY_INPUTS;GDN_CUBE_STATE;GDN_STAGE_TIMING.
+  These are experimental flags, not defaults yet. Full-head acceptance pending.
+- Simulator profile running with kernel-name `gdn_mega_specialized<16>`, using
+  `benchmarking/gdn_mega.py --profile-once --lengths 128`; output in
+  benchmark_data/gdn_mega/profile_state, process log /tmp/gdn-simulator.log.
+
+## Fusion checkpoint
+
+Full production acceptance after shared-output work: 23 tests pass, all heads,
+T up to 1024 with weak gates and initial state. H16/Hg4 latencies
+52.708 / 75.084 / 169.278 / 553.351 us. Simulator profile_output also passes
+numerics after creating masks/identity on CPU and checking raw output on CPU
+(msprof's kernel filter otherwise skips NPU setup/check operations).
+Traceviz plot: benchmark_data/gdn_mega/pipeline.png; matched profile root
+profile_output/OPPROF_20261022133337_UMHOVJSARRABVLPS. Trace reveals many serial
+MTE2 and FIX transfers, substantial wait time, low cube utilization.
+Disabling compiler automatic sync made no measurable difference; keep OFF for
+GDN_MEGA_MANUAL_SYNC normally. Static full-tile DMA descriptors and overlapping
+X/power matmuls in the blocked inverse gave negligible measured changes.
+
+New optional experiment GDN_FUSED_PIPELINE (fused_pipeline.cpp):
+- raw KK stored in v_new scratch (NOT A_inv_f32, which scaled K would overwrite
+  before other grouped heads consume raw KK); raw QK in second half-span of
+  A_inv_f32, scaled K in first half-span.
+- one persistent worker per (sequence, value head), vector subblocks prepare
+  all chunk factors together, sharing decay matrix coefficients across KK/QK.
+- ready flags 5/6 and free flags 7/8 make a two-credit producer/consumer loop.
+  Cube seeds both free flags, waits ready, replenishes free immediately; vector
+  drains two leftover free signals at end of each head. No global barriers in
+  the recurrent loop. Buffers are per chunk, so ahead-of-consumer writes do not
+  alias older chunks.
+- cube retains inverse, W/U/residual, state, and output accumulators on chip,
+  avoiding intermediate GM stores/loads. L1 state lives at 8*32768, other
+  operands at 9..13*32768; inverse scratch is below 6*32768, total <512KiB.
+- direct fused path returns after initial gate scan/shared-Gram barrier and
+  skips the staged path. Currently compiling/testing H16 with this flag.
+- source defaults now enable all validated staged improvements unless
+  GDN_LEGACY_STAGES is defined. Fused pipeline is NOT default yet.
+
+## Paused checkpoint and commit discipline
+
+Commit every measured improvement once its correctness tests pass, and record
+the commit ID, validation scope, and measurements in success.md immediately.
+Do not accumulate further validated gains without recording them.
+
+Optional fused pipeline with contiguous head-major intermediates passed 16
+H=16 tests: 39.185 / 51.217 / 124.193 / 411.824 us at T=128/256/1024/4096.
+The two free-slot credits are replenished only AFTER the cube loads both slot
+matrices into L1. This supersedes the earlier immediate-replenishment note.
+The default staged implementation passed the full 23-test suite.
+
+Optimization is paused by the user. The commit checkpoint excludes the
+adaptive-inverse experiment, which remains in the working tree. Its latest
+build failed with two tile-constructor argument errors; two new correlated-key
+tests remain unrun. Do not treat this experiment as a validated improvement.
+CMake cache currently selects HEAD=16 and definitions
+GDN_FUSED_PIPELINE;GDN_ADAPTIVE_INVERSE;GDN_FUSED_TIMING. The existing shared
+library is from the preceding exact fused timing build, not the failed build.
+On resumption, inspect /tmp/gdn-adaptive-build.log inside gdn-mega-opt.
+The adaptive helper adds max_terms and four conditional blocks; their changes
+are intentionally unstaged relative to the exact-inverse checkpoint.

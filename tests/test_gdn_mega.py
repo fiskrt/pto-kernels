@@ -164,10 +164,10 @@ def _prepare_gdn_mega(q, k, v, g, beta, cu_seqlens, initial_state=None):
     num_chunks = _total_chunks(cu32)
     num_matrices = num_chunks * num_value_heads
 
-    mask_lower = torch.tril(torch.ones(C, C, device=device), diagonal=-1).float()
-    mask_full = torch.tril(torch.ones(C, C, device=device), diagonal=0).float()
-    minus_identity = torch.zeros(C, C, device=device, dtype=torch.float16)
-    minus_identity.fill_diagonal_(-1)
+    # CPU-created constants also work when msprof filters out unrelated NPU ops.
+    mask_lower = torch.tril(torch.ones(C, C), diagonal=-1).to(device)
+    mask_full = torch.tril(torch.ones(C, C), diagonal=0).to(device)
+    minus_identity = (-torch.eye(C, dtype=torch.float16)).to(device)
 
     g_sum = torch.empty_like(g, dtype=torch.float32)
     g_t = torch.empty(num_value_heads, total_tokens, device=device, dtype=torch.float32)
@@ -386,7 +386,7 @@ def test_gdn_mega_with_initial_state(npu_device):
     _assert_close("final_state", actual_final, expected_final)
 
 
-@pytest.mark.parametrize("lengths", [(1,), (127,), (129,), (257,), (63, 130, 257)])
+@pytest.mark.parametrize("lengths", [(1,), (127,), (129,), (257,), (1024,), (63, 130, 257)])
 @pytest.mark.parametrize("gate_scale", [1.0, 0.01])
 def test_gdn_mega_tails_and_memory(lengths, gate_scale, npu_device):
     """Tails, packed sequence boundaries, and gates retaining recurrent memory."""

@@ -39,6 +39,8 @@ def main():
     parser.add_argument("--output", type=Path)
     parser.add_argument("--skip-checks", action="store_true", help="For deliberately truncated profiling kernels only")
     parser.add_argument("--stage-timing", action="store_true", help="Read GDN_STAGE_TIMING instrumentation")
+    parser.add_argument("--profile-once", action="store_true", help="One checked launch, without a timing graph")
+    parser.add_argument("--fused-timing", action="store_true", help="Read GDN_FUSED_TIMING counters")
     args = parser.parse_args()
     torch.set_num_threads(4)
     torch.npu.set_device(args.device)
@@ -52,14 +54,18 @@ def main():
             *(t.to(args.device) for t in inputs),
             torch.tensor([0, length], dtype=torch.int32, device=args.device),
         )
-        for _ in range(5):
+        for _ in range(1 if args.profile_once else 5):
             pto_gdn_mega(**launch)
             torch.npu.synchronize()
-            actual = launch["out"].float() * 128**-0.5
-            state = launch["final_state"].view_as(expected_state)
+            actual = launch["out"].cpu().float() * 128**-0.5
+            state = launch["final_state"].cpu().view_as(expected_state)
             if not args.skip_checks:
                 _assert_close("out", actual, expected)
                 _assert_close("state", state, expected_state)
+        if args.profile_once:
+            print(json.dumps(dict(length=length, output_error=errors(actual, expected),
+                                  state_error=errors(state, expected_state))), flush=True)
+            continue
         # Capture launches so Python dispatch cannot leave gaps between kernels.
         graph = torch.npu.NPUGraph()
         with torch.npu.graph(graph):
@@ -79,6 +85,10 @@ def main():
                       median_us=statistics.median(times), min_us=min(times), max_us=max(times),
                       output_error=errors(actual, expected), state_error=errors(state, expected_state))
         records.append(record)
+        if args.fused_timing:
+            counters = launch["kkt_workspace"].view(torch.int64).flatten()[:48].cpu().tolist()
+            record["fused_ticks"] = {name: counters[i * 16:i * 16 + 4]
+                                     for i, name in enumerate(["cube", "vec0", "vec1"])}
         if args.stage_timing:
             ticks = launch["A_inv_f32"].view(torch.int64).flatten()[:7].cpu().tolist()
             record["stage_ticks"] = dict(zip(
