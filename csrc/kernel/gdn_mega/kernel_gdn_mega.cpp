@@ -38,6 +38,8 @@
 #define GDN_REUSE_OPERANDS 1
 #define GDN_SKIP_ZERO_DECAY 1
 #define GDN_EARLY_PREPARE 1
+#define GDN_PIPELINED_RECURRENCE 1
+#define GDN_INTERLEAVED_INVERSE 1
 #endif
 #endif
 // Note the codegen parser does not support arguments of form "type *name", only "type* name"
@@ -420,6 +422,8 @@ AICORE inline void mega_kernel_impl(GM_ADDR q_ptr, GM_ADDR k_ptr, GM_ADDR v_ptr,
     auto probe_output = reinterpret_cast<__gm__ half*>(wy_ws_a1_ptr) + get_block_idx() * 128 * 128;
     mega_matmul_probe<64>(reinterpret_cast<__gm__ half*>(minus_id_ptr), probe_output, counters);
     mega_matmul_probe<128>(reinterpret_cast<__gm__ half*>(minus_id_ptr), probe_output, counters + 3);
+    mega_store_probe<24>(reinterpret_cast<__gm__ half*>(minus_id_ptr),
+                         reinterpret_cast<__gm__ half*>(h_ws_ptr), counters + 6);
     dcci(counters, SINGLE_CACHE_LINE); dsb(DSB_DDR);
 #endif
     return;

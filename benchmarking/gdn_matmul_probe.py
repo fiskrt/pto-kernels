@@ -27,7 +27,7 @@ for repeat in range(5):
     end.synchronize()
     result = args["wy_workspace_a1"].cpu()
     torch.testing.assert_close(result, torch.eye(128, dtype=result.dtype).expand_as(result), rtol=0, atol=0)
-    counters = args["kkt_workspace"].view(torch.int64).flatten()[:24 * 16].reshape(24, 16)[:, :6].cpu()
+    counters = args["kkt_workspace"].view(torch.int64).flatten()[:24 * 16].reshape(24, 16)[:, :9].cpu()
     samples.append(counters)
     print(json.dumps({"repeat": repeat, "elapsed_us": start.elapsed_time(end) * 1000,
                       "median_ticks": counters.median(0).values.tolist()}), flush=True)
@@ -37,3 +37,5 @@ for offset, size in [(0, 64), (3, 128)]:
     print(json.dumps({"size": size, "matmuls": 512, "resident_ticks": resident,
         "reload_ticks": reload, "feedback_ticks": feedback,
         "reload_over_resident": reload / resident, "feedback_over_resident": feedback / resident}), flush=True)
+
+print(json.dumps({"stores": 256, "contiguous_gm_ticks": ticks[6], "strided_gm_ticks": ticks[7], "l1_ticks": ticks[8]}))

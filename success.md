@@ -260,3 +260,19 @@ T128/4096:32.934/260.210us. Weak-decay T1024/4096:93.816/286.148us, improving
 Raw:general_initial.json,general_weak.json. Build and validation commands match
 preceding entry. Disabling compiler auto-sync did not materially help; restored
 MANUAL_SYNC=OFF. Full-head acceptance for these optional schedules is pending.
+
+## Pending commit — production acceptance of general matrix schedules
+
+Enable pipelined recurrence and interleaved inverse by default. Full production
+build (all head specializations, no experiment definitions) passes all32 strict
+tests. Initial-state T128/256/1024/4096:33.582/40.720/85.264/263.232us.
+Weak-decay T1024/4096:91.686/282.969us. Errors unchanged; ordinary output RMSE
+~0.00043, weak~0.00054, both below0.005. Ordinary4096 is1.081x and weak4096
+1.193x versus the new structural checkpoint; another2x is still the goal.
+Raw:general_full_initial.json,general_full_weak.json. Configure HEAD empty,
+DEFINITIONS empty,MANUAL_SYNC=OFF; build; timeout120 pytest -q
+ tests/test_gdn_mega.py; benchmark with --initial-state and optionally
+--gate-scale 0.01. Added validated store probe:contiguous/strided/L1 ticks
+3831/5506/2048 for256 stores (24-core diagnostic). Changing output layout is
+not justified by this modest penalty. Rejected RHS-first reassociation is
+not included in production.

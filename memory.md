@@ -301,3 +301,14 @@ unchanged. User explicitly requests general pipeline/throughput optimization,
 not additional decay-conditioned specializations. Next compare explicit
 scheduling with compiler auto-sync disabled, then broaden recurrence scheduling
 to finite decay and profile independent matrix-product transfer/compute overlap.
+
+General recurrence schedule1e9fee7: finite decay included, no new decay shortcut.
+25strict tests pass, initial ordinaryT4096=260.210us, weakT4096=286.148us.
+Moving the state refill earlier gives only noise-scale differences; reverted.
+Matmul store probe (256 stores) median ticks:contiguous3831,strided5506,L12048.
+Only~1.44x output-store penalty; a new vector scatter stage would add substantial
+traffic for a small possible saving, so not pursued. Probe raw:store_probe.jsonl.
+RHS-first reassociation [betaV,-beta expK]*[I;S], then inverse*RHS passes25strict
+tests but is slower263.750/288.095us atT4096 ordinary/weak and increases weak
+outputRMSE0.000537→0.000575. Reverted; snapshot:rhs_recurrence.cpp. The original
+residual arithmetic remains. Full-head acceptance of general schedules running.
