@@ -261,7 +261,7 @@ Raw:general_initial.json,general_weak.json. Build and validation commands match
 preceding entry. Disabling compiler auto-sync did not materially help; restored
 MANUAL_SYNC=OFF. Full-head acceptance for these optional schedules is pending.
 
-## Pending commit — production acceptance of general matrix schedules
+## 3e4c336 — production acceptance of general matrix schedules
 
 Enable pipelined recurrence and interleaved inverse by default. Full production
 build (all head specializations, no experiment definitions) passes all32 strict
