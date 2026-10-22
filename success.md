@@ -93,7 +93,7 @@ output/state error remains approximately .00043/.00039. No tolerances changed.
 Raw records: joint_output_initial.json and baseline_initial.json under
 benchmark_data/gdn_mega/. All-head acceptance remains pending for this flag.
 
-## In-place signed inverse (commit recorded in the next log update)
+## d41e12a — in-place signed inverse
 
 The vector preparation now emits -A directly. The cube inverts the two
 diagonal blocks in place with +I and then overwrites the untouched lower
