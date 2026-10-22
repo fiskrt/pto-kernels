@@ -121,7 +121,7 @@ preceding checkpoint. Speedups over original initial-state baseline:
 2.87x / 3.17x / 3.21x / 2.89x. Full-head acceptance is pending. Raw results:
 benchmark_data/gdn_mega/prefetch_initial.json.
 
-## Adaptive-depth publication fix and strict full acceptance (commit recorded next)
+## 3eae108 — adaptive-depth publication fix and strict full acceptance
 
 A stricter reference check exposed a race in scalar depth metadata publication.
 The vector's dcci cache flush lacked dsb(DSB_DDR) before the ready notification;
