@@ -245,3 +245,18 @@ median resident/reload/feedback ticks:64x64=913/4310/5748;
 resident arithmetic respectively. Probe command: configure DEFINITIONS=
 GDN_MATMUL_PROBE, build, timeout120 python benchmarking/gdn_matmul_probe.py.
 This diagnostic replaces GDN execution and must not be used for GDN results.
+
+## Pending commit — extend recurrence scheduling to finite decay
+
+The pipelined recurrence now includes the incoming-state decay product when
+its coefficient is nonzero. It no longer selects the optimized schedule based
+on decay. Track the final accumulator layout explicitly instead of inferring
+it from the coefficient. No additional approximation or term truncation.
+25 selected strict tests pass; numerical errors unchanged. Initial-state
+T128/4096:32.934/260.210us. Weak-decay T1024/4096:93.816/286.148us, improving
+7.2% at4096 over308.240us before generalizing the schedule, and18.0% speedup
+(1.180x) versus337.722us structural baseline. Ordinary4096 is1.094x versus
+284.608us. The additional2x target remains unmet.
+Raw:general_initial.json,general_weak.json. Build and validation commands match
+preceding entry. Disabling compiler auto-sync did not materially help; restored
+MANUAL_SYNC=OFF. Full-head acceptance for these optional schedules is pending.

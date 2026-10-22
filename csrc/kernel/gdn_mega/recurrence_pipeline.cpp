@@ -2,8 +2,8 @@
 // holds two independent 128x128 tiles; the two FP32 accumulators fill L0C.
 template <int H, int C, typename Mat, typename Acc>
 AICORE inline void mega_recurrence_pipeline(Mat input, Mat u, Mat inverse, Mat state,
-    Mat kt, Mat query, Mat attention, Mat residual, Acc acc, Acc out,
-    __gm__ half* output, int valid)
+    Mat kt, Mat query, Mat attention, Mat residual, Mat decay, Acc acc, Acc out,
+    __gm__ half* output, int valid, bool decay_zero)
 {
 #if defined(__DAV_CUBE__)
     constexpr int Bytes = C * C * sizeof(half);
@@ -36,14 +36,27 @@ AICORE inline void mega_recurrence_pipeline(Mat input, Mat u, Mat inverse, Mat s
     set_flag(PIPE_FIX, PIPE_MTE1, EVENT_ID0);
     set_flag(PIPE_FIX, PIPE_M, EVENT_ID0);
     wait_flag(PIPE_M, PIPE_MTE1, EVENT_ID0);
+    if (!decay_zero) {
+        // The same schedule also retains finite incoming-state decay.
+        // S remains resident in right while residual uses next_right.
+        TMOV(left, decay);
+        set_flag(PIPE_MTE1, PIPE_M, EVENT_ID0); wait_flag(PIPE_MTE1, PIPE_M, EVENT_ID0);
+        wait_flag(PIPE_FIX, PIPE_M, EVENT_ID0);
+        TMATMUL(acc, left, right);
+        set_flag(PIPE_M, PIPE_MTE1, EVENT_ID0); wait_flag(PIPE_M, PIPE_MTE1, EVENT_ID0);
+    }
     using Trans = Tile<TileType::Mat, half, C, C, BLayout::RowMajor, C, C, SLayout::ColMajor, 512>;
     Trans kt_trans; TRESHAPE(kt_trans, kt);
     TEXTRACT(left, kt_trans, 0, 0);
     wait_flag(PIPE_FIX, PIPE_MTE1, EVENT_ID0);
     TMOV(next_right, residual);
     set_flag(PIPE_MTE1, PIPE_M, EVENT_ID0); wait_flag(PIPE_MTE1, PIPE_M, EVENT_ID0);
-    wait_flag(PIPE_FIX, PIPE_M, EVENT_ID0);
-    TMATMUL(acc, left, next_right); // S_next; stored half decay is zero.
+    if (decay_zero) {
+        wait_flag(PIPE_FIX, PIPE_M, EVENT_ID0);
+        TMATMUL(acc, left, next_right);
+    } else {
+        TMATMUL_ACC(acc, acc, left, next_right);
+    }
     set_flag(PIPE_M, PIPE_FIX, EVENT_ID0);
     wait_flag(PIPE_M, PIPE_MTE1, EVENT_ID1);
     TMOV(next_left, attention);

@@ -257,6 +257,7 @@ AICORE inline void mega_fused_pipeline(
         int64_t start = cu[seq], end = cu[seq + 1], chunk_base = 0;
         for (int s = 0; s < seq; ++s) chunk_base += (cu[s + 1] - cu[s] + C - 1) / C;
 #if defined(__DAV_CUBE__)
+        bool state_in_joint_acc = false;
         if (has_initial) {
             mega_load_packed<C, C, C>(state, state, initial + work * C * C, C, C);
             pipe_barrier(PIPE_ALL);
@@ -426,10 +427,11 @@ AICORE inline void mega_fused_pipeline(
             GdnSignalBothVec<PIPE_MTE2>(7 + slot);
 #endif
 #ifdef GDN_PIPELINED_RECURRENCE
-            if (decay_zero && (ci != 0 || has_initial)) {
+            if (ci != 0 || has_initial) {
                 mega_recurrence_pipeline<H, C>(input, negative, inverse, state, kt, query,
-                                               attention, residual, acc, out_acc, output + offset, valid);
-                previous_decay_zero = true;
+                                               attention, residual, decay, acc, out_acc, output + offset, valid, decay_zero);
+                previous_decay_zero = decay_zero;
+                state_in_joint_acc = false;
             } else
 #endif
             {
@@ -461,6 +463,7 @@ AICORE inline void mega_fused_pipeline(
                 mega_store_packed<C, C, H * C>(out_acc, ot, output + offset, valid, C);
                 pipe_barrier(PIPE_ALL);
                 previous_decay_zero = true;
+                state_in_joint_acc = false;
             } else
 #endif
             {
@@ -488,6 +491,7 @@ AICORE inline void mega_fused_pipeline(
             pipe_barrier(PIPE_ALL);
             TMATMUL_ACC(output_state, output_state, output_left, right); pipe_barrier(PIPE_ALL);
             TEXTRACT(state, output_state, C, 0); pipe_barrier(PIPE_ALL);
+            state_in_joint_acc = true;
             TileAcc<float, 2 * C, C, DYNAMIC, C> ot(valid);
             TASSIGN(ot, 0);
             mega_store_packed<C, C, H * C>(ot, ot, output + offset, valid, C);
@@ -518,11 +522,7 @@ AICORE inline void mega_fused_pipeline(
         }
 #if defined(__DAV_CUBE__)
 #ifdef GDN_JOINT_PRODUCTS
-        if (end > start
-#ifdef GDN_SKIP_ZERO_DECAY
-            && !previous_decay_zero
-#endif
-        ) {
+        if (end > start && state_in_joint_acc) {
             TileAcc<float, 2 * C, C, C, C> last_state;
             TASSIGN(last_state, C * 16 * sizeof(float));
             mega_store_packed<C, C, C>(last_state, last_state, final_state + work * C * C, C, C);
