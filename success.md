@@ -120,3 +120,26 @@ to MTE1/cube/FIX instead of blocking independent MTE2 transfers.
 preceding checkpoint. Speedups over original initial-state baseline:
 2.87x / 3.17x / 3.21x / 2.89x. Full-head acceptance is pending. Raw results:
 benchmark_data/gdn_mega/prefetch_initial.json.
+
+## Adaptive-depth publication fix and strict full acceptance (commit recorded next)
+
+A stricter reference check exposed a race in scalar depth metadata publication.
+The vector's dcci cache flush lacked dsb(DSB_DDR) before the ready notification;
+the cube could consequently use an insufficient depth for a short packed tail.
+Forcing64 terms removed the failure. The affected matrices have row norms
+2.7–3.6 and should always select64, so this was an implementation bug rather
+than a legitimate bounded truncation. Added volatile metadata accesses and
+DDR fences. Removed the dead initial-state identity product for nonempty
+sequences.
+
+All31 tests pass in the full-head build, including50 repeated executions of
+the weak-decay packed regression. Every reference comparison now requires
+finite results and relativeRMSE<0.005; the previous0.01 absolute-error early
+exit and5% relative threshold are removed. Earlier entries reported passes
+under those older checks; this acceptance supersedes them.
+
+With initial state:39.651/48.429/98.719/301.066us atT128/256/1024/4096.
+Without initial state:38.417/47.582/97.472/299.847us. All optional fused flags
+(fused/adaptive/joint-products/negative-A/prefetch) are included. Output RMSE
+~0.00043, state~0.00039 on benchmark inputs. Raw records:fenced_acceptance*.json
+under benchmark_data/gdn_mega/. 3x is not yet achieved across all lengths.

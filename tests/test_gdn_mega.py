@@ -26,8 +26,7 @@ from pto_kernels import pto_gdn_mega
 C = 128  # chunk size, fixed by the kernel build
 D = 128  # head dimension, fixed by the kernel build
 
-MAX_ABS = 1e-2
-MAX_RMSE_RATIO = 0.05
+MAX_RMSE_RATIO = 0.005
 
 # (num_value_heads, num_key_heads) pairs the kernel dispatches.
 SUPPORTED_HEAD_CONFIGS = [
@@ -276,8 +275,7 @@ def _run_gdn_mega(q, k, v, g, beta, cu_seqlens, initial_state=None):
 def _assert_close(name: str, actual: torch.Tensor, expected: torch.Tensor) -> None:
     diff = (actual.float().cpu() - expected.float().cpu()).abs()
     max_abs = diff.max().item()
-    if max_abs <= MAX_ABS:
-        return
+    assert torch.isfinite(actual).all(), f"{name}: nonfinite output"
     rmse = torch.sqrt((diff.flatten() ** 2).mean()).item()
     base = torch.sqrt((expected.float().cpu().flatten() ** 2).mean()).item()
     ratio = rmse / max(base, 1e-8)
@@ -387,7 +385,7 @@ def test_gdn_mega_with_initial_state(npu_device):
 
 
 @pytest.mark.parametrize("lengths", [(1,), (127,), (129,), (257,), (1024,), (63, 130, 257)])
-@pytest.mark.parametrize("gate_scale", [1.0, 0.01])
+@pytest.mark.parametrize("gate_scale", [1.0, 0.01, 4.0])
 def test_gdn_mega_tails_and_memory(lengths, gate_scale, npu_device):
     """Tails, packed sequence boundaries, and gates retaining recurrent memory."""
     heads, key_heads = 16, 4
@@ -405,7 +403,10 @@ def test_gdn_mega_tails_and_memory(lengths, gate_scale, npu_device):
     expected = torch.cat(expected_parts, dim=1)
     expected_state = torch.cat(expected_states, dim=0)
     args = _prepare_gdn_mega(*(t.to(npu_device) for t in inputs), cu.to(npu_device), initial.to(npu_device))
-    for _ in range(5):
+    # Short packed tails exercise unequal vector-subblock work and scalar
+    # metadata publication; repeat the weak-decay regression more aggressively.
+    repeats = 50 if len(lengths) > 1 and gate_scale == 0.01 else 5
+    for _ in range(repeats):
         pto_gdn_mega(**args)
         torch.npu.synchronize()
         _assert_close("out", args["out"].float() * D**-0.5, expected)

@@ -213,3 +213,32 @@ Next algebraic reduction: exp(g_i-g_j) can be computed as the outer product
 exp(g_i-center)*exp(center-g_j). Check range <=120 to keep individual factors
 finite; otherwise retain original matrix exponential. Reduces vector exp work
 from8192 elements per stripe to192 without dropping matrix entries.
+
+Factored centered decay passes 24 selected tests (adding gate_scale4 fallback),
+but does not materially improve runtime:38.129/46.269/95.580/298.966us. Dropped
+it; keep exp(g_i-g_j) for its simpler numerical behavior. Extra extreme-gate
+tests retained. Next remove dead initial-state identity multiply and prepare
+I-A in vector registers, replacing one identity GEMM per diagonal inverse.
+
+Vector inverse seed experiment passes24tests but regresses to320.483us atT4096:
+extra vector/DMA work outweighs removed cube identity products. Removed it.
+Kept exact removal of dead initial-state*I accumulator copy. Tightening all
+reference checks to0.5% relativeRMSE (from5%) and removing1e-2 absolute-error
+early exit; no more near-zero-output false passes. Next inverse version uses
+only the specific producer/consumer edges per operation, avoiding redundant
+MTE1/M/FIX round trips while preserving operand lifetimes.
+
+Strict checks found packed weak-decay short-tail errors in some heads. Full64
+terms fixes them; CPU norms of the actual half A are2.7–3.6, requiring64.
+Failing heads vary between runs. CANN TSYNC_CVID publishes scalar GM stores
+with volatile,dcci,dsb(DSB_DDR); our producer lacked the dsb. Added producer
+and consumer DDR fences and volatile accesses. All31 full-head tests now
+pass, including50 repeats of the packed regression. Tight per-operation
+inverse synchronization was not faster and was reverted.
+
+Full acceptance command flags:GDN_FUSED_PIPELINE;GDN_ADAPTIVE_INVERSE;
+GDN_JOINT_PRODUCTS;GDN_NEGATIVE_A;GDN_PREFETCH, HEAD empty. Initial-state
+latencies39.651/48.429/98.719/301.066us. No-state38.417/47.582/97.472/299.847us.
+Next exact transfer reuse: after W*S, L0B already contains S; the joint output
+product need not load it again. For a half decay matrix that is exactly zero,
+its L1/L0A copies can also be reused across chunks (not a state-zero assumption).

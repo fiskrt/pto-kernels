@@ -11,7 +11,7 @@ AICORE inline void mega_prepare_chunk(
     __gm__ half* raw_kk, __gm__ half* raw_qk, __gm__ float* lower, __gm__ float* full,
     __gm__ half* neg_i, __gm__ half* a, __gm__ half* w, __gm__ half* u,
     __gm__ half* scaled_k, __gm__ half* scaled_q, __gm__ half* attention, __gm__ half* decay,
-    int64_t pos, int valid, int head, int kh, int64_t tokens, int64_t matrix, __gm__ int32_t* control)
+    int64_t pos, int valid, int head, int kh, int64_t tokens, int64_t matrix, __gm__ volatile int32_t* control)
 {
 #if defined(__DAV_VEC__)
     constexpr int R = C / 2, F = R * C * sizeof(float);
@@ -158,6 +158,8 @@ AICORE inline void mega_prepare_chunk(
 #ifdef GDN_ADAPTIVE_INVERSE
     control[0] = inverse_terms;
     dcci(control, SINGLE_CACHE_LINE);
+    // Publish scalar-written metadata before the MTE3 ready notification.
+    dsb(DSB_DDR);
 #endif
 
 #endif
@@ -209,8 +211,11 @@ AICORE inline void mega_fused_pipeline(
         if (has_initial) {
             mega_load_packed<C, C, C>(state, state, initial + work * C * C, C, C);
             pipe_barrier(PIPE_ALL);
-            TMOV(left, state); TMOV(right, identity); pipe_barrier(PIPE_ALL);
-            TMATMUL(acc, left, right); pipe_barrier(PIPE_ALL);
+            // Nonempty sequences overwrite this accumulator before using it.
+            if (start == end) {
+                TMOV(left, state); TMOV(right, identity); pipe_barrier(PIPE_ALL);
+                TMATMUL(acc, left, right); pipe_barrier(PIPE_ALL);
+            }
         } else {
             TMOV(left, identity); TMOV(right, identity); pipe_barrier(PIPE_ALL);
             TMATMUL(acc, left, right); pipe_barrier(PIPE_ALL);
@@ -293,9 +298,11 @@ AICORE inline void mega_fused_pipeline(
 #endif
             int terms = 64;
 #ifdef GDN_ADAPTIVE_INVERSE
-            auto controls = reinterpret_cast<__gm__ int32_t*>(debug) + get_block_idx() * 16384 + 8192 + slot * 64;
+            auto controls = reinterpret_cast<__gm__ volatile int32_t*>(debug) + get_block_idx() * 16384 + 8192 + slot * 64;
             dcci(controls, SINGLE_CACHE_LINE); dcci(controls + 32, SINGLE_CACHE_LINE);
-            terms = max(controls[0], controls[32]);
+            dsb(DSB_DDR);
+            int first_terms = controls[0], second_terms = controls[32];
+            terms = max(first_terms, second_terms);
 #endif
             Tail wt(valid, C), ut(valid, C), ktail(valid, C), qtail(valid, C), att(valid, valid);
             TASSIGN(wt, 0); TASSIGN(ut, Bytes); TASSIGN(ktail, 9 * Bytes);
