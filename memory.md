@@ -21,8 +21,11 @@ reconfiguration and incorrectly shell-expanded `$ORIGIN` linker flags.
 
 The benchmark allocates once and uses device graphs with 20 calls, 15 event
 timing trials, five correctness/warmup calls. References run on CPU.
-Warm-cache timing; report output AND state errors. Existing acceptance
-tolerances are unchanged; actual observed errors are reported as well.
+Warm-cache timing; report output AND state errors. Current acceptance requires
+finite values and relative RMSE < 0.005 for both output and state. This aggregate
+budget accounts for FP16 intermediate matrix products versus the FP32 reference;
+the former 0.01 absolute-error shortcut and 5% RMSE budget were removed.
+Actual observed errors are reported alongside the threshold.
 
 ## Baseline
 
@@ -254,3 +257,16 @@ Paired diagonal inverses pass25strict tests but save only~2us at4096 and
 regress128 startup; reverted extra scheduling code. Next vector trim caches
 exp(g) once for W/Q/decay and constructs decayI directly inhalf, avoiding
 float conversions of an identity matrix. Exact-zero decay uses vector fill.
+
+
+Latest scheduling reductions: reuse exp(g) without factoring exp(g_i-g_j);
+omit S*0 when the stored FP16 decay is exactly zero; seed first vector credits
+before cube setup. Both initial-state and no-state H16 benchmark sweeps now
+exceed 3x at all four standard lengths. All32 all-head/default tests pass. Production medians regress slightly versus
+the single-head build (T128 initial36.354us), so3x is not universal. New user
+target: another2x from this production checkpoint through structural changes.
+Default promotion enables fused/adaptive/joint/negative-A/prefetch/reuse/
+zero-decay/early-preparation. GDN_STAGED_PIPELINE selects the older staged path;
+GDN_LEGACY_STAGES retains the earlier legacy comparison path. For individual
+fusion ablations, GDN_STAGED_PIPELINE disables automatic fused definitions so
+specific GDN_MEGA_DEFINITIONS can be selected explicitly.

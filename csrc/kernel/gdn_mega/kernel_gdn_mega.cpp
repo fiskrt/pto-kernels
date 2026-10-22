@@ -29,6 +29,16 @@
 #define GDN_INVERSE_BASE64 1
 #define GDN_WY_INPUTS 1
 #define GDN_CUBE_STATE 1
+#ifndef GDN_STAGED_PIPELINE
+#define GDN_FUSED_PIPELINE 1
+#define GDN_ADAPTIVE_INVERSE 1
+#define GDN_JOINT_PRODUCTS 1
+#define GDN_NEGATIVE_A 1
+#define GDN_PREFETCH 1
+#define GDN_REUSE_OPERANDS 1
+#define GDN_SKIP_ZERO_DECAY 1
+#define GDN_EARLY_PREPARE 1
+#endif
 #endif
 // Note the codegen parser does not support arguments of form "type *name", only "type* name"
 // clang-format off

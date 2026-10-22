@@ -192,3 +192,18 @@ Initial-state medians:35.337/42.725/90.698/283.634us, exceeding3x against the
 original initial-state baseline at all four lengths. Full-head default-build
 acceptance remains pending. Raw:benchmark_data/gdn_mega/early_initial.json.
 Commands match preceding entry with GDN_EARLY_PREPARE added to definitions.
+
+## Pending commit — enable validated fused pipeline by default
+
+Full production build (all head specializations, empty experiment definitions)
+passes all32 strict tests on Ascend910B2. Initial-state medians:
+36.354/44.813/92.734/284.608us; no-state:35.750/43.582/91.639/285.068us.
+Unlike the earlier single-head experimental build, this production measurement
+falls short of3x atT128; long-sequence speedup remains above3x. No claim of
+universal3x is made. Raw results:final_initial.json,final_no_initial.json.
+Commands: cmake -S . -B build -DGDN_MEGA_HEAD= -DGDN_MEGA_DEFINITIONS=
+-DGDN_MEGA_MANUAL_SYNC=OFF; bash scripts/build_gdn_mega.sh; timeout120
+python -m pytest tests/test_gdn_mega.py -q; benchmark with/without --initial-state.
+User requests the next structural optimization target: another2x from this
+checkpoint, emphasizing cube utilization, global pipeline, and movement reuse.
+Frozen library:benchmark_data/gdn_mega/structural_baseline_lib/.
