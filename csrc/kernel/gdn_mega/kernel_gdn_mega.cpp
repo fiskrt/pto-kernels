@@ -18,9 +18,6 @@
 #ifndef GDN_C
 #define GDN_C 128
 #endif
-#ifndef MEMORY_BASE
-#define MEMORY_BASE
-#endif
 #ifndef GDN_KERNEL_NAME
 #define GDN_KERNEL_NAME gdn_mega
 #endif
@@ -48,6 +45,46 @@ constexpr uint16_t GDN_SYNC_AIV_ONLY_ALL = 14;
 constexpr uint16_t SYNC_MODE_SHIFT_VALUE = 4;
 constexpr uint16_t SYNC_FLAG_SHIFT_VALUE = 8;
 
+// A2/A3 vs A5 compatibility helpers. Mirrors csrc/kernel/kernel_utils.h,
+// duplicated here because that header would clash with the local GetffstMsg
+// and SYNC_* definitions below.
+constexpr uint16_t GDN_VEC_FLAG_OFFSET = 16;
+
+/// The vector pipe barrier is required on A2/A3; A5's vector pipe handles
+/// the dependency itself, so this compiles to nothing there.
+AICORE inline void PipeBarrierVec() {
+#if __CCE_AICORE__ == 220
+    pipe_barrier(PIPE_V);
+#endif
+}
+
+/// L0A goes ZZ (RowMajor) on A2/A3 and NZ (ColMajor) on A5. L0B is ZN
+/// (RowMajor) on both.
+AICORE constexpr inline pto::BLayout GdnOuterLayout(bool is_left)
+{
+#ifdef __DAV_C310__
+    return is_left ? pto::BLayout::ColMajor : pto::BLayout::RowMajor;
+#else
+    return pto::BLayout::RowMajor;
+#endif
+}
+
+/// A5 has two Vec sub-blocks whose flag ids differ by 16, so one logical
+/// event signalled by Cube has two waiters.
+template <pipe_t Pipe>
+AICORE inline void GdnSignalBothVec(uint16_t flag)
+{
+    set_intra_block(Pipe, flag);
+    set_intra_block(Pipe, flag + GDN_VEC_FLAG_OFFSET);
+}
+
+template <pipe_t Pipe>
+AICORE inline void GdnWaitBothVec(uint16_t flag)
+{
+    wait_intra_block(Pipe, flag);
+    wait_intra_block(Pipe, flag + GDN_VEC_FLAG_OFFSET);
+}
+
 AICORE inline uint16_t GetffstMsg(uint16_t mode, uint16_t flagId)
 {
     return (0x1 + ((mode & 0x3) << SYNC_MODE_SHIFT_VALUE) + ((flagId & 0xf) << SYNC_FLAG_SHIFT_VALUE));
@@ -58,25 +95,54 @@ AICORE inline void SyncAllImpl()
 {
     pipe_barrier(PIPE_ALL);
     if constexpr (isAIVOnly) {
+#if __CCE_AICORE__ == 220
         ffts_cross_core_sync(PIPE_MTE3, GetffstMsg(0x0, GDN_SYNC_AIV_ONLY_ALL));
         wait_flag_dev(GDN_SYNC_AIV_ONLY_ALL);
+#else
+        // TODO(A5): see the note below; this is the Vec-only all-block barrier.
+        set_intra_block(PIPE_MTE3, GDN_SYNC_AIV_ONLY_ALL);
+        wait_intra_block(PIPE_MTE3, GDN_SYNC_AIV_ONLY_ALL);
+        pipe_barrier(PIPE_ALL);
+#endif
         return;
     }
-#if defined(__DAV_C220_CUBE__)
+#if __CCE_AICORE__ == 220
+#if defined(__DAV_CUBE__)
     wait_flag_dev(GDN_SYNC_AIV_FLAG);
     ffts_cross_core_sync(PIPE_FIX, GetffstMsg(0x0, GDN_SYNC_AIC_FLAG));
     wait_flag_dev(GDN_SYNC_AIC_FLAG);
     ffts_cross_core_sync(PIPE_MTE3, GetffstMsg(0x02, GDN_SYNC_AIC_AIV_FLAG));
-#elif defined(__DAV_C220_VEC__)
+#elif defined(__DAV_VEC__)
     ffts_cross_core_sync(PIPE_MTE3, GetffstMsg(0x02, GDN_SYNC_AIV_FLAG));
     wait_flag_dev(GDN_SYNC_AIC_AIV_FLAG);
+#endif
+#else
+    // TODO(A5): REVIEW BEFORE RUNNING ON HARDWARE.
+    // On A5 the Cube and both Vec sub-blocks share one core, so the Cube<->Vec
+    // half of this barrier becomes an intra-block handshake (below). The
+    // middle step on A2/A3 is a *cross-block* Cube barrier driven by
+    // GDN_SYNC_AIC_FLAG; wait_flag_dev does not exist on A5, and the correct
+    // device-wide replacement has not been established. This version omits
+    // that step, so it synchronises Cube with Vec within a block but does NOT
+    // provide the cross-block guarantee the A2/A3 path does. If any caller
+    // relies on an all-block barrier here, this will be wrong.
+#if defined(__DAV_CUBE__)
+    GdnWaitBothVec<PIPE_MTE2>(GDN_SYNC_AIV_FLAG);
+    pipe_barrier(PIPE_ALL);
+    GdnSignalBothVec<PIPE_FIX>(GDN_SYNC_AIC_AIV_FLAG);
+#elif defined(__DAV_VEC__)
+    pipe_barrier(PIPE_ALL);
+    set_intra_block(PIPE_MTE3, GDN_SYNC_AIV_FLAG);
+    wait_intra_block(PIPE_MTE3, GDN_SYNC_AIC_AIV_FLAG);
+    pipe_barrier(PIPE_ALL);
+#endif
 #endif
 }
 
 template <typename T, int32_t H_val>
 AICORE inline void mega_transpose_TH_to_HT(__gm__ T *src, __gm__ T *dst, int64_t T_len)
 {
-#if defined(__DAV_C220_VEC__)
+#if defined(__DAV_VEC__)
     if (get_subblockid() != 0) return;
     set_mask_norm();
     set_vector_mask(-1, -1);
@@ -110,9 +176,9 @@ AICORE inline void mega_transpose_TH_to_HT(__gm__ T *src, __gm__ T *dst, int64_t
 
     using Gm2D = Shape<1, 1, 1, DYNAMIC, DYNAMIC>;
     using Gm1D = Shape<1, 1, 1, 1, DYNAMIC>;
-    using GmSrcS = Stride<1, 1, 1, H, 1>;
-    using GmHeadS = Stride<1, 1, 1, 1, H>;
-    using GmS1 = Stride<1, 1, 1, 1, 1>;
+    using GmSrcS = pto::Stride<1, 1, 1, H, 1>;
+    using GmHeadS = pto::Stride<1, 1, 1, 1, H>;
+    using GmS1 = pto::Stride<1, 1, 1, 1, 1>;
 
     if constexpr (H < MinTransposeCols) {
         int64_t num_tok_blocks = (T_len + BLOCK - 1) / BLOCK;
@@ -192,7 +258,7 @@ template <int32_t H, int32_t C>
 AICORE inline void mega_cast_fp32_to_fp16_bsnd(__gm__ float *src, __gm__ half *dst, uint32_t num_matrices,
                                                int64_t total_tokens)
 {
-#if defined(__DAV_C220_VEC__)
+#if defined(__DAV_VEC__)
     if (get_subblockid() != 0) return;
     set_mask_norm();
     set_vector_mask(-1, -1);
@@ -209,7 +275,7 @@ AICORE inline void mega_cast_fp32_to_fp16_bsnd(__gm__ float *src, __gm__ half *d
     using DstUB = Tile<TileType::Vec, half, 1, C, BLayout::RowMajor, 1, C, SLayout::NoneBox, 512>;
     using DynDstUB = Tile<TileType::Vec, half, 1, C, BLayout::RowMajor, DYNAMIC, DYNAMIC, SLayout::NoneBox, 512>;
     using Gm1D = Shape<1, 1, 1, 1, DYNAMIC>;
-    using GmS1 = Stride<1, 1, 1, 1, 1>;
+    using GmS1 = pto::Stride<1, 1, 1, 1, 1>;
 
     SrcUB src_ub;
     TASSIGN(src_ub, F32_UB);
@@ -350,10 +416,16 @@ AICORE inline void mega_kernel_impl(GM_ADDR q_ptr, GM_ADDR k_ptr, GM_ADDR v_ptr,
         reinterpret_cast<__gm__ half *>(kkt_ws_ptr), reinterpret_cast<__gm__ half *>(A_ptr),
         reinterpret_cast<__gm__ int32_t *>(cu_seqlens_ptr), batch_size, seq_len, total_tokens, num_key_heads);
 
-#if defined(__DAV_C220_CUBE__)
+#if defined(__DAV_CUBE__)
     pipe_barrier(PIPE_ALL);
+#if __CCE_AICORE__ == 220
     wait_flag_dev(2);
     wait_flag_dev(3);
+#else
+    GdnWaitBothVec<PIPE_MTE2>(2);
+    GdnWaitBothVec<PIPE_MTE2>(3);
+    pipe_barrier(PIPE_ALL);
+#endif
 #endif
 
 #ifdef MEGA_STOP_AFTER_KKT
@@ -393,11 +465,17 @@ AICORE inline void mega_kernel_impl(GM_ADDR q_ptr, GM_ADDR k_ptr, GM_ADDR v_ptr,
         reinterpret_cast<__gm__ half *>(u_ptr), reinterpret_cast<__gm__ int32_t *>(cu_seqlens_ptr), batch_size, seq_len,
         total_tokens, num_key_heads);
 
-#if defined(__DAV_C220_VEC__)
+#if defined(__DAV_VEC__)
     if (get_block_idx() < num_matrices) {
         pipe_barrier(PIPE_ALL);
+#if __CCE_AICORE__ == 220
         wait_flag_dev(3);
         wait_flag_dev(4);
+#else
+        wait_intra_block(PIPE_MTE3, 3);
+        wait_intra_block(PIPE_MTE3, 4);
+        pipe_barrier(PIPE_ALL);
+#endif
     }
 #endif
 
@@ -431,10 +509,15 @@ AICORE inline void mega_kernel_impl(GM_ADDR q_ptr, GM_ADDR k_ptr, GM_ADDR v_ptr,
         reinterpret_cast<__gm__ half *>(o_ws_gated_ptr), reinterpret_cast<__gm__ half *>(o_ptr),
         reinterpret_cast<__gm__ int32_t *>(cu_seqlens_ptr), batch_size, seq_len, total_tokens, num_key_heads);
 
-#if defined(__DAV_C220_CUBE__)
+#if defined(__DAV_CUBE__)
     if (get_block_idx() < num_matrices) {
         pipe_barrier(PIPE_ALL);
+#if __CCE_AICORE__ == 220
         wait_flag_dev(3);
+#else
+        GdnWaitBothVec<PIPE_MTE2>(3);
+        pipe_barrier(PIPE_ALL);
+#endif
     }
 #endif
 }

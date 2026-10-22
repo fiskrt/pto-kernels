@@ -123,11 +123,11 @@ using TileMatL1ZN = pto::Tile<pto::TileType::Mat, T, Rows, Cols, pto::BLayout::R
                               pto::SLayout::ColMajor, 512, pto::PadValue::Zero>;
 
 template <typename T, int32_t Rows, int32_t Cols, int32_t RowValid = Rows, int32_t ColValid = Cols>
-using TileMatL0A = pto::Tile<pto::TileType::Left, T, Rows, Cols, pto::BLayout::RowMajor, RowValid, ColValid,
+using TileMatL0A = pto::Tile<pto::TileType::Left, T, Rows, Cols, GdnOuterLayout(true), RowValid, ColValid,
                              pto::SLayout::RowMajor, 512, pto::PadValue::Zero>;
 
 template <typename T, int32_t Rows, int32_t Cols, int32_t RowValid = Rows, int32_t ColValid = Cols>
-using TileMatL0B = pto::Tile<pto::TileType::Right, T, Rows, Cols, pto::BLayout::RowMajor, RowValid, ColValid,
+using TileMatL0B = pto::Tile<pto::TileType::Right, T, Rows, Cols, GdnOuterLayout(false), RowValid, ColValid,
                              pto::SLayout::ColMajor, 512, pto::PadValue::Zero>;
 
 template <typename T, int32_t Rows, int32_t Cols, int32_t RowValid = Rows, int32_t ColValid = Cols,
@@ -368,7 +368,7 @@ AICORE void chunk_h_kernel(__gm__ half *K_handle, __gm__ half *W_handle, __gm__ 
     int64_t num_seqs = batch_size;
     int64_t total_work = num_seqs * H;
 
-#if defined(__DAV_C220_CUBE__)
+#if defined(__DAV_CUBE__)
     for (int64_t wi = 0; wi < (total_work + block_num - 1) / block_num; ++wi) {
         int64_t pid = wi * block_num + cid;
         if (pid >= total_work) break;
@@ -401,7 +401,11 @@ AICORE void chunk_h_kernel(__gm__ half *K_handle, __gm__ half *W_handle, __gm__ 
         //   WS_KV : k_tilde^T @ v_i_new
 
         for (int32_t ci = 0; ci < num_chunks; ++ci) {
+            #if __CCE_AICORE__ == 220
             wait_flag_dev(3);
+            #else
+            { GdnWaitBothVec<PIPE_MTE2>(3); pipe_barrier(PIPE_ALL); }
+            #endif
 
             int64_t chunk_start = bos + static_cast<int64_t>(ci) * C;
             int64_t valid = slen - static_cast<int64_t>(ci) * C;
@@ -446,7 +450,11 @@ AICORE void chunk_h_kernel(__gm__ half *K_handle, __gm__ half *W_handle, __gm__ 
             }
             ffts_cross_core_sync(PIPE_FIX, 1 | (2 << 4) | (0 << 8));
 
+            #if __CCE_AICORE__ == 220
             wait_flag_dev(1);
+            #else
+            { GdnWaitBothVec<PIPE_MTE2>(1); pipe_barrier(PIPE_ALL); }
+            #endif
 
             {
                 GmShape2D k_shape(D, C);
@@ -488,7 +496,7 @@ AICORE void chunk_h_kernel(__gm__ half *K_handle, __gm__ half *W_handle, __gm__ 
         }
     }
 #endif
-#if defined(__DAV_C220_VEC__)
+#if defined(__DAV_VEC__)
     set_mask_norm();
     set_vector_mask(-1, -1);
 
@@ -651,9 +659,9 @@ AICORE void chunk_h_kernel(__gm__ half *K_handle, __gm__ half *W_handle, __gm__ 
             // Torch-like:
             //   coeff = exp(g_last - g_rows_owned_by_this_subblock)
             TADDS(coeff_ub, g_v_ub, -g_last);
-            pipe_barrier(PIPE_V);
+            PipeBarrierVec();
             TSUB(coeff_ub, zero_ub, coeff_ub);
-            pipe_barrier(PIPE_V);
+            PipeBarrierVec();
             TEXP(coeff_ub, coeff_ub);
 
             TEXP(g_ub, g_ub);
@@ -669,12 +677,16 @@ AICORE void chunk_h_kernel(__gm__ half *K_handle, __gm__ half *W_handle, __gm__ 
             // Broadcast one decay scalar per token row across the D feature columns:
             //   coeff_2d[row, :] = coeff[row]
             TROWEXPAND(coeff_2d_ub, coeff_col_ub);
-            pipe_barrier(PIPE_V);
+            PipeBarrierVec();
             // `k_ub` now holds k_tilde = exp(g_last - g_i) * K_i.
             TMUL(k_ub, k_ub, coeff_2d_ub);
-            pipe_barrier(PIPE_V);
+            PipeBarrierVec();
 
+            #if __CCE_AICORE__ == 220
             wait_flag_dev(0);
+            #else
+            { wait_intra_block(PIPE_MTE3, 0); pipe_barrier(PIPE_ALL); }
+            #endif
             {
                 GmShape2D ws_shape(HalfC, D);
                 GmStride2D ws_stride(D);
@@ -768,7 +780,11 @@ AICORE void chunk_h_kernel(__gm__ half *K_handle, __gm__ half *W_handle, __gm__ 
                 }
             }
 
+            #if __CCE_AICORE__ == 220
             wait_flag_dev(2);
+            #else
+            { wait_intra_block(PIPE_MTE3, 2); pipe_barrier(PIPE_ALL); }
+            #endif
             {
                 GmShape2D kv_shape(HalfC, D);
                 GmStride2D kv_stride(D);

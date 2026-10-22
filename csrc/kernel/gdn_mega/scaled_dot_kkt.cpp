@@ -62,7 +62,7 @@
 //   TCOLEXPAND(2d, row)     — Broadcast row → cols: 2d[i,j] = row[j]
 //   set_flag(P1, P2, EVT)   — Signal from pipe P1 to pipe P2 (like a semaphore post)
 //   wait_flag(P1, P2, EVT)  — Wait for signal from P1 (like a semaphore wait)
-//   pipe_barrier(PIPE_V)    — Local Vec barrier (ensure all Vec ops complete)
+//   PipeBarrierVec()    — Local Vec barrier (ensure all Vec ops complete)
 //   pipe_barrier(PIPE_ALL)  — Barrier for all local pipes
 //   ffts_cross_core_sync()  — Cross-core signal (Cube↔Vec, different physical cores)
 //   wait_flag_dev(flag)     — Wait for cross-core signal
@@ -232,9 +232,9 @@ AICORE void kkt_kernel(__gm__ half *K_handle, __gm__ half *Beta_handle, __gm__ f
     //     (TRESHAPE is FREE — it just reinterprets the fractal layout as transposed)
     //   Result: KK^T [C×C] in L0C (float32 accumulator, even though inputs are fp16)
     // ========================================================================
-    // __DAV_C220_CUBE__: This code only compiles for the Cube core.
+    // __DAV_CUBE__: This code only compiles for the Cube core.
     // On NPU, Cube and Vec are separate compilation targets (like two different GPUs).
-#if defined(__DAV_C220_CUBE__)
+#if defined(__DAV_CUBE__)
     // Outer loop: iterate over all (sequence, head) work items assigned to this core
     for (int64_t work_idx = 0; work_idx < (total_work + block_num - 1) / block_num; ++work_idx) {
         int64_t pid = work_idx * static_cast<int64_t>(block_num) + static_cast<int64_t>(cid);
@@ -266,7 +266,11 @@ AICORE void kkt_kernel(__gm__ half *K_handle, __gm__ half *Beta_handle, __gm__ f
         for (int64_t ci = 0; ci < num_chunks; ++ci) {
             int32_t slot = static_cast<int32_t>(ci & 1);
             // Wait for Vec to finish reading the previous KK^T from this slot
+            #if __CCE_AICORE__ == 220
             wait_flag_dev(2 + slot);
+            #else
+            { GdnWaitBothVec<PIPE_MTE2>(2 + slot); pipe_barrier(PIPE_ALL); }
+            #endif
             pipe_barrier(PIPE_ALL);
 
             int64_t chunk_start = ci * ChunkSize;
@@ -340,7 +344,7 @@ AICORE void kkt_kernel(__gm__ half *K_handle, __gm__ half *Beta_handle, __gm__ f
                 Shape<1, 1, 1, DYNAMIC, DYNAMIC> _gs;
                 _gs.shape[3] = ChunkSize;
                 _gs.shape[4] = ChunkSize;
-                GlobalTensor<half, decltype(_gs), Stride<1, 1, 1, ChunkSize, 1>> _gm(
+                GlobalTensor<half, decltype(_gs), pto::Stride<1, 1, 1, ChunkSize, 1>> _gm(
                     workspace_handle + (static_cast<int64_t>(cid) * 2 + slot) * ChunkSquare, _gs);
                 TSTORE(_gm, _l0);
             }
@@ -388,8 +392,8 @@ AICORE void kkt_kernel(__gm__ half *K_handle, __gm__ half *Beta_handle, __gm__ f
     // # Final: A = KK_T * coeff * causal_mask
     // A = KK_T[my_rows] * coeff * mask[my_rows]           # TMUL × 2
     // ========================================================================
-    // __DAV_C220_VEC__: This code only compiles for the Vec core.
-#if defined(__DAV_C220_VEC__)
+    // __DAV_VEC__: This code only compiles for the Vec core.
+#if defined(__DAV_VEC__)
     // set_mask_norm / set_vector_mask: configure the SIMD mask for Vec ops.
     // (-1, -1) means "all lanes active" — process every element.
     // (Like CUDA's __activemask() returning all 1s for a full warp.)
@@ -403,7 +407,7 @@ AICORE void kkt_kernel(__gm__ half *K_handle, __gm__ half *Beta_handle, __gm__ f
         Shape<1, 1, 1, DYNAMIC, DYNAMIC> _gs;
         _gs.shape[3] = HalfChunk;
         _gs.shape[4] = ChunkSize;
-        GlobalTensor<float, decltype(_gs), Stride<1, 1, 1, ChunkSize, 1>> _gm(
+        GlobalTensor<float, decltype(_gs), pto::Stride<1, 1, 1, ChunkSize, 1>> _gm(
             Msk_handle + static_cast<int64_t>(vid) * HalfChunk * ChunkSize, _gs);
         UbND<float, HalfChunk, ChunkSize, DYNAMIC, DYNAMIC, PadValue::Zero> _ld(HalfChunk, ChunkSize);
         TASSIGN(_ld, MskUbAddr);
@@ -458,7 +462,7 @@ AICORE void kkt_kernel(__gm__ half *K_handle, __gm__ half *Beta_handle, __gm__ f
                     Shape<1, 1, 1, DYNAMIC, DYNAMIC> _gs;
                     _gs.shape[3] = 1;
                     _gs.shape[4] = valid_rows;
-                    GlobalTensor<float, decltype(_gs), Stride<1, 1, 1, 1, 1>> _gm(
+                    GlobalTensor<float, decltype(_gs), pto::Stride<1, 1, 1, 1, 1>> _gm(
                         G_handle + static_cast<int64_t>(head_idx) * total_tokens + (bos + chunk_start), _gs);
                     UbND<float, 1, ChunkSize, DYNAMIC, DYNAMIC, PadValue::Zero> _ld(1, valid_rows);
                     TASSIGN(_ld, GUbAddr);
@@ -475,7 +479,7 @@ AICORE void kkt_kernel(__gm__ half *K_handle, __gm__ half *Beta_handle, __gm__ f
                     Shape<1, 1, 1, DYNAMIC, DYNAMIC> _gs;
                     _gs.shape[3] = 1;
                     _gs.shape[4] = local_valid;
-                    GlobalTensor<half, decltype(_gs), Stride<1, 1, 1, 1, 1>> _gm(
+                    GlobalTensor<half, decltype(_gs), pto::Stride<1, 1, 1, 1, 1>> _gm(
                         Beta_handle + static_cast<int64_t>(head_idx) * total_tokens + (bos + chunk_start + row_offset),
                         _gs);
                     UbND<half, 1, HalfChunk, DYNAMIC, DYNAMIC, PadValue::Zero> _ld(1, local_valid);
@@ -490,7 +494,11 @@ AICORE void kkt_kernel(__gm__ half *K_handle, __gm__ half *Beta_handle, __gm__ f
             }
 
             // Wait for Cube to finish writing KK^T for this slot
+            #if __CCE_AICORE__ == 220
             wait_flag_dev(slot);
+            #else
+            { wait_intra_block(PIPE_MTE3, slot); pipe_barrier(PIPE_ALL); }
+            #endif
             pipe_barrier(PIPE_ALL);
 
             if (local_valid > 0) {
@@ -506,15 +514,15 @@ AICORE void kkt_kernel(__gm__ half *K_handle, __gm__ half *Beta_handle, __gm__ f
                 UbND<float, 1, HalfChunk, 1, HalfChunk> g_ub_temp;
                 TASSIGN(g_ub_temp, GUbAddr + row_offset * static_cast<int32_t>(sizeof(float)));
                 TMOV(g_v_ub, g_ub_temp);  // g_v = g[row_offset:row_offset+C/2]
-                pipe_barrier(PIPE_V);     // Wait for TMOV to complete
+                PipeBarrierVec();     // Wait for TMOV to complete
 
                 TLOG(beta_ub, beta_ub);  // beta_ub = log(beta) in-place
-                pipe_barrier(PIPE_V);
+                PipeBarrierVec();
                 TADD(g_v_ub, g_v_ub, beta_ub);  // g_v = g_sub + log(beta) — the combined gate
-                pipe_barrier(PIPE_V);
+                PipeBarrierVec();
                 TMOV(g_r_ub, g_v_ub);  // Copy to g_r for row-broadcast
                 TMOV(g_c_ub, g_ub);    // Copy full g to g_c for col-broadcast
-                pipe_barrier(PIPE_V);
+                PipeBarrierVec();
 
                 // Broadcast g_v to rows, g to columns → 2D gating matrix
                 // coeff[i,j] = exp(min(g_v[i] - g[j], 0))
@@ -525,11 +533,11 @@ AICORE void kkt_kernel(__gm__ half *K_handle, __gm__ half *Beta_handle, __gm__ f
                 TASSIGN(g_r_ub_temp, GRUbAddr);
                 TROWEXPAND(g_r_2d_ub, g_r_ub_temp);  // g_r_2d[i,j] = g_v[i] for all j
                 TCOLEXPAND(g_c_2d_ub, g_c_ub);       // g_c_2d[i,j] = g[j] for all i
-                pipe_barrier(PIPE_V);
+                PipeBarrierVec();
                 TSUB(coeff_ub, g_r_2d_ub, g_c_2d_ub);  // coeff[i,j] = g_v[i] - g[j]
-                pipe_barrier(PIPE_V);
+                PipeBarrierVec();
                 TMINS(coeff_ub, coeff_ub, 0.0f);  // clamp to ≤ 0 (coeff will be ≤ 1 after exp)
-                pipe_barrier(PIPE_V);
+                PipeBarrierVec();
                 TEXP(coeff_ub, coeff_ub);  // coeff = exp(clamped_diff) ∈ (0, 1]
 
                 // V→MTE2 sync: ensure gating computation is done before we start
@@ -545,7 +553,7 @@ AICORE void kkt_kernel(__gm__ half *K_handle, __gm__ half *Beta_handle, __gm__ f
                     Shape<1, 1, 1, DYNAMIC, DYNAMIC> _gs;
                     _gs.shape[3] = HalfChunk;
                     _gs.shape[4] = ChunkSize;
-                    GlobalTensor<half, decltype(_gs), Stride<1, 1, 1, ChunkSize, 1>> _gm(
+                    GlobalTensor<half, decltype(_gs), pto::Stride<1, 1, 1, ChunkSize, 1>> _gm(
                         workspace_handle + (static_cast<int64_t>(cid) * 2 + slot) * ChunkSquare +
                             static_cast<int64_t>(vid) * HalfChunk * ChunkSize,
                         _gs);
@@ -583,7 +591,7 @@ AICORE void kkt_kernel(__gm__ half *K_handle, __gm__ half *Beta_handle, __gm__ f
                     Shape<1, 1, 1, DYNAMIC, DYNAMIC> _gs;
                     _gs.shape[3] = local_valid;
                     _gs.shape[4] = ChunkSize;
-                    GlobalTensor<half, decltype(_gs), Stride<1, 1, 1, NumHeads * ChunkSize, 1>> _gm(
+                    GlobalTensor<half, decltype(_gs), pto::Stride<1, 1, 1, NumHeads * ChunkSize, 1>> _gm(
                         A_handle + a_gm_offset, _gs);
                     UbND<half, HalfChunk, ChunkSize, DYNAMIC, DYNAMIC> _st(local_valid, ChunkSize);
                     TASSIGN(_st, AUbHalfAddr);
