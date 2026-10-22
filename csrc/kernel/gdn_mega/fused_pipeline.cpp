@@ -224,6 +224,17 @@ AICORE inline void mega_fused_pipeline(
     TileLeft<half, C, C> left; TileRight<half, C, C> right;
     TileAcc<float, C, C> acc, out_acc;
     TASSIGN(left, 0); TASSIGN(right, 0); TASSIGN(acc, 0); TASSIGN(out_acc, C * C * sizeof(float));
+#ifdef GDN_EARLY_PREPARE
+    // The first vector operands do not depend on cube identity/state setup.
+    if (get_block_idx() < sequences * H) {
+#if __CCE_AICORE__ == 220
+        ffts_cross_core_sync(PIPE_MTE2, 1 | (2 << 4) | (7 << 8));
+        ffts_cross_core_sync(PIPE_MTE2, 1 | (2 << 4) | (8 << 8));
+#else
+        GdnSignalBothVec<PIPE_MTE2>(7); GdnSignalBothVec<PIPE_MTE2>(8);
+#endif
+    }
+#endif
     mega_load_packed<C, C, C>(negative_identity, negative_identity, neg_i, C, C);
     pipe_barrier(PIPE_ALL);
     TMOV(left, negative_identity); TMOV(right, negative_identity); pipe_barrier(PIPE_ALL);
@@ -253,11 +264,17 @@ AICORE inline void mega_fused_pipeline(
             TMATMUL_ACC(acc, acc, left, right); pipe_barrier(PIPE_ALL);
             TMOV(state, acc); pipe_barrier(PIPE_ALL);
         }
+#ifdef GDN_EARLY_PREPARE
+        if (work != get_block_idx()) {
+#endif
 #if __CCE_AICORE__ == 220
         ffts_cross_core_sync(PIPE_FIX, 1 | (2 << 4) | (7 << 8));
         ffts_cross_core_sync(PIPE_FIX, 1 | (2 << 4) | (8 << 8));
 #else
         GdnSignalBothVec<PIPE_FIX>(7); GdnSignalBothVec<PIPE_FIX>(8);
+#endif
+#ifdef GDN_EARLY_PREPARE
+        }
 #endif
 #endif
         int ci = 0;

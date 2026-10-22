@@ -182,3 +182,13 @@ Validation: bash scripts/gdn_mega_docker.sh bash scripts/build_gdn_mega.sh;
 then timeout 120 python -m pytest tests/test_gdn_mega.py -q -k
 'not head_configs or H16'; then timeout 120 python benchmarking/gdn_mega.py
 --initial-state --output benchmark_data/gdn_mega/skip_decay_initial.json.
+
+## Pending commit — overlap first chunk preparation with cube setup
+
+Seed the first producer credits before loading identity/state, since vector
+preparation has no dependency on those cube tiles. Subsequent head credits
+retain their existing ordering. 25 selected strict tests pass.
+Initial-state medians:35.337/42.725/90.698/283.634us, exceeding3x against the
+original initial-state baseline at all four lengths. Full-head default-build
+acceptance remains pending. Raw:benchmark_data/gdn_mega/early_initial.json.
+Commands match preceding entry with GDN_EARLY_PREPARE added to definitions.
