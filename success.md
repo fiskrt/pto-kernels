@@ -277,7 +277,7 @@ DEFINITIONS empty,MANUAL_SYNC=OFF; build; timeout120 pytest -q
 not justified by this modest penalty. Rejected RHS-first reassociation is
 not included in production.
 
-## PENDING_GRAM_COMMIT — overlap shared Gram transfers and products
+## 8cfbfa4 — overlap shared Gram transfers and products
 
 Pipeline shared K*K^T and Q*K^T across tiles: prefetch the next K/Q pair while
 current products run, retain K^T, and export the first result during the second
