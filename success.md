@@ -158,7 +158,7 @@ and zero half-decay matrices. Initial-state medians:37.468/46.568/95.733/
 initial-state baseline. Flag:GDN_REUSE_OPERANDS (requires adaptive metadata
 and joint products). Raw results:benchmark_data/gdn_mega/reuse_initial.json.
 
-## Share prefix exponentials and simplify decay construction (commit recorded next)
+## 073ae91 — share prefix exponentials and simplify decay construction
 
 W, Q, and final decay reuse one exp(g) vector. Construct decayI directly in
 half precision instead of converting the entire identity to float and back;
