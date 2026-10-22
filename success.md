@@ -246,7 +246,7 @@ resident arithmetic respectively. Probe command: configure DEFINITIONS=
 GDN_MATMUL_PROBE, build, timeout120 python benchmarking/gdn_matmul_probe.py.
 This diagnostic replaces GDN execution and must not be used for GDN results.
 
-## Pending commit — extend recurrence scheduling to finite decay
+## 1e9fee7 — extend recurrence scheduling to finite decay
 
 The pipelined recurrence now includes the incoming-state decay product when
 its coefficient is nonzero. It no longer selects the optimized schedule based
