@@ -223,7 +223,7 @@ Commands: configure HEAD=16, DEFINITIONS=GDN_PIPELINED_RECURRENCE; build script;
 timeout120 pytest tests/test_gdn_mega.py -q -k 'not head_configs or H16';
 timeout120 python benchmarking/gdn_mega.py --initial-state --output above.
 
-## Pending commit — interleave independent inverse solves
+## a8fe7ff — interleave independent inverse solves
 
 GDN_INTERLEAVED_INVERSE queues the two diagonal solves together, overlapping
 cube products with FIX exports using separate operand/accumulator tiles. It
