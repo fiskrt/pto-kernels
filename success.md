@@ -298,3 +298,22 @@ GDN_MEGA_MANUAL_SYNC=OFF; `bash scripts/build_gdn_mega.sh`;
 `timeout 120 python benchmarking/gdn_mega.py --initial-state --lengths 128 4096`
 and `--initial-state --gate-scale 0.01 --lengths 4096`, all through
 `scripts/gdn_mega_docker.sh`. The additional 2x target remains unmet.
+
+Final revalidation of 8cfbfa4 after rejecting all further experiments: full-head
+production build passes all32 tests. Initial-state T128/256/1024/4096 medians
+32.912/40.444/83.016/254.862us; no-state33.323/40.772/83.348/253.609us.
+Weak-decay initial-state T1024/4096:90.317/276.833us. Initial-state gains versus
+original10748eb are3.267x/3.599x/3.730x/3.389x. Gains versus the newer f71a883
+checkpoint at4096 are1.117x ordinary and1.220x weak; the further2x is not achieved.
+Raw files:production_final_initial.json,production_final_no_initial.json,
+production_final_weak.json. No relaxed checks or experimental compile flags.
+
+Real-device profile of this exact production build:
+`msprof op --kernel-name="*gdn_mega_specialized*" --aic-metrics=Roofline
+--output=benchmark_data/gdn_mega/device_gram_pipeline python benchmarking/gdn_mega.py
+--initial-state --profile-once --lengths 4096` (source CANN first, timeout180).
+Profile OPPROF_20261022172022_WQDJDGCBKTHCAPFG; active-core medians: cube busy31.06%,
+MTE1 busy26.67%, FIX busy21.26%; cube wait54.57%, MTE1 wait51.50%. The recurrence
+still has substantial transfer/dependency stalls. Larger core-splitting,
+column-tiling, direct-load, and deferred-store experiments are recorded with
+rejection evidence in memory.md; none are in production.

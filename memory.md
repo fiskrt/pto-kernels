@@ -322,3 +322,49 @@ strict tests pass, fresh same-device ordinary261.734->254.176us and weak
 283.597->276.511us. Single-wave Gram work uses original setup to avoid startup
 regression. Next structural experiment: use otherwise idle cube cores for
 output products alongside the state recurrence, with full per-chunk buffers.
+
+2026-10-22 structural experiments after the Gram pipeline (all rejected):
+- Offload output to the eight idle cube cores for a single H16 sequence.
+  State producers publish rounded residual/state buffers; output workers run
+  Q*S + attention*R. Selected25 tests pass with unchanged errors, but ordinary
+  T4096 is265.334us and weak286.147us versus production~254/277us.
+  Counters show producer waits~1861ticks, inverse~1946, recurrence~7456;
+  vector preparation~10846/11011; output workers~7900work+3700wait ticks.
+  This moved the bottleneck instead of removing it.
+- Restoring contiguous two-slot attention plus explicit consumer acknowledgments
+  does not recover the vector slowdown (preparation~10800ticks), disproving a
+  store-layout-only explanation. Earlier residual publication still gives
+  265.170/290.575us ordinary/weak. Ring snapshots:output_workers_ring/.
+- Decouple preparation across all48 vector cores, with16 recurrence and8 output
+  cube workers. Reuse each saved-state slot for its decay matrix before state
+  publication. First attempt bypassed vector mask initialization and faulted;
+  fixing initialization makes25selected tests pass onNPU1. NPU1 T4096 timings
+  253.782us ordinary/305.935us weak are not a useful general improvement.
+  No cross-device speedup claim. Snapshots:global_prepare/. Device0 subsequently
+  reported healthy and passed25 tests against the frozen known-good library.
+- Direct aligned load2d operand transfers instead of general img2colv2 loaders
+  pass25 selected tests onNPU1;257.588/277.452us ordinary/weak. No demonstrated
+  gain; rejected. Snapshots:load2d/.
+- Split value columns into64-wide tiles, retaining four FP32 accumulators and
+  interleaving residual/state exports with independent products. All25 selected
+  tests pass with unchanged errors, but255.942/276.574us ordinary/weak are not
+  better than production. Snapshot:recurrence_tiled.cpp.
+- Let an output FIX store overlap the next inverse. Missing M->MTE1 ordering
+  first caused an L0A conflict; adding the dependency and retaining full tail
+  barriers passed25selected tests, but the4096 benchmark then failed with
+  output relativeRMSE0.065378. This is NOT accepted. Full chunk-boundary barriers
+  remain in production. Snapshots:deferred_output/.
+
+All experimental files are ignored snapshots, not production source. Final
+production rebuild uses all head specializations, empty experiment definitions,
+and compiler automatic synchronization. No new decay-dependent shortcuts were
+introduced in this structural pass; only the tested Gram pipeline is retained.
+
+Final production recovery and acceptance: all32 tests passed onNPU0 after the
+experimental faults; all-head build, no extra definitions, automatic syncON.
+Initial32.912/40.444/83.016/254.862us; weak90.317/276.833us at1024/4096.
+No-initial33.323/40.772/83.348/253.609us. All actual errors unchanged.
+Device profile:device_gram_pipeline/OPPROF_20261022172022_WQDJDGCBKTHCAPFG,
+1800MHz; active cube0..15 median busy31.06%,MTE126.67%,FIX21.26%; waits
+cube54.57%,MTE151.50%. Summary:gram_profile_summary.json. The further2x target
+is not achieved; source and build are restored to the tested Gram improvement.
