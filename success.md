@@ -183,7 +183,7 @@ then timeout 120 python -m pytest tests/test_gdn_mega.py -q -k
 'not head_configs or H16'; then timeout 120 python benchmarking/gdn_mega.py
 --initial-state --output benchmark_data/gdn_mega/skip_decay_initial.json.
 
-## Pending commit — overlap first chunk preparation with cube setup
+## b315f03 — overlap first chunk preparation with cube setup
 
 Seed the first producer credits before loading identity/state, since vector
 preparation has no dependency on those cube tiles. Subsequent head credits
