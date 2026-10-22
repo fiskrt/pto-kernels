@@ -168,7 +168,7 @@ orders exp(g) before short-tail scalar reads. exp(g_i-g_j) remains unchanged.
 292.951us; shorter cases improve, long case is unchanged. Actual errors are
 unchanged. Raw results:benchmark_data/gdn_mega/vector_trim_initial.json.
 
-## Pending commit — omit products with exactly zero half decay
+## 28929db — omit products with exactly zero half decay
 
 When exp(g_last) rounds to FP16 zero, omit decay-matrix construction/load
 and the full S*0 cube product. Use three ordinary products for output/state;
