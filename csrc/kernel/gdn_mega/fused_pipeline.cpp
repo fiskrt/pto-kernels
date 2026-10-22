@@ -1,3 +1,7 @@
+#if defined(GDN_REUSE_OPERANDS) && (!defined(GDN_ADAPTIVE_INVERSE) || !defined(GDN_JOINT_PRODUCTS))
+#error "GDN_REUSE_OPERANDS requires adaptive metadata and joint output products"
+#endif
+
 #if defined(GDN_PREFETCH) && !defined(GDN_NEGATIVE_A)
 #error "GDN_PREFETCH requires in-place signed inversion (GDN_NEGATIVE_A)"
 #endif
@@ -156,7 +160,13 @@ AICORE inline void mega_prepare_chunk(
         {1, 1, 1, R, C}, {1, 1, 1, C, 1});
     TSTORE(dgm, data); pipe_barrier(PIPE_ALL);
 #ifdef GDN_ADAPTIVE_INVERSE
+#ifdef GDN_REUSE_OPERANDS
+    // Below the half round-to-nearest zero threshold, the stored decay matrix
+    // is exactly zero. Reusing that matrix introduces no further truncation.
+    control[0] = inverse_terms | (exp_last < 0x1p-25f ? 0x10000 : 0);
+#else
     control[0] = inverse_terms;
+#endif
     dcci(control, SINGLE_CACHE_LINE);
     // Publish scalar-written metadata before the MTE3 ready notification.
     dsb(DSB_DDR);
@@ -202,6 +212,9 @@ AICORE inline void mega_fused_pipeline(
     TMOV(left, negative_identity); TMOV(right, negative_identity); pipe_barrier(PIPE_ALL);
     TMATMUL(acc, left, right); pipe_barrier(PIPE_ALL);
     TMOV(identity, acc); pipe_barrier(PIPE_ALL);
+#endif
+#if defined(__DAV_CUBE__) && defined(GDN_REUSE_OPERANDS)
+    bool previous_decay_zero = false;
 #endif
     for (int64_t work = get_block_idx(); work < sequences * H; work += get_block_num()) {
         int seq = work / H, head = work % H;
@@ -302,7 +315,13 @@ AICORE inline void mega_fused_pipeline(
             dcci(controls, SINGLE_CACHE_LINE); dcci(controls + 32, SINGLE_CACHE_LINE);
             dsb(DSB_DDR);
             int first_terms = controls[0], second_terms = controls[32];
+#ifdef GDN_REUSE_OPERANDS
+            bool decay_zero = (first_terms & 0x10000) && (second_terms & 0x10000);
+            bool reuse_decay = decay_zero && previous_decay_zero;
+            terms = max(first_terms & 0xffff, second_terms & 0xffff);
+#else
             terms = max(first_terms, second_terms);
+#endif
 #endif
             Tail wt(valid, C), ut(valid, C), ktail(valid, C), qtail(valid, C), att(valid, valid);
             TASSIGN(wt, 0); TASSIGN(ut, Bytes); TASSIGN(ktail, 9 * Bytes);
@@ -313,6 +332,9 @@ AICORE inline void mega_fused_pipeline(
             mega_load_packed<C, C, C>(kt, ktail, scaled_k + packed, valid, C);
             mega_load_packed<C, C, C>(query, qtail, scaled_q + packed, valid, C);
             mega_load_packed<C, C, C>(attention, att, slot_buffer, valid, valid);
+#ifdef GDN_REUSE_OPERANDS
+            if (!reuse_decay)
+#endif
             mega_load_packed<C, C, C>(decay, decay, slot_buffer + C * C, C, C);
 #endif
 #ifdef GDN_NEGATIVE_A
@@ -337,6 +359,9 @@ AICORE inline void mega_fused_pipeline(
             mega_load_packed<C, C, C>(kt, ktail, scaled_k + packed, valid, C);
             mega_load_packed<C, C, C>(query, qtail, scaled_q + packed, valid, C);
             mega_load_packed<C, C, C>(attention, att, slot_buffer, valid, valid);
+#ifdef GDN_REUSE_OPERANDS
+            if (!reuse_decay)
+#endif
             mega_load_packed<C, C, C>(decay, decay, slot_buffer + C * C, C, C);
 #endif
             pipe_barrier(PIPE_ALL);
@@ -368,7 +393,16 @@ AICORE inline void mega_fused_pipeline(
             TileLeft<half, C, C> state_left;
             TileAcc<float, 2 * C, C> output_state;
             TASSIGN(output_left, 0); TASSIGN(state_left, Bytes); TASSIGN(output_state, 0);
-            TMOV(left, query); TMOV(state_left, decay); TMOV(right, state);
+            TMOV(left, query);
+#ifdef GDN_REUSE_OPERANDS
+            // L0A was overwritten by K_tilde^T; only the L1 decay copy survives.
+            TMOV(state_left, decay);
+            // W*S leaves S resident in this same L0B tile.
+            if (ci == 0 && !has_initial) TMOV(right, state);
+            previous_decay_zero = decay_zero;
+#else
+            TMOV(state_left, decay); TMOV(right, state);
+#endif
             pipe_barrier(PIPE_ALL);
             TMATMUL(output_state, output_left, right); pipe_barrier(PIPE_ALL);
             Trans kt_trans; TRESHAPE(kt_trans, kt);

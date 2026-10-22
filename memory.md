@@ -242,3 +242,10 @@ latencies39.651/48.429/98.719/301.066us. No-state38.417/47.582/97.472/299.847us.
 Next exact transfer reuse: after W*S, L0B already contains S; the joint output
 product need not load it again. For a half decay matrix that is exactly zero,
 its L1/L0A copies can also be reused across chunks (not a state-zero assumption).
+
+Operand reuse passes25selectedstrict tests. Only L1 decay is reusable across
+chunks; L0A bottom half gets overwritten by Ktilde^T in second joint product.
+Caught that mistake in initial attempt and fixed it. S in L0B survives from
+W*S to first joint product. Added finite/zero-decay alternation regression.
+Latencieswithinitial37.468/46.568/95.733/292.657us. Next interleave independent
+64x64 diagonal inverses, preserving arithmetic but amortizing pipeline flags.

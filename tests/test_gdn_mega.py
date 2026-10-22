@@ -438,3 +438,20 @@ def test_gdn_mega_correlated_keys(beta_value, npu_device):
             relative_rmse = ((actual - reference).square().mean() /
                              reference.square().mean().clamp_min(1e-16)).sqrt().item()
             assert relative_rmse < 0.005, relative_rmse
+
+
+def test_gdn_mega_changing_decay(npu_device):
+    """Alternate finite and half-zero chunk decays with a nonzero state."""
+    inputs = list(_make_inputs(512, 16, 4, seed=73))
+    for chunk, gate_scale in enumerate([4.0, 0.01, 4.0, 0.01]):
+        inputs[3][:, chunk * C:(chunk + 1) * C] *= gate_scale
+    initial = torch.randn(1, 16, D, D, dtype=torch.float16) * 0.1
+    q, k = _expand_kv_heads(inputs[0], inputs[1], 16)
+    expected, expected_state = _reference(q, k, *inputs[2:], initial_state=initial)
+    args = _prepare_gdn_mega(*(t.to(npu_device) for t in inputs),
+        torch.tensor([0, 512], dtype=torch.int32, device=npu_device), initial.to(npu_device))
+    for _ in range(5):
+        pto_gdn_mega(**args)
+        torch.npu.synchronize()
+        _assert_close("out", args["out"].cpu().float() * D**-0.5, expected)
+        _assert_close("state", args["final_state"].cpu().view_as(expected_state), expected_state)

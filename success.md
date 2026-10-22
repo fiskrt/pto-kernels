@@ -143,3 +143,17 @@ Without initial state:38.417/47.582/97.472/299.847us. All optional fused flags
 (fused/adaptive/joint-products/negative-A/prefetch) are included. Output RMSE
 ~0.00043, state~0.00039 on benchmark inputs. Raw records:fenced_acceptance*.json
 under benchmark_data/gdn_mega/. 3x is not yet achieved across all lengths.
+
+## Reuse resident operands (commit recorded next)
+
+Reuse S already resident in L0B after W*S. When a chunk's stored half decay
+matrix is exactly zero and the preceding L1 copy is also zero, retain that
+L1 copy instead of reloading it. This does not assume S is zero and introduces
+no additional approximation. L0A must still reload decay because the second
+joint product overwrites that region with Ktilde^T.
+
+25 selected strict H16 tests pass, including a new test alternating finite
+and zero half-decay matrices. Initial-state medians:37.468/46.568/95.733/
+292.657us; actual errors unchanged. T4096 is2.95x faster than the original
+initial-state baseline. Flag:GDN_REUSE_OPERANDS (requires adaptive metadata
+and joint products). Raw results:benchmark_data/gdn_mega/reuse_initial.json.
