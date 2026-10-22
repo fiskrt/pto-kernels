@@ -198,3 +198,9 @@ by simple pointer offset; this is invalid because L0B is row-major in its
 outer blocks. Removed that branch. Concatenate W/U in column-major L1 instead
 and use one full-width TMOV to correctly interleave L0B. Current build flags
 GDN_FUSED_PIPELINE;GDN_ADAPTIVE_INVERSE;GDN_JOINT_PRODUCTS, HEAD=16.
+
+Correctly interleaved joint W/U GEMM passes 18 tests but no meaningful gain:
+358.615us vs359.178us atT4096, with short cases slightly slower. Removed it.
+New exact simplification: vector emits -A directly; cube inverts its diagonal
+blocks in place using +I, then consumes the untouched offdiagonal -A in the
+join. Removes a full128 negative-identity GEMM and two L1 copies per chunk.

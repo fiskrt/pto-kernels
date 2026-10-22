@@ -77,6 +77,9 @@ AICORE inline void mega_prepare_chunk(
         TMUL(values, values, coeff); PipeBarrierVec();
         TMUL(values, values, mask); PipeBarrierVec();
         TROWEXPANDMUL(values, values, beta_col); PipeBarrierVec();
+#ifdef GDN_NEGATIVE_A
+        TMULS(values, values, -1.0f); PipeBarrierVec();
+#endif
         TCVT(raw, values, RoundMode::CAST_NONE); pipe_barrier(PIPE_ALL);
         GlobalTensor<half, S, Str> agm(a + output_offset, {1, 1, 1, count, C}, {1, 1, 1, C, 1});
         TSTORE(agm, raw_part); pipe_barrier(PIPE_ALL);
@@ -270,6 +273,12 @@ AICORE inline void mega_fused_pipeline(
             int64_t offset = (pos * H + head) * C;
             int64_t packed = (head * tokens + pos) * C;
             auto slot_buffer = decays + (get_block_idx() * 4 + slot * 2) * C * C;
+#ifdef GDN_NEGATIVE_A
+            Tail at(valid, valid); TASSIGN(at, 2 * Bytes);
+            mega_load_packed<C, C, C>(inverse, at, a_gm + packed, valid, valid);
+            pipe_barrier(PIPE_ALL);
+            if (valid != C) TFILLPAD(at, at);
+#else
             Tail at(valid, valid); TASSIGN(at, 0);
             mega_load_packed<C, C, C>(input, at, a_gm + packed, valid, valid);
             pipe_barrier(PIPE_ALL);
@@ -277,15 +286,25 @@ AICORE inline void mega_fused_pipeline(
             TMOV(left, negative_identity); TMOV(right, input); pipe_barrier(PIPE_ALL);
             TMATMUL(acc, left, right); pipe_barrier(PIPE_ALL);
             TMOV(negative, acc); TMOV(inverse, acc); pipe_barrier(PIPE_ALL);
+#endif
             int terms = 64;
 #ifdef GDN_ADAPTIVE_INVERSE
             auto controls = reinterpret_cast<__gm__ int32_t*>(debug) + get_block_idx() * 16384 + 8192 + slot * 64;
             dcci(controls, SINGLE_CACHE_LINE); dcci(controls + 32, SINGLE_CACHE_LINE);
             terms = max(controls[0], controls[32]);
 #endif
+#ifdef GDN_NEGATIVE_A
+            // With B=-A and +I, the same polynomial computes (I+A)^-1.
+            // Invert diagonal blocks in place; the lower offdiagonal B is
+            // untouched until the join consumes and replaces it.
+            mega_inverse_diagonal<64>(inverse, identity, inverse, 0, terms);
+            mega_inverse_diagonal<64>(inverse, identity, inverse, 64, terms);
+            mega_inverse_join<64>(inverse, inverse, 0);
+#else
             mega_inverse_diagonal<64>(input, negative_identity, inverse, 0, terms);
             mega_inverse_diagonal<64>(input, negative_identity, inverse, 64, terms);
             mega_inverse_join<64>(negative, inverse, 0);
+#endif
 #ifdef GDN_FUSED_TIMING
             phase_ticks += get_sys_cnt() - stamp;
             stamp = get_sys_cnt();

@@ -92,3 +92,18 @@ and correlated keys. Initial-state benchmark: 39.382 / 50.061 / 111.211 /
 output/state error remains approximately .00043/.00039. No tolerances changed.
 Raw records: joint_output_initial.json and baseline_initial.json under
 benchmark_data/gdn_mega/. All-head acceptance remains pending for this flag.
+
+## In-place signed inverse (commit recorded in the next log update)
+
+The vector preparation now emits -A directly. The cube inverts the two
+diagonal blocks in place with +I and then overwrites the untouched lower
+offdiagonal block with its inverse join. This removes a full128x128 GEMM
+against -I and two intermediate copies per chunk. The inverse algebra and
+measured numerical errors are unchanged. Enable with `GDN_NEGATIVE_A` in
+addition to fused/adaptive/joint-product flags.
+
+All 18 selected H16 tests pass. Initial-state medians: 38.915 / 48.909 /
+104.472 / 331.824 us; T4096 improves 7.6% over the preceding joint-product
+checkpoint and is 2.60x faster than the original initial-state baseline.
+Raw results: benchmark_data/gdn_mega/negative_a_initial.json. Full-head
+acceptance is still pending for these optional fused changes.
