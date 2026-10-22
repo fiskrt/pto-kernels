@@ -144,7 +144,7 @@ Without initial state:38.417/47.582/97.472/299.847us. All optional fused flags
 ~0.00043, state~0.00039 on benchmark inputs. Raw records:fenced_acceptance*.json
 under benchmark_data/gdn_mega/. 3x is not yet achieved across all lengths.
 
-## Reuse resident operands (commit recorded next)
+## 9e91150 — reuse resident operands
 
 Reuse S already resident in L0B after W*S. When a chunk's stored half decay
 matrix is exactly zero and the preceding L1 copy is also zero, retain that
