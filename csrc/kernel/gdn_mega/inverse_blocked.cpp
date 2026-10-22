@@ -1,7 +1,7 @@
 // Block inverse: invert four 32x32 diagonal blocks, then assemble only the
 // nonzero lower off-diagonal blocks with -R^{-1} B L^{-1}.
 template <int B, typename Mat>
-AICORE inline void mega_inverse_diagonal(Mat input, Mat neg_i, Mat result, int offset)
+AICORE inline void mega_inverse_diagonal(Mat input, Mat neg_i, Mat result, int offset, int max_terms = B)
 {
 #if defined(__DAV_CUBE__)
     using Small = Tile<TileType::Mat, half, B, B, BLayout::ColMajor, B, B, SLayout::RowMajor, 512>;
@@ -22,22 +22,22 @@ AICORE inline void mega_inverse_diagonal(Mat input, Mat neg_i, Mat result, int o
     TMOV(inverse, x); pipe_barrier(PIPE_ALL);
     TileLeft<half, B, B> power_left;
     TASSIGN(power_left, B * B * sizeof(half));
-    for (int degree = 2; degree < B; degree *= 2) {
+    for (int degree = 2; degree < max_terms; degree *= 2) {
         TMOV(a, inverse);
         TMOV(b, power);
-        if (degree * 2 < B) TMOV(power_left, power);
+        if (degree * 2 < max_terms) TMOV(power_left, power);
         set_flag(PIPE_MTE1, PIPE_M, EVENT_ID0);
         wait_flag(PIPE_MTE1, PIPE_M, EVENT_ID0);
         TMATMUL_ACC(x, x, a, b);
         set_flag(PIPE_M, PIPE_FIX, EVENT_ID0);
         // Independent accumulator and L0A buffer: FIX can export X while
         // the cube computes the next power using the same resident L0B.
-        if (degree * 2 < B) {
+        if (degree * 2 < max_terms) {
             TMATMUL(p, power_left, b);
             set_flag(PIPE_M, PIPE_FIX, EVENT_ID1);
         }
         wait_flag(PIPE_M, PIPE_FIX, EVENT_ID0);
-        if (degree * 2 < B) {
+        if (degree * 2 < max_terms) {
             TMOV(inverse, x);
             wait_flag(PIPE_M, PIPE_FIX, EVENT_ID1);
             TMOV(power, p);

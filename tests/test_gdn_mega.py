@@ -410,3 +410,30 @@ def test_gdn_mega_tails_and_memory(lengths, gate_scale, npu_device):
         torch.npu.synchronize()
         _assert_close("out", args["out"].float() * D**-0.5, expected)
         _assert_close("state", args["final_state"].view_as(expected_state), expected_state)
+
+
+@pytest.mark.parametrize("beta_value", [0.0, 0.02])
+def test_gdn_mega_correlated_keys(beta_value, npu_device):
+    """Identity and high-row-norm inverses, including the adaptive fallback."""
+    length, heads, key_heads = 256, 16, 4
+    q, k, v, g, beta = _make_inputs(length, heads, key_heads, seed=17)
+    k = k[:, :1].expand_as(k).contiguous()
+    g.zero_()
+    beta.fill_(beta_value)
+    initial = torch.randn(1, heads, D, D, dtype=torch.float16) * 0.1
+    qr, kr = _expand_kv_heads(q, k, heads)
+    expected, expected_state = _reference(qr, kr, v, g, beta, initial)
+    args = _prepare_gdn_mega(
+        *(t.to(npu_device) for t in (q, k, v, g, beta)),
+        torch.tensor([0, length], device=npu_device, dtype=torch.int32), initial.to(npu_device),
+    )
+    for _ in range(5):
+        pto_gdn_mega(**args)
+        torch.npu.synchronize()
+        pairs = [(args["out"].cpu().float() * D**-0.5, expected),
+                 (args["final_state"].cpu().view_as(expected_state).float(), expected_state)]
+        for actual, reference in pairs:
+            assert torch.isfinite(actual).all()
+            relative_rmse = ((actual - reference).square().mean() /
+                             reference.square().mean().clamp_min(1e-16)).sqrt().item()
+            assert relative_rmse < 0.005, relative_rmse

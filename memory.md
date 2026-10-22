@@ -156,3 +156,23 @@ library is from the preceding exact fused timing build, not the failed build.
 On resumption, inspect /tmp/gdn-adaptive-build.log inside gdn-mega-opt.
 The adaptive helper adds max_terms and four conditional blocks; their changes
 are intentionally unstaged relative to the exact-inverse checkpoint.
+
+## Resumed: bounded adaptive inverse
+
+User resumed optimization. Fixed the two dynamic-tile constructors (one
+dynamic dimension takes one constructor argument). Full-head acceptance:
+
+```sh
+bash scripts/gdn_mega_docker.sh bash -lc 'cmake -S . -B build -DGDN_MEGA_HEAD= -DGDN_MEGA_DEFINITIONS="GDN_FUSED_PIPELINE;GDN_ADAPTIVE_INVERSE" && bash scripts/build_gdn_mega.sh'
+bash scripts/gdn_mega_docker.sh timeout 120 python -m pytest -q tests/test_gdn_mega.py
+bash scripts/gdn_mega_docker.sh timeout 120 python benchmarking/gdn_mega.py --output benchmark_data/gdn_mega/adaptive_acceptance.json
+```
+
+25 tests pass. H16/Hg4 latencies: 39.143 / 49.481 / 112.795 / 372.280 us.
+During single-head testing, use `-k 'not head_configs or H16'`; matching `16`
+alone accidentally includes H64-Hg16, unsupported by a HEAD=16 binary.
+Counter build: inverse 6470 ticks vs exact 8754, rest ~9572 at T4096; vector
+preparation ~11427 ticks. Cube remains critical. Full uninstrumented build
+is ~3us faster. Next test: full128 polynomial avoids two block inversions and
+join overhead when only a few terms are needed; retain blocked fallback for
+high norm.

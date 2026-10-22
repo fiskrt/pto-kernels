@@ -7,7 +7,7 @@ AICORE inline void mega_prepare_chunk(
     __gm__ half* raw_kk, __gm__ half* raw_qk, __gm__ float* lower, __gm__ float* full,
     __gm__ half* neg_i, __gm__ half* a, __gm__ half* w, __gm__ half* u,
     __gm__ half* scaled_k, __gm__ half* scaled_q, __gm__ half* attention, __gm__ half* decay,
-    int64_t pos, int valid, int head, int kh, int64_t tokens, int64_t matrix)
+    int64_t pos, int valid, int head, int kh, int64_t tokens, int64_t matrix, __gm__ int32_t* control)
 {
 #if defined(__DAV_VEC__)
     constexpr int R = C / 2, F = R * C * sizeof(float);
@@ -37,6 +37,9 @@ AICORE inline void mega_prepare_chunk(
     GlobalTensor<float, S, Str> ggm(g + head * tokens + pos, {1, 1, 1, 1, valid}, {1, 1, 1, valid, 1});
     TLOAD(gp, ggm); pipe_barrier(PIPE_ALL);
     float last = gates.GetValue(valid - 1);
+#ifdef GDN_ADAPTIVE_INVERSE
+    int inverse_terms = 2;
+#endif
     if (count > 0) {
         HP part(count, C), raw_part(count, C);
         TASSIGN(part, 4 * F); TASSIGN(raw_part, 4 * F + F / 2);
@@ -77,6 +80,28 @@ AICORE inline void mega_prepare_chunk(
         TCVT(raw, values, RoundMode::CAST_NONE); pipe_barrier(PIPE_ALL);
         GlobalTensor<half, S, Str> agm(a + output_offset, {1, 1, 1, count, C}, {1, 1, 1, C, 1});
         TSTORE(agm, raw_part); pipe_barrier(PIPE_ALL);
+#ifdef GDN_ADAPTIVE_INVERSE
+        // Bound the geometric-series tail using the actual FP16 input matrix.
+        // Each stripe bounds its diagonal block by the full row absolute sum.
+        // The cube uses the larger bound for both diagonal blocks.
+        TCVT(values, raw, RoundMode::CAST_NONE); PipeBarrierVec();
+        TABS(values, values); PipeBarrierVec();
+        Tile<TileType::Vec, float, R, C, BLayout::RowMajor, DYNAMIC, C> norm_values(count);
+        Tile<TileType::Vec, float, R, 1, BLayout::ColMajor, DYNAMIC, 1> sums(count);
+        Tile<TileType::Vec, float, 1, R, BLayout::RowMajor, 1, DYNAMIC> sums_row(count);
+        Tile<TileType::Vec, float, 1, 8, BLayout::RowMajor, 1, 1> norm;
+        Row norm_tmp;
+        TASSIGN(norm_values, 0); TASSIGN(sums, 3 * F); TASSIGN(sums_row, 3 * F);
+        TASSIGN(norm, 3 * F + R * sizeof(float)); TASSIGN(norm_tmp, F);
+        TROWSUM(sums, norm_values, keys); PipeBarrierVec();
+        TROWMAX(norm, sums_row, norm_tmp); pipe_barrier(PIPE_ALL);
+        float rho = norm.GetValue(0) * 1.001f;
+        // For rho<1, omitted infinity norm <= rho^n/(1-rho).
+        // These thresholds bound the diagonal truncation by 3.2e-6 or less;
+        // the block join amplifies this by <1.5 at the loosest (n=8) case.
+        inverse_terms = rho <= 0.0005f ? 2 : rho <= 0.03125f ? 4 :
+                        rho <= 0.2f ? 8 : rho <= 0.4f ? 16 : rho <= 0.6f ? 32 : 64;
+#endif
 
         GlobalTensor<half, S, Str> kgm(k + raw_offset, {1, 1, 1, count, C}, {1, 1, 1, kh * C, 1});
         TLOAD(part, kgm); pipe_barrier(PIPE_ALL);
@@ -123,6 +148,10 @@ AICORE inline void mega_prepare_chunk(
     GlobalTensor<half, S, Str> dgm(decay + stripe * C,
         {1, 1, 1, R, C}, {1, 1, 1, C, 1});
     TSTORE(dgm, data); pipe_barrier(PIPE_ALL);
+#ifdef GDN_ADAPTIVE_INVERSE
+    control[0] = inverse_terms;
+    dcci(control, SINGLE_CACHE_LINE);
+#endif
 
 #endif
 }
@@ -210,7 +239,9 @@ AICORE inline void mega_fused_pipeline(
             auto slot_buffer = decays + (get_block_idx() * 4 + slot * 2) * C * C;
             mega_prepare_chunk<H, C>(q, k, v, g, beta, raw_kk, raw_qk, lower, full, neg_i,
                                      a_gm, w, u, scaled_k, scaled_q, slot_buffer, slot_buffer + C * C,
-                                     pos, valid, head, kh, tokens, m);
+                                     pos, valid, head, kh, tokens, m,
+                                     reinterpret_cast<__gm__ int32_t*>(debug) + get_block_idx() * 16384 +
+                                         8192 + slot * 64 + get_subblockid() * 32);
 #ifdef GDN_FUSED_TIMING
             phase_ticks += get_sys_cnt() - stamp;
             ++chunks_done;
@@ -246,8 +277,14 @@ AICORE inline void mega_fused_pipeline(
             TMOV(left, negative_identity); TMOV(right, input); pipe_barrier(PIPE_ALL);
             TMATMUL(acc, left, right); pipe_barrier(PIPE_ALL);
             TMOV(negative, acc); TMOV(inverse, acc); pipe_barrier(PIPE_ALL);
-            mega_inverse_diagonal<64>(input, negative_identity, inverse, 0);
-            mega_inverse_diagonal<64>(input, negative_identity, inverse, 64);
+            int terms = 64;
+#ifdef GDN_ADAPTIVE_INVERSE
+            auto controls = reinterpret_cast<__gm__ int32_t*>(debug) + get_block_idx() * 16384 + 8192 + slot * 64;
+            dcci(controls, SINGLE_CACHE_LINE); dcci(controls + 32, SINGLE_CACHE_LINE);
+            terms = max(controls[0], controls[32]);
+#endif
+            mega_inverse_diagonal<64>(input, negative_identity, inverse, 0, terms);
+            mega_inverse_diagonal<64>(input, negative_identity, inverse, 64, terms);
             mega_inverse_join<64>(negative, inverse, 0);
 #ifdef GDN_FUSED_TIMING
             phase_ticks += get_sys_cnt() - stamp;

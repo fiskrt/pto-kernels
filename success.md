@@ -60,3 +60,19 @@ unchanged. Raw records: `benchmark_data/gdn_mega/output_acceptance.json` and
 These measurements and device tests completed before the user paused work;
 this commit records that validated checkpoint. The 3x target remains unmet.
 The unfinished adaptive-inverse experiment and its unrun tests are excluded.
+
+## Adaptive inverse checkpoint (commit recorded in the next log update)
+
+`GDN_ADAPTIVE_INVERSE` measures the infinity norm of the actual FP16 triangular
+matrix and selects 2/4/8/16/32 polynomial terms only when a geometric tail
+bound is at most 3.2e-6 per diagonal block. Otherwise the exact 64-term block
+inverse is retained. This is a truncation bound; floating-point rounding is
+validated separately by reference comparisons.
+
+Full-head build with `GDN_FUSED_PIPELINE;GDN_ADAPTIVE_INVERSE` passed all 25
+tests on Ascend910B2, including new zero-beta and correlated-key, zero-decay
+cases, with five repeated executions. Benchmark medians at T=128/256/1024/4096:
+39.143 / 49.481 / 112.795 / 372.280 us. The long case improves 9.6% over the
+previous fused checkpoint; actual output/state error metrics are unchanged.
+Raw results: `benchmark_data/gdn_mega/adaptive_acceptance.json`. No tolerance
+relaxation; 3x target remains unmet. This path remains optional at this commit.
