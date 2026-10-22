@@ -1,3 +1,7 @@
+#if defined(GDN_SKIP_ZERO_DECAY) && !defined(GDN_REUSE_OPERANDS)
+#error "GDN_SKIP_ZERO_DECAY requires decay metadata (GDN_REUSE_OPERANDS)"
+#endif
+
 #if defined(GDN_REUSE_OPERANDS) && (!defined(GDN_ADAPTIVE_INVERSE) || !defined(GDN_JOINT_PRODUCTS))
 #error "GDN_REUSE_OPERANDS requires adaptive metadata and joint output products"
 #endif
@@ -156,7 +160,9 @@ AICORE inline void mega_prepare_chunk(
     }
     float exp_last = exp_gates.GetValue(valid - 1);
     if (exp_last < 0x1p-25f) {
+#ifndef GDN_SKIP_ZERO_DECAY
         TEXPANDS(data, static_cast<half>(0)); pipe_barrier(PIPE_ALL);
+#endif
     } else {
         GlobalTensor<half, S, Str> igm(neg_i + stripe * C, {1, 1, 1, R, C}, {1, 1, 1, C, 1});
         TLOAD(data, igm); pipe_barrier(PIPE_ALL);
@@ -166,7 +172,10 @@ AICORE inline void mega_prepare_chunk(
     }
     GlobalTensor<half, S, Str> dgm(decay + stripe * C,
         {1, 1, 1, R, C}, {1, 1, 1, C, 1});
-    TSTORE(dgm, data); pipe_barrier(PIPE_ALL);
+#ifdef GDN_SKIP_ZERO_DECAY
+    if (!(exp_last < 0x1p-25f))
+#endif
+    { TSTORE(dgm, data); pipe_barrier(PIPE_ALL); }
 #ifdef GDN_ADAPTIVE_INVERSE
 #ifdef GDN_REUSE_OPERANDS
     // Below the half round-to-nearest zero threshold, the stored decay matrix
@@ -340,7 +349,9 @@ AICORE inline void mega_fused_pipeline(
             mega_load_packed<C, C, C>(kt, ktail, scaled_k + packed, valid, C);
             mega_load_packed<C, C, C>(query, qtail, scaled_q + packed, valid, C);
             mega_load_packed<C, C, C>(attention, att, slot_buffer, valid, valid);
-#ifdef GDN_REUSE_OPERANDS
+#if defined(GDN_SKIP_ZERO_DECAY)
+            if (!decay_zero)
+#elif defined(GDN_REUSE_OPERANDS)
             if (!reuse_decay)
 #endif
             mega_load_packed<C, C, C>(decay, decay, slot_buffer + C * C, C, C);
@@ -367,7 +378,9 @@ AICORE inline void mega_fused_pipeline(
             mega_load_packed<C, C, C>(kt, ktail, scaled_k + packed, valid, C);
             mega_load_packed<C, C, C>(query, qtail, scaled_q + packed, valid, C);
             mega_load_packed<C, C, C>(attention, att, slot_buffer, valid, valid);
-#ifdef GDN_REUSE_OPERANDS
+#if defined(GDN_SKIP_ZERO_DECAY)
+            if (!decay_zero)
+#elif defined(GDN_REUSE_OPERANDS)
             if (!reuse_decay)
 #endif
             mega_load_packed<C, C, C>(decay, decay, slot_buffer + C * C, C, C);
@@ -394,6 +407,26 @@ AICORE inline void mega_fused_pipeline(
                 TMATMUL_ACC(acc, acc, left, right); pipe_barrier(PIPE_ALL);
             }
             TMOV(residual, acc); pipe_barrier(PIPE_ALL);
+#ifdef GDN_SKIP_ZERO_DECAY
+            if (decay_zero) {
+                // S*0 contributes nothing even when S itself is nonzero.
+                TMOV(left, query);
+                if (ci == 0 && !has_initial) TMOV(right, state);
+                pipe_barrier(PIPE_ALL);
+                TMATMUL(out_acc, left, right); pipe_barrier(PIPE_ALL);
+                Trans kt_trans; TRESHAPE(kt_trans, kt);
+                TEXTRACT(left, kt_trans, 0, 0); TMOV(right, residual); pipe_barrier(PIPE_ALL);
+                TMATMUL(acc, left, right); pipe_barrier(PIPE_ALL);
+                TMOV(state, acc); pipe_barrier(PIPE_ALL);
+                TMOV(left, attention); pipe_barrier(PIPE_ALL);
+                TMATMUL_ACC(out_acc, out_acc, left, right); pipe_barrier(PIPE_ALL);
+                TileAcc<float, C, C, DYNAMIC, C> ot(valid); TASSIGN(ot, C * C * sizeof(float));
+                mega_store_packed<C, C, H * C>(out_acc, ot, output + offset, valid, C);
+                pipe_barrier(PIPE_ALL);
+                previous_decay_zero = true;
+            } else
+#endif
+            {
 #ifdef GDN_JOINT_PRODUCTS
             // Output and next state consume exactly the same two RHS matrices.
             // [O; S_next] = [Q_scaled; decay*I] S + [attention; K_tilde^T] R.
@@ -438,6 +471,7 @@ AICORE inline void mega_fused_pipeline(
             mega_store_packed<C, C, H * C>(out_acc, ot, output + offset, valid, C);
             pipe_barrier(PIPE_ALL);
 #endif
+            }
 #ifdef GDN_FUSED_TIMING
             rest_ticks += get_sys_cnt() - stamp;
             ++chunks_done;
@@ -446,7 +480,11 @@ AICORE inline void mega_fused_pipeline(
         }
 #if defined(__DAV_CUBE__)
 #ifdef GDN_JOINT_PRODUCTS
-        if (end > start) {
+        if (end > start
+#ifdef GDN_SKIP_ZERO_DECAY
+            && !previous_decay_zero
+#endif
+        ) {
             TileAcc<float, 2 * C, C, C, C> last_state;
             TASSIGN(last_state, C * 16 * sizeof(float));
             mega_store_packed<C, C, C>(last_state, last_state, final_state + work * C * C, C, C);

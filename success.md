@@ -167,3 +167,18 @@ orders exp(g) before short-tail scalar reads. exp(g_i-g_j) remains unchanged.
 25 selected strict tests pass. Initial-state medians:36.726/45.199/94.346/
 292.951us; shorter cases improve, long case is unchanged. Actual errors are
 unchanged. Raw results:benchmark_data/gdn_mega/vector_trim_initial.json.
+
+## Pending commit — omit products with exactly zero half decay
+
+When exp(g_last) rounds to FP16 zero, omit decay-matrix construction/load
+and the full S*0 cube product. Use three ordinary products for output/state;
+retain joint products when decay is nonzero. This supports nonzero incoming
+state and adds no approximation to the existing half-decay calculation.
+25 selected strict H16 tests pass, including changing decay and the repeated
+packed regression. Initial-state medians:35.877/44.158/91.991/285.193us.
+Speedups:2.997x/3.296x/3.367x/3.029x. T128 remains just below target.
+Raw results:benchmark_data/gdn_mega/skip_decay_initial.json.
+Validation: bash scripts/gdn_mega_docker.sh bash scripts/build_gdn_mega.sh;
+then timeout 120 python -m pytest tests/test_gdn_mega.py -q -k
+'not head_configs or H16'; then timeout 120 python benchmarking/gdn_mega.py
+--initial-state --output benchmark_data/gdn_mega/skip_decay_initial.json.
