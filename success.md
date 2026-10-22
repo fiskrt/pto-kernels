@@ -193,7 +193,7 @@ original initial-state baseline at all four lengths. Full-head default-build
 acceptance remains pending. Raw:benchmark_data/gdn_mega/early_initial.json.
 Commands match preceding entry with GDN_EARLY_PREPARE added to definitions.
 
-## Pending commit — enable validated fused pipeline by default
+## f71a883 — enable validated fused pipeline by default
 
 Full production build (all head specializations, empty experiment definitions)
 passes all32 strict tests on Ascend910B2. Initial-state medians:
