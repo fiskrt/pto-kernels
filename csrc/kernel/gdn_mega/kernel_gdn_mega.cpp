@@ -349,10 +349,16 @@ namespace mk_o {
 #include "chunk_o.cpp"
 }
 
+#include "gate_scan.cpp"
+#include "inverse_doubling.cpp"
+
 AICORE inline void mega_solve_tril(__gm__ half *out, __gm__ half *in, __gm__ half *minus_id, uint32_t matrix_size,
                                    uint32_t num_matrices, uint32_t num_bsnd_heads, __gm__ int32_t *cu_seqlens,
                                    uint32_t is_lower)
 {
+#ifndef GDN_LEGACY_INVERSE
+    mega_inverse_doubling(out, in, minus_id, num_matrices, num_bsnd_heads, cu_seqlens);
+#else
     if (num_matrices <= get_block_num())
         mk_solve::runKernelTriInvRecUnroll<half, float, GDN_C, 1, true, half>(out, in, minus_id, num_matrices,
                                                                               num_bsnd_heads, cu_seqlens, is_lower);
@@ -362,6 +368,7 @@ AICORE inline void mega_solve_tril(__gm__ half *out, __gm__ half *in, __gm__ hal
     else
         mk_solve::runKernelTriInvRecUnroll<half, float, GDN_C, 4, true, half>(out, in, minus_id, num_matrices,
                                                                               num_bsnd_heads, cu_seqlens, is_lower);
+#endif
 }
 
 template <int32_t H>
@@ -378,11 +385,27 @@ AICORE inline void mega_kernel_impl(GM_ADDR q_ptr, GM_ADDR k_ptr, GM_ADDR v_ptr,
 {
     constexpr int32_t D = GDN_D;
     constexpr int32_t C = GDN_C;
+#if defined(GDN_STAGE_TIMING) && defined(__DAV_CUBE__)
+    uint64_t stage_times[7];
+#define GDN_MARK(i) stage_times[i] = get_sys_cnt()
+#else
+#define GDN_MARK(i)
+#endif
+    GDN_MARK(0);
+
 
     if (num_key_heads == 0 || (static_cast<uint32_t>(H) % num_key_heads) != 0) {
         return;
     }
 
+#ifndef GDN_SERIAL_SCAN
+    mega_gate_scan<H, C>(reinterpret_cast<__gm__ float*>(g_in_ptr),
+                         reinterpret_cast<__gm__ half*>(beta_ptr),
+                         reinterpret_cast<__gm__ float*>(g_sum_ptr),
+                         reinterpret_cast<__gm__ float*>(g_t_ptr),
+                         reinterpret_cast<__gm__ half*>(beta_t_ptr),
+                         reinterpret_cast<__gm__ int32_t*>(cu_seqlens_ptr), batch_size, total_tokens);
+#else
     mk_cumsum::cumsum_kernel<H, C>(reinterpret_cast<__gm__ float *>(g_in_ptr),
                                    reinterpret_cast<__gm__ float *>(g_sum_ptr),
                                    reinterpret_cast<__gm__ int32_t *>(cu_seqlens_ptr), batch_size, seq_len);
@@ -402,6 +425,7 @@ AICORE inline void mega_kernel_impl(GM_ADDR q_ptr, GM_ADDR k_ptr, GM_ADDR v_ptr,
                                       reinterpret_cast<__gm__ float *>(g_t_ptr), total_tokens);
     mega_transpose_TH_to_HT<half, H>(reinterpret_cast<__gm__ half *>(beta_ptr),
                                      reinterpret_cast<__gm__ half *>(beta_t_ptr), total_tokens);
+#endif
 
 #ifdef MEGA_STOP_AFTER_TRANSPOSE
     pipe_barrier(PIPE_ALL);
@@ -410,6 +434,7 @@ AICORE inline void mega_kernel_impl(GM_ADDR q_ptr, GM_ADDR k_ptr, GM_ADDR v_ptr,
 
     SyncAllImpl<false>();
 
+    GDN_MARK(1);
     mk_kkt::kkt_kernel<H, D, C>(
         reinterpret_cast<__gm__ half *>(k_ptr), reinterpret_cast<__gm__ half *>(beta_t_ptr),
         reinterpret_cast<__gm__ float *>(g_t_ptr), reinterpret_cast<__gm__ float *>(msk_lower_ptr),
@@ -435,6 +460,7 @@ AICORE inline void mega_kernel_impl(GM_ADDR q_ptr, GM_ADDR k_ptr, GM_ADDR v_ptr,
 
     SyncAllImpl<false>();
 
+    GDN_MARK(2);
     mega_solve_tril(reinterpret_cast<__gm__ half *>(A_inv_ptr), reinterpret_cast<__gm__ half *>(A_ptr),
                     reinterpret_cast<__gm__ half *>(minus_id_ptr), C, num_matrices, H,
                     reinterpret_cast<__gm__ int32_t *>(cu_seqlens_ptr), 1);
@@ -457,6 +483,7 @@ AICORE inline void mega_kernel_impl(GM_ADDR q_ptr, GM_ADDR k_ptr, GM_ADDR v_ptr,
     return;
 #endif
 
+    GDN_MARK(3);
     mk_wy::wy_fast_kernel<H, D, C>(
         reinterpret_cast<__gm__ half *>(k_ptr), reinterpret_cast<__gm__ half *>(v_ptr),
         reinterpret_cast<__gm__ half *>(beta_t_ptr), reinterpret_cast<__gm__ float *>(g_t_ptr),
@@ -486,6 +513,7 @@ AICORE inline void mega_kernel_impl(GM_ADDR q_ptr, GM_ADDR k_ptr, GM_ADDR v_ptr,
 
     SyncAllImpl<false>();
 
+    GDN_MARK(4);
     mk_h::chunk_h_kernel<H, D, C>(
         reinterpret_cast<__gm__ half *>(k_ptr), reinterpret_cast<__gm__ half *>(w_ptr),
         reinterpret_cast<__gm__ half *>(u_ptr), reinterpret_cast<__gm__ float *>(g_t_ptr),
@@ -501,6 +529,7 @@ AICORE inline void mega_kernel_impl(GM_ADDR q_ptr, GM_ADDR k_ptr, GM_ADDR v_ptr,
 
     SyncAllImpl<false>();
 
+    GDN_MARK(5);
     mk_o::chunk_o_kernel<H, D, C>(
         reinterpret_cast<__gm__ half *>(q_ptr), reinterpret_cast<__gm__ half *>(k_ptr),
         reinterpret_cast<__gm__ half *>(v_new_ptr), reinterpret_cast<__gm__ half *>(s_ptr),
@@ -520,6 +549,16 @@ AICORE inline void mega_kernel_impl(GM_ADDR q_ptr, GM_ADDR k_ptr, GM_ADDR v_ptr,
 #endif
     }
 #endif
+    pipe_barrier(PIPE_ALL);
+    GDN_MARK(6);
+#if defined(GDN_STAGE_TIMING) && defined(__DAV_CUBE__)
+    if (get_block_idx() == 0) {
+        auto times = reinterpret_cast<__gm__ uint64_t*>(A_inv_f32_ptr);
+        for (int i = 0; i < 7; ++i) times[i] = stage_times[i];
+        dcci(times, SINGLE_CACHE_LINE);
+    }
+#endif
+#undef GDN_MARK
 }
 
 // Note the codegen parser does not support arguments of form "type *name", only "type* name"
@@ -549,6 +588,9 @@ GDN_KERNEL_NAME(GM_ADDR q_ptr, GM_ADDR k_ptr, GM_ADDR v_ptr, GM_ADDR g_in_ptr, G
         return
 
     switch (num_heads) {
+#ifdef GDN_MEGA_HEAD
+        DISPATCH_MEGA_H(GDN_MEGA_HEAD);
+#else
         DISPATCH_MEGA_H(8);
         DISPATCH_MEGA_H(12);
         DISPATCH_MEGA_H(16);
@@ -556,6 +598,7 @@ GDN_KERNEL_NAME(GM_ADDR q_ptr, GM_ADDR k_ptr, GM_ADDR v_ptr, GM_ADDR g_in_ptr, G
         DISPATCH_MEGA_H(32);
         DISPATCH_MEGA_H(48);
         DISPATCH_MEGA_H(64);
+#endif
         default:
             return;
     }

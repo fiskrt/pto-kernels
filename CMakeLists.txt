@@ -22,6 +22,10 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_LINK_DEPENDS_USE_LINKER OFF)
 
 option(PIP_INSTALL "True if building via pip" OFF)
+option(GDN_MEGA_ONLY "Build only the fused GDN kernel and its Python binding" OFF)
+set(GDN_MEGA_HEAD "" CACHE STRING "Optional single value-head specialization for fast experiments")
+set(GDN_MEGA_DEFINITIONS "" CACHE STRING "Extra GDN experiment compile definitions")
+option(GDN_MEGA_MANUAL_SYNC "Use explicit GDN synchronization only (experimental)" OFF)
 
 # Kernel toolchain selection.
 #
@@ -163,9 +167,7 @@ message("* TORCH_NPU_PATH           : ${TORCH_NPU_PATH}")
 message("* TORCH_LIBRARIES          : ${TORCH_LIBRARIES}")
 message("***********************************************************")
 
-ascendc_library(
-  no_workspace_kernel
-  SHARED
+set(PTO_KERNEL_SOURCES
   csrc/kernel/kernel_tri_inv_col_sweep.cpp
   csrc/kernel/kernel_abs.cpp
   csrc/kernel/kernel_gdn_chunk_cumsum.cpp
@@ -189,6 +191,21 @@ ascendc_library(
   csrc/kernel/kernel_kda_kkt.cpp
   csrc/kernel/kernel_flash_attention.cpp)
 
+if(GDN_MEGA_ONLY)
+  set(PTO_KERNEL_SOURCES csrc/kernel/gdn_mega/kernel_gdn_mega.cpp)
+endif()
+ascendc_library(no_workspace_kernel SHARED ${PTO_KERNEL_SOURCES})
+if(GDN_MEGA_MANUAL_SYNC)
+  set_source_files_properties(csrc/kernel/gdn_mega/kernel_gdn_mega.cpp
+    PROPERTIES COMPILE_OPTIONS "--cce-auto-sync=off")
+endif()
+if(GDN_MEGA_HEAD)
+  ascendc_compile_definitions(no_workspace_kernel PRIVATE GDN_MEGA_HEAD=${GDN_MEGA_HEAD})
+endif()
+if(GDN_MEGA_DEFINITIONS)
+  ascendc_compile_definitions(no_workspace_kernel PRIVATE ${GDN_MEGA_DEFINITIONS})
+endif()
+
 if(USE_ASC_LANGUAGE)
   # pto_kernels_ops is linked with RUNPATH $ORIGIN/build/lib, so the kernel
   # library has to land there whichever toolchain built it.
@@ -210,6 +227,9 @@ else()
 endif()
 
 pybind11_add_module(pto_kernels_ops csrc/host/pybind11.cpp)
+if(GDN_MEGA_ONLY)
+  target_compile_definitions(pto_kernels_ops PRIVATE GDN_MEGA_ONLY)
+endif()
 # pybind11 does not work with C++20, so we set C++17 for the pybind11 module
 # target
 set_target_properties(pto_kernels_ops PROPERTIES CXX_STANDARD 17)
@@ -223,6 +243,7 @@ target_link_directories(pto_kernels_ops PRIVATE ${TORCH_INSTALL_PREFIX}/lib
 target_include_directories(
   pto_kernels_ops
   PRIVATE ${TORCH_NPU_PATH}/include ${TORCH_INCLUDE_DIRS}
+          ${ASCEND_CANN_PACKAGE_PATH}/include
           ${TORCH_INSTALL_PREFIX}/include
           ${TORCH_INSTALL_PREFIX}/include/torch/csrc/api/include)
 
@@ -239,7 +260,7 @@ if(PIP_INSTALL)
     pto_kernels_ops
     PROPERTIES BUILD_WITH_INSTALL_RPATH TRUE
                INSTALL_RPATH_USE_LINK_PATH TRUE
-               LINK_FLAGS "-Wl,-rpath,\${ORIGIN}/lib")
+               INSTALL_RPATH "$ORIGIN/lib")
 
   # install dynamic libraries under site-packages/pto_kernels/libs
   install(TARGETS no_workspace_kernel LIBRARY DESTINATION pto_kernels/lib)
@@ -253,7 +274,7 @@ else()
     pto_kernels_ops
     PROPERTIES BUILD_WITH_INSTALL_RPATH TRUE
                INSTALL_RPATH_USE_LINK_PATH TRUE
-               LINK_FLAGS "-Wl,-rpath,\${ORIGIN}/build/lib"
+               INSTALL_RPATH "${CMAKE_BINARY_DIR}/lib"
                LIBRARY_OUTPUT_DIRECTORY ${CMAKE_SOURCE_DIR})
 
 endif()
