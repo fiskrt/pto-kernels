@@ -77,7 +77,7 @@ previous fused checkpoint; actual output/state error metrics are unchanged.
 Raw results: `benchmark_data/gdn_mega/adaptive_acceptance.json`. No tolerance
 relaxation; 3x target remains unmet. This path remains optional at this commit.
 
-## Joint output/state products (commit recorded in the next log update)
+## 3a19c00 — joint output/state products
 
 Stack output and next-state equations into two shared-RHS matrix products:
 `[O; Snext] = [Qscaled; decayI] S + [attention; Ktilde^T] R`. This replaces four
