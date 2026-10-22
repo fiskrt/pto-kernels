@@ -76,3 +76,19 @@ cases, with five repeated executions. Benchmark medians at T=128/256/1024/4096:
 previous fused checkpoint; actual output/state error metrics are unchanged.
 Raw results: `benchmark_data/gdn_mega/adaptive_acceptance.json`. No tolerance
 relaxation; 3x target remains unmet. This path remains optional at this commit.
+
+## Joint output/state products (commit recorded in the next log update)
+
+Stack output and next-state equations into two shared-RHS matrix products:
+`[O; Snext] = [Qscaled; decayI] S + [attention; Ktilde^T] R`. This replaces four
+separate GEMMs with two taller GEMMs, sharing RHS transfers and synchronization.
+The algebra is unchanged and works with nonzero initial state. Optional flag:
+`GDN_JOINT_PRODUCTS`, together with fused/adaptive flags.
+
+18 selected H16 tests pass, including initial state, weak gates, packed tails,
+and correlated keys. Initial-state benchmark: 39.382 / 50.061 / 111.211 /
+359.178 us at T=128/256/1024/4096. Original initial-state baseline: 107.532 /
+145.567 / 309.691 / 863.765 us (2.73x / 2.91x / 2.78x / 2.40x). Actual
+output/state error remains approximately .00043/.00039. No tolerances changed.
+Raw records: joint_output_initial.json and baseline_initial.json under
+benchmark_data/gdn_mega/. All-head acceptance remains pending for this flag.

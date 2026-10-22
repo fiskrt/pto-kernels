@@ -176,3 +176,25 @@ preparation ~11427 ticks. Cube remains critical. Full uninstrumented build
 is ~3us faster. Next test: full128 polynomial avoids two block inversions and
 join overhead when only a few terms are needed; retain blocked fallback for
 high norm.
+
+Full128 adaptive polynomial experiment rejected: all 18 selected tests passed,
+but latencies 41.222 / 51.750 / 117.201 / 383.706 us were slower than the
+blocked adaptive inverse. Larger matrix arithmetic outweighed reduced dispatch.
+Next: overlap chunk RHS and output operand DMA with inverse computation;
+current PIPE_ALL barriers unnecessarily include independent MTE2 transfers.
+
+Direct residual polynomial (no dense inverse/W/U) passed 18 selected tests,
+but initial-state timings 41.805 / 53.032 / 119.838 / 392.198 us are slower.
+More full128 matmuls outweigh avoided smaller inverse operations. Rejected;
+source snapshot in benchmark_data/gdn_mega/direct_residual.cpp.
+Initial-state baseline now measured explicitly: 107.532 / 145.567 / 309.691 /
+863.765 us. Next exact algebraic change concatenates shared-factor products:
+[U,-W] = inverse [betaV,-beta exp(g)K]; [O;Snext] = [Qexp;decayI]S + [Att;Kt^T]R.
+Both fit physical L0 buffers (128KiB L0C, 64KiB L0A/L0B).
+
+Joint output/state products pass 18 selected H16 tests and reduce T4096 to
+359.178us WITH initial state. A first attempt also concatenated two L0B tiles
+by simple pointer offset; this is invalid because L0B is row-major in its
+outer blocks. Removed that branch. Concatenate W/U in column-major L1 instead
+and use one full-width TMOV to correctly interleave L0B. Current build flags
+GDN_FUSED_PIPELINE;GDN_ADAPTIVE_INVERSE;GDN_JOINT_PRODUCTS, HEAD=16.

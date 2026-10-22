@@ -315,12 +315,33 @@ AICORE inline void mega_fused_pipeline(
             TMATMUL(acc, left, right); pipe_barrier(PIPE_ALL); // U, retained in FP32.
             TMOV(right, input); pipe_barrier(PIPE_ALL);
             TMATMUL(out_acc, left, right); pipe_barrier(PIPE_ALL);
+
             TMOV(input, out_acc); pipe_barrier(PIPE_ALL); // -W.
             if (ci != 0 || has_initial) {
                 TMOV(left, input); TMOV(right, state); pipe_barrier(PIPE_ALL);
                 TMATMUL_ACC(acc, acc, left, right); pipe_barrier(PIPE_ALL);
             }
             TMOV(residual, acc); pipe_barrier(PIPE_ALL);
+#ifdef GDN_JOINT_PRODUCTS
+            // Output and next state consume exactly the same two RHS matrices.
+            // [O; S_next] = [Q_scaled; decay*I] S + [attention; K_tilde^T] R.
+            TileLeft<half, 2 * C, C> output_left;
+            TileLeft<half, C, C> state_left;
+            TileAcc<float, 2 * C, C> output_state;
+            TASSIGN(output_left, 0); TASSIGN(state_left, Bytes); TASSIGN(output_state, 0);
+            TMOV(left, query); TMOV(state_left, decay); TMOV(right, state);
+            pipe_barrier(PIPE_ALL);
+            TMATMUL(output_state, output_left, right); pipe_barrier(PIPE_ALL);
+            Trans kt_trans; TRESHAPE(kt_trans, kt);
+            TMOV(left, attention); TEXTRACT(state_left, kt_trans, 0, 0); TMOV(right, residual);
+            pipe_barrier(PIPE_ALL);
+            TMATMUL_ACC(output_state, output_state, output_left, right); pipe_barrier(PIPE_ALL);
+            TEXTRACT(state, output_state, C, 0); pipe_barrier(PIPE_ALL);
+            TileAcc<float, 2 * C, C, DYNAMIC, C> ot(valid);
+            TASSIGN(ot, 0);
+            mega_store_packed<C, C, H * C>(ot, ot, output + offset, valid, C);
+            pipe_barrier(PIPE_ALL);
+#else
             TMOV(left, query); TMOV(right, state); pipe_barrier(PIPE_ALL);
             TMATMUL(out_acc, left, right); pipe_barrier(PIPE_ALL);
             TMOV(left, state); TMOV(right, decay); pipe_barrier(PIPE_ALL);
@@ -335,6 +356,7 @@ AICORE inline void mega_fused_pipeline(
             TASSIGN(ot, C * C * sizeof(float));
             mega_store_packed<C, C, H * C>(out_acc, ot, output + offset, valid, C);
             pipe_barrier(PIPE_ALL);
+#endif
 #ifdef GDN_FUSED_TIMING
             rest_ticks += get_sys_cnt() - stamp;
             ++chunks_done;
@@ -342,7 +364,16 @@ AICORE inline void mega_fused_pipeline(
 #endif
         }
 #if defined(__DAV_CUBE__)
+#ifdef GDN_JOINT_PRODUCTS
+        if (end > start) {
+            TileAcc<float, 2 * C, C, C, C> last_state;
+            TASSIGN(last_state, C * 16 * sizeof(float));
+            mega_store_packed<C, C, C>(last_state, last_state, final_state + work * C * C, C, C);
+        } else
+#endif
+        {
         mega_store_packed<C, C, C>(acc, acc, final_state + work * C * C, C, C);
+        }
         pipe_barrier(PIPE_ALL);
 #elif defined(__DAV_VEC__)
         // Two initial credits plus one replenishment per consumed chunk leave
