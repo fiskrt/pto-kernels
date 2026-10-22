@@ -61,7 +61,7 @@ These measurements and device tests completed before the user paused work;
 this commit records that validated checkpoint. The 3x target remains unmet.
 The unfinished adaptive-inverse experiment and its unrun tests are excluded.
 
-## Adaptive inverse checkpoint (commit recorded in the next log update)
+## e900fcd — bounded adaptive inverse
 
 `GDN_ADAPTIVE_INVERSE` measures the infinity norm of the actual FP16 triangular
 matrix and selects 2/4/8/16/32 polynomial terms only when a geometric tail
