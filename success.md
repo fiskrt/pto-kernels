@@ -107,3 +107,16 @@ All 18 selected H16 tests pass. Initial-state medians: 38.915 / 48.909 /
 checkpoint and is 2.60x faster than the original initial-state baseline.
 Raw results: benchmark_data/gdn_mega/negative_a_initial.json. Full-head
 acceptance is still pending for these optional fused changes.
+
+## Overlap operand loads with inversion (commit recorded in the next log update)
+
+The in-place inverse frees L1 operand buffers early. Load W/U, scaled keys,
+queries, attention, and decay during inversion; narrow inverse synchronization
+to MTE1/cube/FIX instead of blocking independent MTE2 transfers.
+`GDN_PREFETCH` requires `GDN_NEGATIVE_A`.
+
+18 selected H16 tests pass. Initial-state medians: 37.458 / 45.992 / 96.432 /
+299.105 us, with unchanged numerical errors. T4096 improves 9.9% over the
+preceding checkpoint. Speedups over original initial-state baseline:
+2.87x / 3.17x / 3.21x / 2.89x. Full-head acceptance is pending. Raw results:
+benchmark_data/gdn_mega/prefetch_initial.json.

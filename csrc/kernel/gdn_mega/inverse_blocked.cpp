@@ -1,3 +1,16 @@
+// Order only the engines used by the on-chip inverse. Independent operand
+// DMA on MTE2 can progress while these cube/FIX/MTE1 dependencies resolve.
+AICORE inline void mega_inverse_sync()
+{
+#if defined(__DAV_CUBE__) && defined(GDN_PREFETCH)
+    set_flag(PIPE_MTE1, PIPE_M, EVENT_ID0); wait_flag(PIPE_MTE1, PIPE_M, EVENT_ID0);
+    set_flag(PIPE_M, PIPE_FIX, EVENT_ID0); wait_flag(PIPE_M, PIPE_FIX, EVENT_ID0);
+    set_flag(PIPE_FIX, PIPE_MTE1, EVENT_ID0); wait_flag(PIPE_FIX, PIPE_MTE1, EVENT_ID0);
+#else
+    pipe_barrier(PIPE_ALL);
+#endif
+}
+
 // Block inverse: invert four 32x32 diagonal blocks, then assemble only the
 // nonzero lower off-diagonal blocks with -R^{-1} B L^{-1}.
 template <int B, typename Mat>
@@ -13,13 +26,13 @@ AICORE inline void mega_inverse_diagonal(Mat input, Mat neg_i, Mat result, int o
     TileAcc<float, B, B> x, p;
     TASSIGN(a, 0); TASSIGN(b, 0); TASSIGN(x, 0); TASSIGN(p, B * B * sizeof(float));
     TEXTRACT(a, input, offset, offset); TEXTRACT(b, input, offset, offset);
-    pipe_barrier(PIPE_ALL);
-    TMATMUL(p, a, b); pipe_barrier(PIPE_ALL);
-    TMOV(power, p); TEXTRACT(b, neg_i, 0, 0); pipe_barrier(PIPE_ALL);
-    TMATMUL(x, a, b); pipe_barrier(PIPE_ALL);
-    TEXTRACT(a, neg_i, 0, 0); pipe_barrier(PIPE_ALL);
-    TMATMUL_ACC(x, x, a, b); pipe_barrier(PIPE_ALL);
-    TMOV(inverse, x); pipe_barrier(PIPE_ALL);
+    mega_inverse_sync();
+    TMATMUL(p, a, b); mega_inverse_sync();
+    TMOV(power, p); TEXTRACT(b, neg_i, 0, 0); mega_inverse_sync();
+    TMATMUL(x, a, b); mega_inverse_sync();
+    TEXTRACT(a, neg_i, 0, 0); mega_inverse_sync();
+    TMATMUL_ACC(x, x, a, b); mega_inverse_sync();
+    TMOV(inverse, x); mega_inverse_sync();
     TileLeft<half, B, B> power_left;
     TASSIGN(power_left, B * B * sizeof(half));
     for (int degree = 2; degree < max_terms; degree *= 2) {
@@ -48,7 +61,7 @@ AICORE inline void mega_inverse_diagonal(Mat input, Mat neg_i, Mat result, int o
         wait_flag(PIPE_M, PIPE_MTE1, EVENT_ID0);
     }
     TINSERT(result, x, offset, offset);
-    pipe_barrier(PIPE_ALL);
+    mega_inverse_sync();
 #endif
 }
 
@@ -65,12 +78,12 @@ AICORE inline void mega_inverse_join(Mat negative_input, Mat result, int offset)
     TASSIGN(a, 0); TASSIGN(b, 0); TASSIGN(c, 0);
     TEXTRACT(a, result, offset + B, offset + B);
     TEXTRACT(b, negative_input, offset + B, offset);
-    pipe_barrier(PIPE_ALL);
-    TMATMUL(c, a, b); pipe_barrier(PIPE_ALL);
-    TMOV(tmp, c); pipe_barrier(PIPE_ALL);
-    TMOV(a, tmp); TEXTRACT(b, result, offset, offset); pipe_barrier(PIPE_ALL);
-    TMATMUL(c, a, b); pipe_barrier(PIPE_ALL);
-    TINSERT(result, c, offset + B, offset); pipe_barrier(PIPE_ALL);
+    mega_inverse_sync();
+    TMATMUL(c, a, b); mega_inverse_sync();
+    TMOV(tmp, c); mega_inverse_sync();
+    TMOV(a, tmp); TEXTRACT(b, result, offset, offset); mega_inverse_sync();
+    TMATMUL(c, a, b); mega_inverse_sync();
+    TINSERT(result, c, offset + B, offset); mega_inverse_sync();
 #endif
 }
 

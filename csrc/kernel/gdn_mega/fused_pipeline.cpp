@@ -1,3 +1,7 @@
+#if defined(GDN_PREFETCH) && !defined(GDN_NEGATIVE_A)
+#error "GDN_PREFETCH requires in-place signed inversion (GDN_NEGATIVE_A)"
+#endif
+
 // Head-persistent pipeline. The two vector subblocks prepare chunk-local
 // factors while the cube consumes earlier chunks. All inverse/WY/state/output
 // intermediates stay in L1/L0; only final outputs are written by the cube.
@@ -293,6 +297,17 @@ AICORE inline void mega_fused_pipeline(
             dcci(controls, SINGLE_CACHE_LINE); dcci(controls + 32, SINGLE_CACHE_LINE);
             terms = max(controls[0], controls[32]);
 #endif
+            Tail wt(valid, C), ut(valid, C), ktail(valid, C), qtail(valid, C), att(valid, valid);
+            TASSIGN(wt, 0); TASSIGN(ut, Bytes); TASSIGN(ktail, 9 * Bytes);
+            TASSIGN(qtail, 10 * Bytes); TASSIGN(att, 11 * Bytes);
+#ifdef GDN_PREFETCH
+            mega_load_packed<C, C, C>(input, wt, w + packed, valid, C);
+            mega_load_packed<C, C, C>(negative, ut, u + packed, valid, C);
+            mega_load_packed<C, C, C>(kt, ktail, scaled_k + packed, valid, C);
+            mega_load_packed<C, C, C>(query, qtail, scaled_q + packed, valid, C);
+            mega_load_packed<C, C, C>(attention, att, slot_buffer, valid, valid);
+            mega_load_packed<C, C, C>(decay, decay, slot_buffer + C * C, C, C);
+#endif
 #ifdef GDN_NEGATIVE_A
             // With B=-A and +I, the same polynomial computes (I+A)^-1.
             // Invert diagonal blocks in place; the lower offdiagonal B is
@@ -309,16 +324,14 @@ AICORE inline void mega_fused_pipeline(
             phase_ticks += get_sys_cnt() - stamp;
             stamp = get_sys_cnt();
 #endif
-            // The original A buffers are free after inversion; reuse them for RHS/W.
-            Tail wt(valid, C), ut(valid, C), ktail(valid, C), qtail(valid, C), att(valid, valid);
-            TASSIGN(wt, 0); TASSIGN(ut, Bytes); TASSIGN(ktail, 9 * Bytes);
-            TASSIGN(qtail, 10 * Bytes); TASSIGN(att, 11 * Bytes);
+#ifndef GDN_PREFETCH
             mega_load_packed<C, C, C>(input, wt, w + packed, valid, C);
             mega_load_packed<C, C, C>(negative, ut, u + packed, valid, C);
             mega_load_packed<C, C, C>(kt, ktail, scaled_k + packed, valid, C);
             mega_load_packed<C, C, C>(query, qtail, scaled_q + packed, valid, C);
             mega_load_packed<C, C, C>(attention, att, slot_buffer, valid, valid);
             mega_load_packed<C, C, C>(decay, decay, slot_buffer + C * C, C, C);
+#endif
             pipe_barrier(PIPE_ALL);
             if (valid != C) {
                 TFILLPAD(wt, wt); TFILLPAD(ut, ut); TFILLPAD(ktail, ktail);

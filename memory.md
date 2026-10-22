@@ -204,3 +204,12 @@ Correctly interleaved joint W/U GEMM passes 18 tests but no meaningful gain:
 New exact simplification: vector emits -A directly; cube inverts its diagonal
 blocks in place using +I, then consumes the untouched offdiagonal -A in the
 join. Removes a full128 negative-identity GEMM and two L1 copies per chunk.
+
+Prefetch operands into L1 buffers0/1/9..12 while in-place inverse uses2/5.
+Inverse helper synchronizes only MTE1/M/FIX; final PIPE_ALL waits for operand
+loads before padding and releasing slot credit. 18 tests pass, initial-state
+latencies37.458/45.992/96.432/299.105us. GDN_PREFETCH requires GDN_NEGATIVE_A.
+Next algebraic reduction: exp(g_i-g_j) can be computed as the outer product
+exp(g_i-center)*exp(center-g_j). Check range <=120 to keep individual factors
+finite; otherwise retain original matrix exponential. Reduces vector exp work
+from8192 elements per stripe to192 without dropping matrix entries.
