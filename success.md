@@ -208,7 +208,7 @@ User requests the next structural optimization target: another2x from this
 checkpoint, emphasizing cube utilization, global pipeline, and movement reuse.
 Frozen library:benchmark_data/gdn_mega/structural_baseline_lib/.
 
-## Pending commit — pipeline the six recurrence products
+## 1290ec8 — pipeline the six recurrence products
 
 Use two L0A/L0B tiles and explicit producer/consumer dependencies to overlap
 Q*S with residual export, load subsequent operands during accumulator transfers,
