@@ -312,3 +312,13 @@ RHS-first reassociation [betaV,-beta expK]*[I;S], then inverse*RHS passes25stric
 tests but is slower263.750/288.095us atT4096 ordinary/weak and increases weak
 outputRMSE0.000537→0.000575. Reverted; snapshot:rhs_recurrence.cpp. The original
 residual arithmetic remains. Full-head acceptance of general schedules running.
+
+Cross-chunk inverse lookahead (upper L0 banks, alternate state L1, next operands
+prefetched during inverse) passes25 selected tests but is slower:265.828us
+ordinary/286.730us weak at4096. Rejected; ignored snapshots preserve the experiment.
+Reordering W before U to overlap W export also produces no robust improvement,
+especially for weak decay; rejected. Shared Gram pipelining does help: full32
+strict tests pass, fresh same-device ordinary261.734->254.176us and weak
+283.597->276.511us. Single-wave Gram work uses original setup to avoid startup
+regression. Next structural experiment: use otherwise idle cube cores for
+output products alongside the state recurrence, with full per-chunk buffers.

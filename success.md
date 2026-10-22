@@ -276,3 +276,25 @@ DEFINITIONS empty,MANUAL_SYNC=OFF; build; timeout120 pytest -q
 3831/5506/2048 for256 stores (24-core diagnostic). Changing output layout is
 not justified by this modest penalty. Rejected RHS-first reassociation is
 not included in production.
+
+## PENDING_GRAM_COMMIT — overlap shared Gram transfers and products
+
+Pipeline shared K*K^T and Q*K^T across tiles: prefetch the next K/Q pair while
+current products run, retain K^T, and export the first result during the second
+product. The single-wave path keeps its shorter setup. Arithmetic, grouped-head
+reuse, decay handling, and error thresholds are unchanged.
+
+All 32 strict tests pass in the full-head production build. Fresh same-device
+before/after T4096 initial-state medians: ordinary 261.734 -> 254.176 us (1.030x),
+weak decay 283.597 -> 276.511 us (1.026x). T128 is 32.402 us versus 32.896 us.
+An earlier A/B run without single-wave dispatch confirmed long-sequence gains
+but regressed startup; that regression is avoided by the final dispatch.
+Raw results: gram_before_initial.json, gram_before_weak.json,
+gram_dispatch_initial.json, gram_dispatch_weak.json under benchmark_data/gdn_mega.
+
+Validation: configure GDN_MEGA_HEAD and GDN_MEGA_DEFINITIONS empty,
+GDN_MEGA_MANUAL_SYNC=OFF; `bash scripts/build_gdn_mega.sh`;
+`timeout 120 python -m pytest tests/test_gdn_mega.py -q`;
+`timeout 120 python benchmarking/gdn_mega.py --initial-state --lengths 128 4096`
+and `--initial-state --gate-scale 0.01 --lengths 4096`, all through
+`scripts/gdn_mega_docker.sh`. The additional 2x target remains unmet.
