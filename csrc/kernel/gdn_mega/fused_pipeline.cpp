@@ -10,6 +10,10 @@
 #error "GDN_PREFETCH requires in-place signed inversion (GDN_NEGATIVE_A)"
 #endif
 
+#ifdef GDN_PIPELINED_RECURRENCE
+#include "recurrence_pipeline.cpp"
+#endif
+
 // Head-persistent pipeline. The two vector subblocks prepare chunk-local
 // factors while the cube consumes earlier chunks. All inverse/WY/state/output
 // intermediates stay in L1/L0; only final outputs are written by the cube.
@@ -413,6 +417,14 @@ AICORE inline void mega_fused_pipeline(
 #else
             GdnSignalBothVec<PIPE_MTE2>(7 + slot);
 #endif
+#ifdef GDN_PIPELINED_RECURRENCE
+            if (decay_zero && (ci != 0 || has_initial)) {
+                mega_recurrence_pipeline<H, C>(input, negative, inverse, state, kt, query,
+                                               attention, residual, acc, out_acc, output + offset, valid);
+                previous_decay_zero = true;
+            } else
+#endif
+            {
             TMOV(left, inverse); TMOV(right, negative); pipe_barrier(PIPE_ALL);
             TMATMUL(acc, left, right); pipe_barrier(PIPE_ALL); // U, retained in FP32.
             TMOV(right, input); pipe_barrier(PIPE_ALL);
@@ -488,6 +500,7 @@ AICORE inline void mega_fused_pipeline(
             mega_store_packed<C, C, H * C>(out_acc, ot, output + offset, valid, C);
             pipe_barrier(PIPE_ALL);
 #endif
+            }
             }
 #ifdef GDN_FUSED_TIMING
             rest_ticks += get_sys_cnt() - stamp;

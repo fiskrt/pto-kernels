@@ -207,3 +207,18 @@ python -m pytest tests/test_gdn_mega.py -q; benchmark with/without --initial-sta
 User requests the next structural optimization target: another2x from this
 checkpoint, emphasizing cube utilization, global pipeline, and movement reuse.
 Frozen library:benchmark_data/gdn_mega/structural_baseline_lib/.
+
+## Pending commit — pipeline the six recurrence products
+
+Use two L0A/L0B tiles and explicit producer/consumer dependencies to overlap
+Q*S with residual export, load subsequent operands during accumulator transfers,
+and overlap state export with the final attention product. Arithmetic is
+unchanged. GDN_PIPELINED_RECURRENCE selects the new zero-half-decay branch;
+finite-decay and first zero-state chunks keep the existing path.
+25 selected strict H16 tests pass. Initial-state medians:
+33.705/41.230/85.323/261.891us. T4096 improves8.0% versus the production
+structural baseline284.608us; this is1.087x, not the requested additional2x.
+Numerical errors are unchanged. Raw:benchmark_data/gdn_mega/recurrence_initial.json.
+Commands: configure HEAD=16, DEFINITIONS=GDN_PIPELINED_RECURRENCE; build script;
+timeout120 pytest tests/test_gdn_mega.py -q -k 'not head_configs or H16';
+timeout120 python benchmarking/gdn_mega.py --initial-state --output above.

@@ -270,3 +270,20 @@ zero-decay/early-preparation. GDN_STAGED_PIPELINE selects the older staged path;
 GDN_LEGACY_STAGES retains the earlier legacy comparison path. For individual
 fusion ablations, GDN_STAGED_PIPELINE disables automatic fused definitions so
 specific GDN_MEGA_DEFINITIONS can be selected explicitly.
+
+Structural pass baseline f71a883 (full-head): initial-state36.354/44.813/
+92.734/284.608us. Simulator T256 trace shows14% cube utilization and vector
+producer waits. Profile:profile_structural/OPPROF_20261022152508_YOOUMPNXUMCJBEFC;
+plot:structural_pipeline.png. Flattening matrix TCVT views passes25tests but
+has no meaningful speedup (284.885us at4096), discarded. Three-half-buffer
+streaming preparation also passes25tests, but only startup improves slightly
+(35.000/42.714/91.256/283.335us). It does not reduce the long steady-state cost.
+Need distinguish simulator serialization from hardware critical path using
+phase counters before further scheduling changes.
+
+Hardware counter correction: streaming producer cube [wait221,inverse3353,
+rest8403] ticks; vector prepare8017/8190ticks, waits3374/3200. At32chunks,
+cube wait is only~2%; simulator's startup producer stall is not the hardware
+steady-state bottleneck. Dropped streaming preparation (snapshot ignored).
+Six-product cube schedule now261.891us versus284.608us, with unchanged math.
+Next work must remove matrix operations or state dependencies, not just flags.
