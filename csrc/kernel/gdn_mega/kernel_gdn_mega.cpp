@@ -369,6 +369,9 @@ namespace mk_o {
 }
 
 #include "packed_io.cpp"
+#ifdef GDN_MATMUL_PROBE
+#include "matmul_probe.cpp"
+#endif
 #include "gate_scan.cpp"
 #include "inverse_doubling.cpp"
 #include "inverse_blocked.cpp"
@@ -411,6 +414,16 @@ AICORE inline void mega_kernel_impl(GM_ADDR q_ptr, GM_ADDR k_ptr, GM_ADDR v_ptr,
                                     uint32_t num_key_heads, int64_t batch_size, int64_t seq_len,
                                     int64_t total_tokens, uint32_t num_matrices)
 {
+#ifdef GDN_MATMUL_PROBE
+#if defined(__DAV_CUBE__)
+    auto counters = reinterpret_cast<__gm__ uint64_t*>(kkt_ws_ptr) + get_block_idx() * 16;
+    auto probe_output = reinterpret_cast<__gm__ half*>(wy_ws_a1_ptr) + get_block_idx() * 128 * 128;
+    mega_matmul_probe<64>(reinterpret_cast<__gm__ half*>(minus_id_ptr), probe_output, counters);
+    mega_matmul_probe<128>(reinterpret_cast<__gm__ half*>(minus_id_ptr), probe_output, counters + 3);
+    dcci(counters, SINGLE_CACHE_LINE); dsb(DSB_DDR);
+#endif
+    return;
+#endif
     constexpr int32_t D = GDN_D;
     constexpr int32_t C = GDN_C;
 #if defined(GDN_STAGE_TIMING) && defined(__DAV_CUBE__)

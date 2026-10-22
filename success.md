@@ -222,3 +222,26 @@ Numerical errors are unchanged. Raw:benchmark_data/gdn_mega/recurrence_initial.j
 Commands: configure HEAD=16, DEFINITIONS=GDN_PIPELINED_RECURRENCE; build script;
 timeout120 pytest tests/test_gdn_mega.py -q -k 'not head_configs or H16';
 timeout120 python benchmarking/gdn_mega.py --initial-state --output above.
+
+## Pending commit — interleave independent inverse solves
+
+GDN_INTERLEAVED_INVERSE queues the two diagonal solves together, overlapping
+cube products with FIX exports using separate operand/accumulator tiles. It
+uses exactly the same polynomial terms and rounding; no decay threshold is
+added. All25 selected strict tests pass. With gate_scale0.01 and nonzero initial
+state, T1024/4096 improve105.278/337.722us to99.331/308.240us on the same npu:0
+(1.060x/1.096x). Ordinary-gate timings36.052/42.528/86.675/264.372us are slightly
+slower than the preceding recurrence-only build, so this remains optional.
+Actual output and state errors are unchanged. Raw files:interleaved_initial,
+interleaved_weak,structural_baseline_weak_npu0.json under benchmark_data/gdn_mega.
+Build:HEAD=16,DEFINITIONS=GDN_PIPELINED_RECURRENCE;GDN_INTERLEAVED_INVERSE,
+MANUAL_SYNC=OFF. Same selected pytest and benchmark commands; benchmark now
+accepts --gate-scale0.01 (with a space before the numeric argument).
+
+Added a diagnostic GDN_MATMUL_PROBE build and benchmarking/gdn_matmul_probe.py.
+All24 cores return exact identity products across five runs. For512 products,
+median resident/reload/feedback ticks:64x64=913/4310/5748;
+128x128=7284/15800/18676. Operand reload plus feedback costs6.30x and2.56x
+resident arithmetic respectively. Probe command: configure DEFINITIONS=
+GDN_MATMUL_PROBE, build, timeout120 python benchmarking/gdn_matmul_probe.py.
+This diagnostic replaces GDN execution and must not be used for GDN results.

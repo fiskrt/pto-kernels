@@ -287,3 +287,17 @@ cube wait is only~2%; simulator's startup producer stall is not the hardware
 steady-state bottleneck. Dropped streaming preparation (snapshot ignored).
 Six-product cube schedule now261.891us versus284.608us, with unchanged math.
 Next work must remove matrix operations or state dependencies, not just flags.
+
+Real-device Roofline profile of recurrence schedule1290ec8 atT4096:
+device_roofline/OPPROF_20261022154557_CGPVAFKBAWGHKVLN. Active-core medians:
+cube busy32.47%, MTE1 busy28.64%, MTE2 busy18.45%, FIX busy20.99%; cube wait
+58.34%, MTE1 wait56.43%. Profiler diagnoses pipeline latency, not bandwidth.
+Command: sourceCANN; timeout180 msprof op --kernel-name='*gdn_mega_specialized*'
+--aic-metrics=Roofline --output=benchmark_data/gdn_mega/device_roofline
+python benchmarking/gdn_mega.py --initial-state --profile-once --lengths4096.
+Matmul probe confirms high movement/feedback penalty. Interleaved inverses
+help weak gates~9.6%, slightly regress ordinary gates; optional, arithmetic
+unchanged. User explicitly requests general pipeline/throughput optimization,
+not additional decay-conditioned specializations. Next compare explicit
+scheduling with compiler auto-sync disabled, then broaden recurrence scheduling
+to finite decay and profile independent matrix-product transfer/compute overlap.

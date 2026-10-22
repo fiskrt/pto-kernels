@@ -35,6 +35,7 @@ def main():
     parser.add_argument("--key-heads", type=int, default=4)
     parser.add_argument("--device", default=os.environ.get("NPU_DEVICE", "npu:0"))
     parser.add_argument("--initial-state", action="store_true", help="Benchmark with a nonzero incoming recurrent state")
+    parser.add_argument("--gate-scale", type=float, default=1.0, help="Scale log gates to exercise different recurrent memory lengths")
     parser.add_argument("--trials", type=int, default=15)
     parser.add_argument("--inner", type=int, default=20)
     parser.add_argument("--output", type=Path)
@@ -49,6 +50,7 @@ def main():
     records = []
     for length in args.lengths:
         inputs = _make_inputs(length, args.heads, args.key_heads)
+        inputs[3].mul_(args.gate_scale)
         q, k = _expand_kv_heads(inputs[0], inputs[1], args.heads)
         initial = torch.randn(1, args.heads, 128, 128, dtype=torch.float16) * 0.1 if args.initial_state else None
         expected, expected_state = _reference(q, k, *inputs[2:], initial_state=initial)
@@ -84,7 +86,7 @@ def main():
             end.record()
             end.synchronize()
             times.append(start.elapsed_time(end) * 1000 / args.inner)
-        record = dict(length=length, heads=args.heads, key_heads=args.key_heads, initial_state=args.initial_state,
+        record = dict(length=length, heads=args.heads, key_heads=args.key_heads, initial_state=args.initial_state, gate_scale=args.gate_scale,
                       median_us=statistics.median(times), min_us=min(times), max_us=max(times),
                       output_error=errors(actual, expected), state_error=errors(state, expected_state))
         records.append(record)

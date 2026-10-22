@@ -1,3 +1,7 @@
+#ifdef GDN_INTERLEAVED_INVERSE
+#include "inverse_interleaved.cpp"
+#endif
+
 #if defined(GDN_SKIP_ZERO_DECAY) && !defined(GDN_REUSE_OPERANDS)
 #error "GDN_SKIP_ZERO_DECAY requires decay metadata (GDN_REUSE_OPERANDS)"
 #endif
@@ -381,8 +385,12 @@ AICORE inline void mega_fused_pipeline(
             // With B=-A and +I, the same polynomial computes (I+A)^-1.
             // Invert diagonal blocks in place; the lower offdiagonal B is
             // untouched until the join consumes and replaces it.
+#ifdef GDN_INTERLEAVED_INVERSE
+            mega_inverse_interleaved(inverse, identity, terms);
+#else
             mega_inverse_diagonal<64>(inverse, identity, inverse, 0, terms);
             mega_inverse_diagonal<64>(inverse, identity, inverse, 64, terms);
+#endif
             mega_inverse_join<64>(inverse, inverse, 0);
 #else
             mega_inverse_diagonal<64>(input, negative_identity, inverse, 0, terms);
