@@ -108,7 +108,7 @@ checkpoint and is 2.60x faster than the original initial-state baseline.
 Raw results: benchmark_data/gdn_mega/negative_a_initial.json. Full-head
 acceptance is still pending for these optional fused changes.
 
-## Overlap operand loads with inversion (commit recorded in the next log update)
+## f666654 — overlap operand loads with inversion
 
 The in-place inverse frees L1 operand buffers early. Load W/U, scaled keys,
 queries, attention, and decay during inversion; narrow inverse synchronization
