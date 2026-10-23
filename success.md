@@ -470,3 +470,25 @@ Python syntax, SVG parsing/visual inspection and git diff --check pass.
 Reproduction commands and detailed failure metrics are in
 `docs/gdn_mega/accuracy_audit.md`. Numerical corrections are required before
 claiming correctness-qualified performance improvements again.
+
+## 2026-10-23 — first complete numerical correction
+
+Commit **41f0549** replaces inverse powers with stable FP32 forward substitution
+and preserves FP32 Gram products, gated factors, WY intermediates, residuals and
+recurrent state. Only public output/final-state stores round to FP16. Internal
+32-token tiles and reuse of consumed producer slots preserve the existing ABI
+and allocation sizes. A2 Acc-to-L1 copies narrow to FP16/BF16, so exact FP32
+intermediate transfers use scratch export/reload with the slot held until done.
+
+Validation: `timeout 180 python -m pytest tests/test_gdn_mega.py
+ tests/test_gdn_mega_validation.py -q --tb=short` inside the prepared Docker
+container: **64 passed in 72.14 s**, unchanged tolerances, including all 20
+independent numerical cases and 32K tokens. The previously nonfinite beta 0.5/1
+cases now pass; beta=1 final state is exact. Build passes in 21.79 s.
+
+Initial correctness-qualified H16/Hg4 timing with nonzero initial state:
+T128 **0.068475 ms**, T4096 **1.259212 ms** (15 trials × 20 graph calls).
+This is slower than the historical FP16 optimized path; no speedup is claimed.
+Raw results: `benchmark_data/gdn_mega/fp32_first_benchmark.json`.
+Further work targets the dense scalar-decay product and FP32 transfer overhead,
+without relaxing the numerical policy.
