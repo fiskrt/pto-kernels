@@ -26,16 +26,19 @@ from pto_kernels import pto_gdn_mega
 C = 128  # chunk size, fixed by the kernel build
 D = 128  # head dimension, fixed by the kernel build
 
-MAX_ABS = 1e-2
-MAX_RMSE_RATIO = 0.05
+MAX_RMSE_RATIO = 0.005
 
 # (num_value_heads, num_key_heads) pairs the kernel dispatches.
 SUPPORTED_HEAD_CONFIGS = [
     pytest.param(8, 2, id="H8-Hg2"),
     pytest.param(8, 8, id="H8-Hg8"),
+    pytest.param(12, 3, id="H12-Hg3"),
     pytest.param(16, 4, id="H16-Hg4"),
     pytest.param(16, 16, id="H16-Hg16"),
+    pytest.param(24, 6, id="H24-Hg6"),
     pytest.param(32, 8, id="H32-Hg8"),
+    pytest.param(48, 12, id="H48-Hg12"),
+    pytest.param(64, 16, id="H64-Hg16"),
 ]
 
 
@@ -148,8 +151,8 @@ def _total_chunks(cu_seqlens) -> int:
     return sum((e - s + C - 1) // C for s, e in zip(cu, cu[1:]))
 
 
-def _run_gdn_mega(q, k, v, g, beta, cu_seqlens, initial_state=None):
-    """Allocate every buffer the kernel needs, launch it, return (out, final_state)."""
+def _prepare_gdn_mega(q, k, v, g, beta, cu_seqlens, initial_state=None):
+    """Allocate once; return keyword arguments reusable across kernel launches."""
     device = q.device
     _, total_tokens, num_key_heads, head_dim = q.shape
     num_value_heads = v.shape[-2]
@@ -160,10 +163,10 @@ def _run_gdn_mega(q, k, v, g, beta, cu_seqlens, initial_state=None):
     num_chunks = _total_chunks(cu32)
     num_matrices = num_chunks * num_value_heads
 
-    mask_lower = torch.tril(torch.ones(C, C, device=device), diagonal=-1).float()
-    mask_full = torch.tril(torch.ones(C, C, device=device), diagonal=0).float()
-    minus_identity = torch.zeros(C, C, device=device, dtype=torch.float16)
-    minus_identity.fill_diagonal_(-1)
+    # CPU-created constants also work when msprof filters out unrelated NPU ops.
+    mask_lower = torch.tril(torch.ones(C, C), diagonal=-1).to(device)
+    mask_full = torch.tril(torch.ones(C, C), diagonal=0).to(device)
+    minus_identity = (-torch.eye(C, dtype=torch.float16)).to(device)
 
     g_sum = torch.empty_like(g, dtype=torch.float32)
     g_t = torch.empty(num_value_heads, total_tokens, device=device, dtype=torch.float32)
@@ -216,7 +219,7 @@ def _run_gdn_mega(q, k, v, g, beta, cu_seqlens, initial_state=None):
     o_workspace_gated = torch.zeros_like(o_workspace_qk)
     out = torch.empty_like(v)
 
-    pto_gdn_mega(
+    return dict(
         q=q,
         k=k,
         v=v,
@@ -254,11 +257,14 @@ def _run_gdn_mega(q, k, v, g, beta, cu_seqlens, initial_state=None):
         num_matrices=num_matrices,
     )
 
-    scale = head_dim**-0.5
-    final_state_out = final_state.view(
-        num_sequences, num_value_heads, head_dim, head_dim
+def _run_gdn_mega(q, k, v, g, beta, cu_seqlens, initial_state=None):
+    args = _prepare_gdn_mega(q, k, v, g, beta, cu_seqlens, initial_state)
+    pto_gdn_mega(**args)
+    head_dim = q.shape[-1]
+    final_state_out = args["final_state"].view(
+        args["batch_size"], v.shape[-2], head_dim, head_dim
     ).float()
-    return out.float() * scale, final_state_out
+    return args["out"].float() * head_dim**-0.5, final_state_out
 
 
 # ---------------------------------------------------------------------------
@@ -269,8 +275,7 @@ def _run_gdn_mega(q, k, v, g, beta, cu_seqlens, initial_state=None):
 def _assert_close(name: str, actual: torch.Tensor, expected: torch.Tensor) -> None:
     diff = (actual.float().cpu() - expected.float().cpu()).abs()
     max_abs = diff.max().item()
-    if max_abs <= MAX_ABS:
-        return
+    assert torch.isfinite(actual).all(), f"{name}: nonfinite output"
     rmse = torch.sqrt((diff.flatten() ** 2).mean()).item()
     base = torch.sqrt((expected.float().cpu().flatten() ** 2).mean()).item()
     ratio = rmse / max(base, 1e-8)
@@ -377,3 +382,76 @@ def test_gdn_mega_with_initial_state(npu_device):
 
     _assert_close("out", actual, expected)
     _assert_close("final_state", actual_final, expected_final)
+
+
+@pytest.mark.parametrize("lengths", [(1,), (127,), (129,), (257,), (1024,), (63, 130, 257)])
+@pytest.mark.parametrize("gate_scale", [1.0, 0.01, 4.0])
+def test_gdn_mega_tails_and_memory(lengths, gate_scale, npu_device):
+    """Tails, packed sequence boundaries, and gates retaining recurrent memory."""
+    heads, key_heads = 16, 4
+    inputs = list(_make_inputs(sum(lengths), heads, key_heads, seed=42))
+    inputs[3] *= gate_scale
+    initial = torch.randn(len(lengths), heads, D, D, dtype=torch.float16) * 0.1
+    cu = torch.tensor([0, *torch.tensor(lengths).cumsum(0).tolist()], dtype=torch.int32)
+    expected_parts, expected_states = [], []
+    for i, (start, end) in enumerate(zip(cu.tolist(), cu.tolist()[1:])):
+        q, k, v, g, beta = [x[:, start:end] for x in inputs]
+        q, k = _expand_kv_heads(q, k, heads)
+        out, state = _reference(q, k, v, g, beta, initial[i:i + 1])
+        expected_parts.append(out)
+        expected_states.append(state)
+    expected = torch.cat(expected_parts, dim=1)
+    expected_state = torch.cat(expected_states, dim=0)
+    args = _prepare_gdn_mega(*(t.to(npu_device) for t in inputs), cu.to(npu_device), initial.to(npu_device))
+    # Short packed tails exercise unequal vector-subblock work and scalar
+    # metadata publication; repeat the weak-decay regression more aggressively.
+    repeats = 50 if len(lengths) > 1 and gate_scale == 0.01 else 5
+    for _ in range(repeats):
+        pto_gdn_mega(**args)
+        torch.npu.synchronize()
+        _assert_close("out", args["out"].float() * D**-0.5, expected)
+        _assert_close("state", args["final_state"].view_as(expected_state), expected_state)
+
+
+@pytest.mark.parametrize("beta_value", [0.0, 0.02])
+def test_gdn_mega_correlated_keys(beta_value, npu_device):
+    """Identity and high-row-norm inverses, including the adaptive fallback."""
+    length, heads, key_heads = 256, 16, 4
+    q, k, v, g, beta = _make_inputs(length, heads, key_heads, seed=17)
+    k = k[:, :1].expand_as(k).contiguous()
+    g.zero_()
+    beta.fill_(beta_value)
+    initial = torch.randn(1, heads, D, D, dtype=torch.float16) * 0.1
+    qr, kr = _expand_kv_heads(q, k, heads)
+    expected, expected_state = _reference(qr, kr, v, g, beta, initial)
+    args = _prepare_gdn_mega(
+        *(t.to(npu_device) for t in (q, k, v, g, beta)),
+        torch.tensor([0, length], device=npu_device, dtype=torch.int32), initial.to(npu_device),
+    )
+    for _ in range(5):
+        pto_gdn_mega(**args)
+        torch.npu.synchronize()
+        pairs = [(args["out"].cpu().float() * D**-0.5, expected),
+                 (args["final_state"].cpu().view_as(expected_state).float(), expected_state)]
+        for actual, reference in pairs:
+            assert torch.isfinite(actual).all()
+            relative_rmse = ((actual - reference).square().mean() /
+                             reference.square().mean().clamp_min(1e-16)).sqrt().item()
+            assert relative_rmse < 0.005, relative_rmse
+
+
+def test_gdn_mega_changing_decay(npu_device):
+    """Alternate finite and half-zero chunk decays with a nonzero state."""
+    inputs = list(_make_inputs(512, 16, 4, seed=73))
+    for chunk, gate_scale in enumerate([4.0, 0.01, 4.0, 0.01]):
+        inputs[3][:, chunk * C:(chunk + 1) * C] *= gate_scale
+    initial = torch.randn(1, 16, D, D, dtype=torch.float16) * 0.1
+    q, k = _expand_kv_heads(inputs[0], inputs[1], 16)
+    expected, expected_state = _reference(q, k, *inputs[2:], initial_state=initial)
+    args = _prepare_gdn_mega(*(t.to(npu_device) for t in inputs),
+        torch.tensor([0, 512], dtype=torch.int32, device=npu_device), initial.to(npu_device))
+    for _ in range(5):
+        pto_gdn_mega(**args)
+        torch.npu.synchronize()
+        _assert_close("out", args["out"].cpu().float() * D**-0.5, expected)
+        _assert_close("state", args["final_state"].cpu().view_as(expected_state), expected_state)
