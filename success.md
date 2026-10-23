@@ -503,3 +503,29 @@ H16/Hg4, nonzero initial state, 4K: **0.968760 ms**, versus correct FP32
 ABI/dtypes/caller allocation sizes unchanged. Strong-coupling fallback can be slow.
 Historical ~0.87 ms original and ~0.25 ms inaccurate FP16 timings are not beaten;
 the requested target remains unmet. Full evidence: docs/gdn_mega/paired_checkpoint/.
+
+## 2026-10-23 — verified hybrid and FLA range audit
+
+Commit **1f5e19e** keeps FP16 tensor products for original K/Q times paired
+state/residual, while native FP32 handles inverse joins, residual solve and
+attention. This removes inverse pair materialization and identity products.
+Invalid rows are masked before exponentiation, fixing padded-prefix 0*infinity
+NaNs discovered by the full suite. Public ABI/allocation sizes are unchanged.
+
+**80 tests pass** in 89.90 s with unchanged tolerances; the independent saved
+FP64 audit passes **36/36 cases × 5 poisoned-workspace repeats**. This includes
+FLA distributions, beta's (0,2) mode, and new 75/92-token strong-decay regressions.
+All output/state pointwise violation counts are zero. Large-amplitude cases can
+still have ~0.03125 absolute error from final FP16 rounding; detailed per-case
+errors are saved, not hidden by RMSE.
+
+H16/Hg4 with nonzero initial state: 4K **0.905793 ms**, versus paired checkpoint
+0.968760 ms (**1.070×**) and correct FP32 checkpoint 1.259212 ms (**1.390×**).
+8K/16K/32K: **1.783001 / 3.615756 / 7.520225 ms**. The historical original
+~0.87 ms and inaccurate ~0.25 ms FP16 timing are still not beaten. Target unmet.
+FLA positive-key zero/weak-decay cases remain slow due to compensated recurrence;
+these timings are explicitly saved in docs/gdn_mega/hybrid_checkpoint.md.
+
+Input-range derivation, measured inverse-power growth (4.76e18 for FLA-style
+positive/no-decay keys despite inverse maxabs 1), rejected major algorithm
+experiments, raw timings and accuracy evidence are in docs/gdn_mega/.
