@@ -846,5 +846,6 @@
     "python_compile": "passed",
     "git_diff_check": "passed",
     "benchmark_checks": "Five checked launches per shape; all ordinary and weak-decay cases pass through 32768 tokens"
-  }
+  },
+  "production_cleanup_commit": "5141f5690050546baaf2b9efc876c20d2261d427"
 }

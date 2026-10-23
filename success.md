@@ -317,3 +317,58 @@ MTE1 busy26.67%, FIX busy21.26%; cube wait54.57%, MTE1 wait51.50%. The recurrenc
 still has substantial transfer/dependency stalls. Larger core-splitting,
 column-tiling, direct-load, and deferred-store experiments are recorded with
 rejection evidence in memory.md; none are in production.
+
+## 5141f56 — production cleanup and saved 8K/16K/32K comparison
+
+Removed private legacy mega stages, unused inverse variants, matmul_probe and
+its runner, timing/early-exit hooks, and algorithm tuning preprocessor switches.
+The validated production schedule is now unconditional; architecture guards and
+runtime shape/numerical decisions remain. Removed the experiment-only CMake
+options; retained GDN_MEGA_ONLY for fast builds. Mega source drops from 19 files /
+7,126 lines to seven used files / 1,104 lines (84.5% fewer). One launch contains
+two global phases: concurrent gate/layout + shared KK/QK, then persistent
+preparation/inverse/WY/state/output. Source map and buffer roles are documented.
+
+Public signature, shapes, dtypes, and allocation sizes are unchanged. Corrected
+host comments: named intermediate buffers are opaque scratch; reserved arguments
+remain for compatibility. This is a maintainability improvement, not a claimed
+new algorithmic speedup. Ordinary latency varies -2.75% to +1.16% against 9ea497c,
+and its reported numerical errors match the pre-cleanup checkpoint.
+
+Final full-head production build: 32 tests passed in 5.85 s on Ascend910B2,
+CANN9.1.0 / torch and torch-npu2.10.0, NPU0. Benchmarking checks output and final
+state against the CPU FP32 reference for five launches per case, with unchanged
+finite-value and relative-RMSE <0.005 requirements. Ordinary lengths
+128/256/1024/4096/8192/16384/32768 and weak-decay lengths4096/8192/16384/32768 all
+pass with a nonzero initial state. No relaxed checks. Source include/guard audit,
+Python syntax, report links, and git diff --check pass.
+
+Original10748eb -> cleaned5141f56 medians (ms), H16/Hg4,D=C128:
+
+| Tokens | Ordinary original | Ordinary cleaned | Speedup | Weak original | Weak cleaned | Speedup |
+|---:|---:|---:|---:|---:|---:|---:|
+| 4096 | 0.8688 | 0.2576 | 3.37x | 0.8663 | 0.2780 | 3.12x |
+| 8192 | 1.7197 | 0.5346 | 3.22x | 1.6848 | 0.5826 | 2.89x |
+| 16384 | 3.5022 | 1.0938 | 3.20x | 3.3755 | 1.1761 | 2.87x |
+| 32768 | 6.9650 | 2.2583 | 3.08x | 6.8061 | 2.4120 | 2.82x |
+
+The weak-decay long-sequence results do not meet a universal3x target. The 32K
+ordinary output/state relative RMSE is0.000430/0.000381; weak is0.000538/0.000487.
+
+Validation commands, through scripts/gdn_mega_docker.sh:
+
+```bash
+bash scripts/build_gdn_mega.sh
+timeout 120 python -m pytest tests/test_gdn_mega.py -q
+timeout 300 python benchmarking/gdn_mega.py --initial-state \
+  --lengths 128 256 1024 4096 8192 16384 32768 \
+  --output benchmark_data/gdn_mega/branch_report_20261023/cleanup_initial.json
+timeout 300 python benchmarking/gdn_mega.py --initial-state --gate-scale 0.01 \
+  --lengths 4096 8192 16384 32768 \
+  --output benchmark_data/gdn_mega/branch_report_20261023/cleanup_weak.json
+```
+
+Tracked report and all tables: docs/gdn_mega/optimization_report.md,
+checkpoint_latency.csv, checkpoint_stages.csv, production_latency.csv, and
+measurements.json. JSON preserves raw timing/error metrics, environment, dense
+matrix FLOP accounting, and measured kernel-library SHA-256 fingerprints.

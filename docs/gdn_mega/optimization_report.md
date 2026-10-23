@@ -152,7 +152,7 @@ precision setting was introduced by this cleanup.
 ### Latency after cleanup
 
 The same device, inputs, initial-state policy, and timing method are used as
-above. “Original” is 10748eb; “Cleaned” is the production cleanup in this report.
+above. “Original” is 10748eb; “Cleaned” is production cleanup commit **5141f56**.
 
 | Tokens | Decay workload | Original ms | Cleaned ms | Speedup |
 |---:|---|---:|---:|---:|
