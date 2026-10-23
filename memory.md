@@ -476,3 +476,12 @@ Strong path latency remains a major limitation, not a target-speed result.
   calculation is redundant. Also batch independent inverse joins by level to
   reduce serial export/reload latency; do not confuse packed MAD output layout
   with a larger-stride accumulator view.
+
+2026-10-23 reuse prepared decay:
+- Removing the duplicate C128 decay matrix gives0.794724ms at4K (1.063x vs
+  fused0.844893ms),80/80 tests pass. No truncation or G_i-G_j change.
+- Batched16-block joins0.806571ms,8smoke+benchmark pass; rejected, removed.
+- Current experiment draft /tmp/gdn_affine_edit.py + /tmp/gdn_affine_pipeline.hpp:
+  three phases/private raw Gram copies, chunk-parallel affine maps, one stacked
+  native product per recurrent chunk. Existing allocations reused; unaligned
+  sequences retain fused path. Not yet hardware tested at this entry.

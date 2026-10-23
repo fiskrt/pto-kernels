@@ -15,7 +15,8 @@ previous FP16 overflow. Inverse joins, RHS solves and attention products use
 native FP32 operands. A stacked K/Q product shares two FP16 components of
 state and accumulates in FP32. Preparation computes Gamma = exp(G_last-G_i)*K
 in FP32. A second stacked product shares R between attention*R and Gammaᵀ*R,
-removing the dependent residual-scaling exchange.
+removing the dependent residual-scaling exchange. QK and KK weighting share
+one prepared decay matrix.
 The pair representation is approximate; the authoritative recurrent state is FP32.
 Native FP32 joins export/reload intermediates because A2 accumulator-to-L1
 copies narrow to FP16/BF16. No identity-matrix products are needed in this path.

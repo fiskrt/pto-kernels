@@ -111,35 +111,30 @@ AICORE inline void mega_prepare_inverse(__gm__ float* g,__gm__ float* glow,__gm_
     Col gcol,lcol,bcol;
     TASSIGN(gcol,Gate+stripe*sizeof(float));TASSIGN(lcol,Gate+512+stripe*sizeof(float));
     TASSIGN(bcol,Gate+1024+stripe*sizeof(float));
-    // Recompute decay coefficients for the second product rather than spill
-    // either live state or output. All differences remain in FP32.
-    for(int product=0;product<2;++product){
-        TCOLEXPAND(raw,gates);PipeBarrierVec();TMULS(raw,raw,-1.0f);PipeBarrierVec();
-        TROWEXPANDADD(raw,raw,gcol);PipeBarrierVec();
-        TCOLEXPAND(a,lows);PipeBarrierVec();TMULS(a,a,-1.0f);PipeBarrierVec();
-        TROWEXPANDADD(a,a,lcol);PipeBarrierVec();TADD(raw,raw,a);PipeBarrierVec();
-        // Invalid rows must be masked before exp: a padded zero prefix minus
-        // a large negative real prefix would otherwise overflow, then 0*inf
-        // would poison the solve and even valid output rows.
-        mega_vector_load<R,C>(a,full+stripe*C,count,C,C);
-        TMUL(raw,raw,a);PipeBarrierVec();TEXP(raw,raw);PipeBarrierVec();TMUL(raw,raw,a);pipe_barrier(PIPE_ALL);
-        if(product==0){
-            mega_vector_load<R,C>(a,qk+((pos+stripe)*kh+key_head)*C,count,C,kh*C);
-            TMUL(a,a,raw);pipe_barrier(PIPE_ALL);
-            if(count>0){
-                using Part=Tile<TileType::Vec,float,R,C,BLayout::RowMajor,DYNAMIC,C/2>;
-                Part left(count),right(count);TASSIGN(left,0);TASSIGN(right,(C/2)*sizeof(float));
-                using GM=GlobalTensor<float,Shape<1,1,1,DYNAMIC,C/2>,pto::Stride<1,1,1,H*C/2,1>>;
-                GM ag(reinterpret_cast<__gm__ float*>(attention_high)+((pos+stripe)*H+head)*(C/2),{1,1,1,count,C/2});
-                GM bg(reinterpret_cast<__gm__ float*>(attention_low)+((pos+stripe)*H+head)*(C/2),{1,1,1,count,C/2});
-                TSTORE(ag,left);TSTORE(bg,right);pipe_barrier(PIPE_ALL);
-            }
-        }else{
-            mega_load_kk<R,C>(a,kk+((pos+stripe)*kh+key_head)*(C/2),
-                               kk_upper+((pos+stripe)*kh+key_head)*(C/2),count,kh*C/2);
-            TMUL(a,a,raw);PipeBarrierVec();
-        }
+    // One decay matrix serves both QK and KK. Native FP32 attention stores
+    // leave this tile intact, unlike the former paired-operand conversion.
+    TCOLEXPAND(raw,gates);PipeBarrierVec();TMULS(raw,raw,-1.0f);PipeBarrierVec();
+    TROWEXPANDADD(raw,raw,gcol);PipeBarrierVec();
+    TCOLEXPAND(a,lows);PipeBarrierVec();TMULS(a,a,-1.0f);PipeBarrierVec();
+    TROWEXPANDADD(a,a,lcol);PipeBarrierVec();TADD(raw,raw,a);PipeBarrierVec();
+    // Invalid rows must be masked before exp: a padded zero prefix minus
+    // a large negative real prefix would otherwise overflow, then 0*inf
+    // would poison the solve and even valid output rows.
+    mega_vector_load<R,C>(a,full+stripe*C,count,C,C);
+    TMUL(raw,raw,a);PipeBarrierVec();TEXP(raw,raw);PipeBarrierVec();TMUL(raw,raw,a);pipe_barrier(PIPE_ALL);
+    mega_vector_load<R,C>(a,qk+((pos+stripe)*kh+key_head)*C,count,C,kh*C);
+    TMUL(a,a,raw);pipe_barrier(PIPE_ALL);
+    if(count>0){
+        using Part=Tile<TileType::Vec,float,R,C,BLayout::RowMajor,DYNAMIC,C/2>;
+        Part left(count),right(count);TASSIGN(left,0);TASSIGN(right,(C/2)*sizeof(float));
+        using GM=GlobalTensor<float,Shape<1,1,1,DYNAMIC,C/2>,pto::Stride<1,1,1,H*C/2,1>>;
+        GM ag(reinterpret_cast<__gm__ float*>(attention_high)+((pos+stripe)*H+head)*(C/2),{1,1,1,count,C/2});
+        GM bg(reinterpret_cast<__gm__ float*>(attention_low)+((pos+stripe)*H+head)*(C/2),{1,1,1,count,C/2});
+        TSTORE(ag,left);TSTORE(bg,right);pipe_barrier(PIPE_ALL);
     }
+    mega_load_kk<R,C>(a,kk+((pos+stripe)*kh+key_head)*(C/2),
+                       kk_upper+((pos+stripe)*kh+key_head)*(C/2),count,kh*C/2);
+    TMUL(a,a,raw);PipeBarrierVec();
     mega_vector_load<R,C>(mask,lower+stripe*C,R,C,C);
     TMUL(a,a,mask);PipeBarrierVec();TROWEXPANDMUL(a,a,bcol);PipeBarrierVec();TMULS(a,a,-1.0f);PipeBarrierVec();
     TABS(raw,a);PipeBarrierVec();

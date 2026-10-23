@@ -56,3 +56,23 @@ scalar-cache invalidation after DMA updates. With that fixed, all80 tests pass;
 final corrected timings are saved separately in fused_benchmark.json.
 The failed and fixed five-repeat audits are retained as fused_control_failure.json
 and fused_control_fixed.json. No acceptance policy changed.
+
+
+## Remove duplicate decay preparation
+
+Native attention stores preserve the decay tile. Sharing it with KK weighting
+removes one full chunk decay construction and exponentiation, without changing
+G_i-G_j or dropping any terms. Final H16/Hg4/4K nonzero-state timing0.794724 ms
+versus0.844893 ms:1.063×. All80 strict tests pass; logs and raw data are
+shared_decay_tests.txt/shared_decay_benchmark.json. The first timing before code
+formatting was0.797781 ms. Existing ABI, allocations, files and phases unchanged.
+
+Batching four16×16 inverse joins through a shared export/reload gave0.806571 ms
+with8 selected tests and the checked benchmark passing. It is rejected; the
+separate stable joins remain. Raw result:batched_join_benchmark.json.
+
+The preceding fused hardware profile is saved in fused_profile.json. Active-head
+median cube time was845.05us, with175.58us arithmetic,205.25us MTE2,148.49us FIX,
+and166.43us RHS/state waits. Vector0 had358.29us vector work. These overlapping
+per-pipe counters cannot be added as stage durations. They support removing
+redundant preparation/transfers; they do not show a compute-saturated kernel.
