@@ -417,3 +417,48 @@ A CPU experiment with bounded FP16 block inversion + one Newton correction
 reduced inverse error on a no-decay sample from 1.52e-4 to 1.20e-7, but the NPU
 correction cost outweighed its savings. Raw results are in ignored
 `benchmark_data/gdn_mega/`; the candidate remains experimental.
+
+
+2026-10-23, FLA ranges and radical algorithm screening:
+- User requested larger algorithm/pipeline changes, no micro-optimization loop.
+  Pinned FLA source analyzed in docs/gdn_mega/input_ranges.md/json. Main chunk
+  tests use positive normalized keys (mean KK off-diagonal ~0.75), beta
+  sigmoid(uniform), g log-sigmoid(uniform) scaled/masked, including zero decay.
+  FLA beta-logit mode can double sigmoid into (0,2); FP32 initial state is adapted
+  to this kernel's FP16 ABI. No FLA RMS-only/CI-warning tolerance was imported.
+- Positive no-decay 128-token example has inverse powers up to4.76e18 while
+  true inverse maxabs1. Weak decay8.58e15; identical beta1 keys6.03e36. Large
+  intermediates/cancellation, not large KK entries, cause the old overflow.
+- Added8FLA distribution cases and2strong-tail regressions; now80tests expected.
+  Positive Q/K use half normalization matching FLA, rather than float-normalize
+  then half. All old adversarial cases retained. Source hashes saved.
+- Rejected NPU algorithms, 4KH16/Hg4initial: precomputed inverse1.228863ms
+  (78old tests pass), direct32-row panels1.251790, halfinverse+RHSrefinement
+  1.278160, native64diags1.291802, native32diags1.217353, exact eight-block
+  preconditioned series1.216864. Last variants only selected audits+benchmark;
+  they are not full-support certificates. Snapshots in /tmp/gdn_*; no unused
+  experiment kernels are kept in production. Results in radical_experiments.md.
+- NativeFP32 inverse+RHS .945859ms; adding nativeattention .931576ms. This is
+  modest, not target reached. Removed unused full inverse FP16-pair writes,
+  unused pair-product helpers and identity products from retained candidate.
+  Pair representation now only original-half K/Q times paired state/scaledR.
+- FIRST FULL HYBRID RUN: 75pass/3fail, nonfinite outputs at127-token/strong
+  packed tails. Root cause padded zero G minus negative real G overflowedexp;
+  invalid0*inf poisoned full native inverse rows then0*NaN spread through output.
+  Fix invalid-row mask BEFOREexp (load causal mask with count rows, not64).
+  Added FLAstrongT75 andstrongT92 cases. Full80-test rerun PASSED in89.90s.
+- Current candidate preserves ABI/allocation sizes. A onlycouplingmarkers,w
+  unused; A_inv/u FP32attentioncolumnhalves; o_qs/o_gated FP32inverse rowhalves;
+  o_qk FP32join scratch; h_ws second64KB FP32RHS. Read currentREADME forcontract.
+- CPU affine-map screen passes sampled ordinary/no-decay/FLA cases, fails
+  nearcorrelatedamp32 like other FP32 chunk methods. Potential next big change:
+  precompute F,B,Qprime,Uprime perchunk then recurrent phase uses only
+  S_next=F*S+B andO=Qprime*S+Uprime (2paired products,1exchange roundtrip).
+  Need measure precompute overhead; no NPU implementation yet. Existing
+  compensated head restart must remain for strong coupling. See algorithm_screen.json (affine_maps).
+
+Final retained hybrid after80passes:4KH16/Hg4withinitial .905793ms;
+T128 .066423ms,8K1.783001ms,16K3.615756ms,32K7.520225ms.
+FLApositiveH8/Hg2zero-decayT1024 3.686692ms,weakT1500 5.393116ms,
+strongT257 .124532ms,GaussianinitialT1024 .259980ms,beta2T5131.873560ms.
+Strong path latency remains a major limitation, not a target-speed result.

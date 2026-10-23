@@ -11,9 +11,12 @@ One launch and two global phases, with a fixed compiled schedule on Ascend 910B2
 
 The inverse uses stable 16×16 FP32 triangular substitution followed by
 block-triangular joins. It never forms the large powers of A that caused the
-previous FP16 overflow. Matrix operands use two FP16 components; products
-accumulate the leading product and both first-order rounding corrections in
-FP32. This is an approximation, not an exact FP32 emulation.
+previous FP16 overflow. Inverse joins, RHS solves and attention products use
+native FP32 operands. State projection and state-update products use original
+FP16 K/Q times two FP16 components of state/residual, accumulating in FP32.
+The pair representation is approximate; the authoritative recurrent state is FP32.
+Native FP32 joins export/reload intermediates because A2 accumulator-to-L1
+copies narrow to FP16/BF16. No identity-matrix products are needed in this path.
 
 The residual is formed before applying the inverse:
 
@@ -22,7 +25,8 @@ The residual is formed before applying the inverse:
 This avoids separately multiplying the inverse by both WY operands. Original
 FP16 K and Q remain exact inputs to their products with paired state/residuals.
 Output accumulation and state updates remain FP32, with final FP16 stores.
-Gate differences retain `G_i-G_j`; there is no inverse-power truncation based
+Invalid rows and future columns are masked before exponentiation, preventing
+`0*inf` from padded prefixes. Gate differences retain `G_i-G_j`; there is no inverse-power truncation based
 on decay and no division by a potentially underflowed gate exponential.
 
 Strong coupling can amplify small chunk-solve errors. When any strict-lower
@@ -44,7 +48,7 @@ or an additional launch. File count does not equal stage count.
 | `gate_scan.hpp` | Compensated prefix scan and gate/beta layout conversion |
 | `shared_grams.hpp` | Shared FP32 KKᵀ/QKᵀ with pipelined input loads |
 | `inverse.hpp` | Batched 16×16 triangular substitution |
-| `recurrence_pipeline.hpp` | Paired FP16 cube products and block joins |
+| `recurrence_pipeline.hpp` | Original-input × paired-state products and native FP32 block joins |
 | `fused_pipeline.hpp` | Preparation overlap, recurrent state, output and compensated path |
 
 All seven files are used by the entry point. There are no probe kernels, runtime
@@ -67,14 +71,16 @@ Only `out` and `final_state` are primary outputs. The existing caller applies
 | Supplied scratch | Current role |
 |---|---|
 | `g_t`, `g_sum`, `beta_t` | Head-major high/low gate prefixes and beta |
-| `A`, `w` | Inverse high/low components; unused upper entries carry coupling markers |
-| `A_inv`, `u` | Attention high/low components |
+| `A` | Coupling markers only; inverse payload stays in per-core scratch |
+| `w` | Reserved compatibility storage |
+| `A_inv`, `u` | Two column halves of native FP32 attention |
 | `A_inv_f32` | FP32 QKᵀ shared by grouped heads |
 | `v_new`, `s` | Two column halves of FP32 KKᵀ |
-| `wy_workspace_a1/a2` | Reused RHS and weighted-residual high/low slots |
+| `wy_workspace_a1/a2` | Weighted-residual high/low slots |
 | `kkt_workspace` | FP32 output-product exchange |
-| `h_workspace` | FP32 projection/residual/state and paired-state exchange |
-| `o_workspace_qk/qs/gated` | Reserved compatibility storage |
+| `h_workspace` | FP32 projection/residual/state exchange, saved FP32 RHS and paired state |
+| `o_workspace_qk` | Native FP32 inverse join scratch |
+| `o_workspace_qs/gated` | Two row halves of prepared native FP32 inverse |
 
 Scratch contents are not a post-call intermediate-results API. Continue allocating
 existing shapes, as demonstrated by `_prepare_gdn_mega` in

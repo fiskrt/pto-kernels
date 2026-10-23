@@ -39,6 +39,27 @@ AUDIT_CASES = [
          nearly_correlated=True, correlated_after=128, gate_scale=0., beta=1., amplitude=32.),
     dict(name="strong_correlated_decay", seed=937, lengths=(257,), heads=8, key_heads=2,
          nearly_correlated=True, gate_scale=.01, beta=.9, amplitude=32.),
+    # Distribution families from FLA test_gdn.py at 12cb9d4, adapted to our
+    # FP16 input/state ABI and D128. Keep our independent FP64 oracle/policy.
+    dict(name="fla_positive_no_decay", seed=42, lengths=(1024,), heads=8, key_heads=2,
+         fla="positive", gate_mask=1., initial=False),
+    dict(name="fla_positive_weak", seed=43, lengths=(1500,), heads=8, key_heads=2,
+         fla="positive", gate_normalizer=10., initial=False),
+    dict(name="fla_positive_strong", seed=44, lengths=(257,), heads=8, key_heads=2,
+         fla="positive", gate_normalizer=.01, initial=False),
+    dict(name="fla_positive_masked", seed=45, lengths=(513,), heads=8, key_heads=2,
+         fla="positive", gate_mask=.5, initial=False),
+    dict(name="fla_gaussian_initial", seed=46, lengths=(1024,), heads=8, key_heads=2,
+         fla="gaussian", gate_normalizer=10., state_scale=1.),
+    dict(name="fla_negative_eigenvalues", seed=47, lengths=(513,), heads=8, key_heads=2,
+         fla="positive", beta_logits=True, negative_eigenvalues=True, initial=False),
+    dict(name="fla_gate_activation", seed=48, lengths=(513,), heads=8, key_heads=2,
+         fla="positive", gate_activation=True, initial=False),
+    dict(name="fla_gaussian_logits", seed=49, lengths=(513,), heads=8, key_heads=2,
+         fla="gaussian", beta_logits=True, gate_logits=True, state_scale=1.),
+    dict(name="fla_positive_strong_tail75", seed=51, lengths=(75,), heads=8, key_heads=2,
+         fla="positive", gate_normalizer=.01, initial=False),
+    dict(name="strong_decay_tail92", seed=53, lengths=(92,), heads=8, key_heads=2, gate_scale=4.),
 ]
 READ_ONLY = ("q", "k", "v", "g", "beta", "mask_lower", "mask_full", "minus_identity", "cu_seqlens")
 
@@ -46,6 +67,21 @@ READ_ONLY = ("q", "k", "v", "g", "beta", "mask_lower", "mask_full", "minus_ident
 def make_audit_inputs(case):
     inputs = list(_make_inputs(sum(case["lengths"]), case["heads"], case["key_heads"], seed=case["seed"]))
     q, k, v, g, beta = inputs
+    if "fla" in case:
+        if case["fla"] == "positive":
+            q.copy_(torch.nn.functional.normalize(torch.rand_like(q), dim=-1))
+            k.copy_(torch.nn.functional.normalize(torch.rand_like(k), dim=-1))
+            v.copy_(torch.rand_like(v))
+        beta_source = torch.randn_like(g) if case.get("beta_logits") else torch.rand_like(g)
+        beta.copy_((beta_source.sigmoid() * (2 if case.get("negative_eigenvalues") else 1)).half())
+        gate_source = torch.randn_like(g) if case.get("gate_logits") else torch.rand_like(g)
+        g.copy_(torch.nn.functional.logsigmoid(gate_source) / case.get("gate_normalizer", 1.))
+        if "gate_mask" in case:
+            g.mul_(torch.rand_like(g) > case["gate_mask"])
+        if case.get("gate_activation"):
+            a_log = torch.randn(case["heads"])
+            bias = torch.randn(case["heads"])
+            g.copy_(-a_log.exp() * torch.nn.functional.softplus(torch.randn_like(g) + bias))
     g.mul_(case.get("gate_scale", 1.))
     amplitude = case.get("amplitude", 1.)
     v.mul_(amplitude)
@@ -70,7 +106,7 @@ def make_audit_inputs(case):
             g[:, start:start + 128].mul_([4., .01, 0., 1.][chunk % 4])
     initial = None
     if case.get("initial", True):
-        initial = torch.randn(len(case["lengths"]), case["heads"], D, D, dtype=torch.float16) * (.1 * amplitude)
+        initial = torch.randn(len(case["lengths"]), case["heads"], D, D, dtype=torch.float16) * (case.get("state_scale", .1) * amplitude)
     cu = torch.tensor([0, *torch.tensor(case["lengths"]).cumsum(0).tolist()], dtype=torch.int32)
     return inputs, initial, cu
 

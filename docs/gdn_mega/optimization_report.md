@@ -1,3 +1,5 @@
+> Current numerical/performance status: [verified hybrid checkpoint](hybrid_checkpoint.md). The measurements below are historical.
+
 # GDN mega-kernel branch report
 
 **Accuracy correction (2026-10-23): prior “passes” in this report mean RMSE-only

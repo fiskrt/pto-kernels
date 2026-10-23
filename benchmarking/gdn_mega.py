@@ -17,7 +17,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tests"))
 from test_gdn_mega import (  # noqa: E402
     _expand_kv_heads, _make_inputs, _prepare_gdn_mega, _reference,
 )
-from gdn_mega_validation import POLICY, error_metrics  # noqa: E402
+from gdn_mega_validation import POLICY, error_metrics, recurrent_reference
+from test_gdn_mega_validation import AUDIT_CASES, make_audit_inputs  # noqa: E402
 from pto_kernels import pto_gdn_mega  # noqa: E402
 
 
@@ -37,16 +38,21 @@ def check_outputs(launch, expected, expected_state):
     return metrics
 
 
-def benchmark_case(args, length):
+def benchmark_case(args, length, audit_case=None):
     """Check and time one shape; release its graph/tensors on return."""
-    inputs = _make_inputs(length, args.heads, args.key_heads)
-    inputs[3].mul_(args.gate_scale)
-    q, k = _expand_kv_heads(inputs[0], inputs[1], args.heads)
-    initial = torch.randn(1, args.heads, 128, 128, dtype=torch.float16) * 0.1 if args.initial_state else None
-    expected, expected_state = _reference(q, k, *inputs[2:], initial_state=initial)
+    if audit_case is None:
+        inputs = _make_inputs(length, args.heads, args.key_heads)
+        inputs[3].mul_(args.gate_scale)
+        q, k = _expand_kv_heads(inputs[0], inputs[1], args.heads)
+        initial = torch.randn(1, args.heads, 128, 128, dtype=torch.float16) * 0.1 if args.initial_state else None
+        expected, expected_state = _reference(q, k, *inputs[2:], initial_state=initial)
+        cu = torch.tensor([0, length], dtype=torch.int32)
+    else:
+        inputs, initial, cu = make_audit_inputs(audit_case)
+        expected, expected_state = recurrent_reference(*inputs, initial, cu)
+        expected = expected * 128**-.5
     launch = _prepare_gdn_mega(
-        *(t.to(args.device) for t in inputs),
-        torch.tensor([0, length], dtype=torch.int32, device=args.device),
+        *(t.to(args.device) for t in inputs), cu.to(args.device),
         initial.to(args.device) if initial is not None else None,
     )
     for _ in range(1 if args.profile_once else 5):
@@ -74,6 +80,10 @@ def benchmark_case(args, length):
     record = dict(length=length, heads=args.heads, key_heads=args.key_heads, initial_state=args.initial_state, gate_scale=args.gate_scale,
                   median_us=statistics.median(times), min_us=min(times), max_us=max(times),
                   numerical_errors=metrics)
+    if audit_case is not None:
+        record.update(audit_case=audit_case["name"], input_distribution=audit_case,
+                      heads=audit_case["heads"], key_heads=audit_case["key_heads"],
+                      initial_state=initial is not None, gate_scale=audit_case.get("gate_scale", 1.))
     # Verify the timed graph also leaves correct outputs, outside its timing.
     record["after_replay_errors"] = check_outputs(launch, expected, expected_state)
     return record
@@ -82,6 +92,8 @@ def benchmark_case(args, length):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--lengths", nargs="+", type=int, default=[128, 256, 1024, 4096])
+    parser.add_argument("--audit-cases", nargs="+", choices=[c["name"] for c in AUDIT_CASES],
+                        help="Time fixed audit distributions with the CPU FP64 oracle; overrides shape/input options")
     parser.add_argument("--heads", type=int, default=16)
     parser.add_argument("--key-heads", type=int, default=4)
     parser.add_argument("--device", default=os.environ.get("NPU_DEVICE", "npu:0"))
@@ -106,9 +118,10 @@ def main():
                        vector_cores=properties.vector_core_num, torch_version=torch.__version__,
                        torch_npu_version=torch_npu.__version__)
     records = []
-    for length in args.lengths:
+    cases = [(sum(c["lengths"]), c) for c in AUDIT_CASES if c["name"] in args.audit_cases] if args.audit_cases else [(n, None) for n in args.lengths]
+    for length, audit_case in cases:
         try:
-            record = benchmark_case(args, length)
+            record = benchmark_case(args, length, audit_case)
             if record is not None:
                 record["status"] = "passed"
         except AssertionError as error:
@@ -121,7 +134,13 @@ def main():
         if record is not None:
             record["kernel_library_sha256"] = library_hash
             record["validation_policy"] = POLICY
-            record["reference"] = "CPU FP32 chunked; independent FP64 audit in audit_gdn_mega.py"
+            record["input_generator_sha256"] = hashlib.sha256((Path(__file__).resolve().parents[1] / "tests" /
+                ("test_gdn_mega_validation.py" if audit_case else "test_gdn_mega.py")).read_bytes()).hexdigest()
+            if audit_case is not None:
+                record.update(audit_case=audit_case["name"], input_distribution=audit_case,
+                              heads=audit_case["heads"], key_heads=audit_case["key_heads"],
+                              initial_state=audit_case.get("initial", True), gate_scale=audit_case.get("gate_scale", 1.))
+            record["reference"] = "CPU FP64 token recurrence" if audit_case else "CPU FP32 chunked; independent FP64 audit in audit_gdn_mega.py"
             record["environment"] = environment
             records.append(record)
             print(json.dumps(record), flush=True)

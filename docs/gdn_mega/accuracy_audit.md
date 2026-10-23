@@ -1,3 +1,5 @@
+> Current numerical/performance status: [verified hybrid checkpoint](hybrid_checkpoint.md). The measurements below are historical.
+
 # GDN mega-kernel correctness audit — 2026-10-23
 
 **The existing test passes did not establish pointwise accuracy.** I found no
