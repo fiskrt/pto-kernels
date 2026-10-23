@@ -12,8 +12,10 @@ One launch and two global phases, with a fixed compiled schedule on Ascend 910B2
 The inverse uses stable 16×16 FP32 triangular substitution followed by
 block-triangular joins. It never forms the large powers of A that caused the
 previous FP16 overflow. Inverse joins, RHS solves and attention products use
-native FP32 operands. State projection and state-update products use original
-FP16 K/Q times two FP16 components of state/residual, accumulating in FP32.
+native FP32 operands. A stacked K/Q product shares two FP16 components of
+state and accumulates in FP32. Preparation computes Gamma = exp(G_last-G_i)*K
+in FP32. A second stacked product shares R between attention*R and Gammaᵀ*R,
+removing the dependent residual-scaling exchange.
 The pair representation is approximate; the authoritative recurrent state is FP32.
 Native FP32 joins export/reload intermediates because A2 accumulator-to-L1
 copies narrow to FP16/BF16. No identity-matrix products are needed in this path.
@@ -23,7 +25,7 @@ The residual is formed before applying the inverse:
 `R = inverse * [beta * (V - exp(G) * K*S)]`.
 
 This avoids separately multiplying the inverse by both WY operands. Original
-FP16 K and Q remain exact inputs to their products with paired state/residuals.
+FP16 K and Q remain exact inputs to their products with paired state.
 Output accumulation and state updates remain FP32, with final FP16 stores.
 Invalid rows and future columns are masked before exponentiation, preventing
 `0*inf` from padded prefixes. Gate differences retain `G_i-G_j`; there is no inverse-power truncation based
@@ -71,15 +73,14 @@ Only `out` and `final_state` are primary outputs. The existing caller applies
 | Supplied scratch | Current role |
 |---|---|
 | `g_t`, `g_sum`, `beta_t` | Head-major high/low gate prefixes and beta |
-| `A` | Coupling markers only; inverse payload stays in per-core scratch |
-| `w` | Reserved compatibility storage |
+| `A`, `w` | Two column halves of native FP32 decay-weighted keys Gamma |
 | `A_inv`, `u` | Two column halves of native FP32 attention |
 | `A_inv_f32` | FP32 QKᵀ shared by grouped heads |
 | `v_new`, `s` | Two column halves of FP32 KKᵀ |
-| `wy_workspace_a1/a2` | Weighted-residual high/low slots |
+| `wy_workspace_a1/a2` | Reserved compatibility storage |
 | `kkt_workspace` | FP32 output-product exchange |
 | `h_workspace` | FP32 projection/residual/state exchange, saved FP32 RHS and paired state |
-| `o_workspace_qk` | Native FP32 inverse join scratch |
+| `o_workspace_qk` | Native FP32 inverse join scratch (first 16 KiB/core), coupling markers (second half) |
 | `o_workspace_qs/gated` | Two row halves of prepared native FP32 inverse |
 
 Scratch contents are not a post-call intermediate-results API. Continue allocating

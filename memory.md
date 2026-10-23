@@ -462,3 +462,17 @@ T128 .066423ms,8K1.783001ms,16K3.615756ms,32K7.520225ms.
 FLApositiveH8/Hg2zero-decayT1024 3.686692ms,weakT1500 5.393116ms,
 strongT257 .124532ms,GaussianinitialT1024 .259980ms,beta2T5131.873560ms.
 Strong path latency remains a major limitation, not a target-speed result.
+
+2026-10-23 shared-operand pipeline:
+- K/Q projection stacking alone0.909957ms: no win vs0.905793ms.
+- Prepare Gamma=exp(G_last-G_i)*K, then stack attention/Gamma^T against R.
+  Removes dependent residual scaling/splitting and flags3/4/10.
+- Initial fullsuite79/80: late-coupling marker was stale in scalar cache after
+  reusing per-core control address. dcci+volatile read fixes it;80/80 pass.
+- Corrected H16 initial-state timings128/4K/8K/16K/32K:
+  0.069667/0.844893/1.672497/3.392108/6.872840ms.
+  Public ABI/alloc unchanged; A/w now Gamma, wy slots unused compatibility.
+- Next: native attention stores no longer overwrite decay tile, so its repeated
+  calculation is redundant. Also batch independent inverse joins by level to
+  reduce serial export/reload latency; do not confuse packed MAD output layout
+  with a larger-stride accumulator view.

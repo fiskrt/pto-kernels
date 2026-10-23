@@ -41,3 +41,18 @@ that synchronization. A stalled/incomplete run is not counted as passing.
 Raw timing JSON and test logs are adjacent to this file. Public ABI, allocation
 sizes and tolerance policy were unchanged in all three variants. No target-speed
 claim is made: the rejected variants do not improve the saved checkpoint.
+
+
+## Shared projection/residual operands
+
+Stacking K and Q into one paired-state product alone measured 0.909957 ms
+versus the 0.905793 ms hybrid checkpoint: no improvement. Moving residual
+weighting into independent preparation, Gamma = exp(G_last-G_i)*K, permits
+one stacked native product [attention; Gammaᵀ]*R. This removes the runtime
+residual split/scale exchange and flags 3/4/10 from the ordinary chunk path.
+Initial smoke/benchmark passed at 0.844531 ms, but the full suite caught one
+late-coupling failure (79 passed). The reused control slot needed explicit
+scalar-cache invalidation after DMA updates. With that fixed, all80 tests pass;
+final corrected timings are saved separately in fused_benchmark.json.
+The failed and fixed five-repeat audits are retained as fused_control_failure.json
+and fused_control_fixed.json. No acceptance policy changed.

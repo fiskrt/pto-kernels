@@ -91,8 +91,9 @@ AICORE inline void mega_load_kk(F& value,__gm__ float* first,__gm__ float* secon
 template<int H,int C>
 AICORE inline void mega_prepare_inverse(__gm__ float* g,__gm__ float* glow,__gm__ half* beta,
     __gm__ float* kk,__gm__ float* kk_upper,__gm__ float* qk,__gm__ float* lower,__gm__ float* full,
-    __gm__ half* inverse_high,__gm__ half* attention_high,__gm__ half* attention_low,
-    int64_t pos,int valid,int head,int kh,int64_t tokens,__gm__ half* first,__gm__ half* second)
+    __gm__ half* weighted_first,__gm__ half* attention_high,__gm__ half* attention_low,
+    int64_t pos,int valid,int head,int kh,int64_t tokens,__gm__ half* first,__gm__ half* second,
+    __gm__ half* original_k,__gm__ half* weighted_second,__gm__ half* control)
 {
 #if defined(__DAV_VEC__)
     constexpr int R=C/2,Gate=160*1024;
@@ -153,16 +154,33 @@ AICORE inline void mega_prepare_inverse(__gm__ float* g,__gm__ float* glow,__gm_
     GlobalTensor<float,Shape<1,1,1,R,C>,pto::Stride<1,1,1,C,1>> native(
         reinterpret_cast<__gm__ float*>(stripe==0?first:second));
     TSTORE(native,a);pipe_barrier(PIPE_ALL);
-    // Only the coupling marker is consumed globally. The native inverse
-    // payload is already in per-core scratch; do not materialize half pairs.
+    // Move residual weighting into this independent preparation step:
+    // Gamma_i = exp(G_last-G_i) * K_i. The recurrence consumes Gamma^T*R.
+    G decay,delta;TASSIGN(decay,164*1024);TASSIGN(delta,165*1024);
+    float last=gates.GetValue(valid-1),last_low=lows.GetValue(valid-1);
+    TMULS(decay,gates,-1.0f);PipeBarrierVec();TADDS(decay,decay,last);PipeBarrierVec();
+    TMULS(delta,lows,-1.0f);PipeBarrierVec();TADDS(delta,delta,last_low);PipeBarrierVec();
+    TADD(decay,decay,delta);PipeBarrierVec();TEXP(decay,decay);PipeBarrierVec();
+    Tile<TileType::Vec,half,R,C> key;TASSIGN(key,128*1024);
+    mega_vector_load<R,C>(key,original_k+((pos+stripe)*kh+key_head)*C,count,C,kh*C);
+    TCVT(a,key,RoundMode::CAST_NONE);PipeBarrierVec();
+    Col weight;TASSIGN(weight,164*1024+stripe*sizeof(float));
+    TROWEXPANDMUL(a,a,weight);pipe_barrier(PIPE_ALL);
     if(count>0){
-        Tile<TileType::Vec,half,1,16> marker;TASSIGN(marker,168*1024);
-        TEXPANDS(marker,static_cast<half>(0));pipe_barrier(PIPE_ALL);
-        marker.SetValue(15,static_cast<half>(strongly_coupled?1:0));pipe_barrier(PIPE_ALL);
-        GlobalTensor<half,Shape<1,1,1,1,16>,pto::Stride<1,1,1,16,1>> flag(
-            inverse_high+((pos+stripe)*H+head)*C+C-16);
-        TSTORE(flag,marker);pipe_barrier(PIPE_ALL);
+        using Part=Tile<TileType::Vec,float,R,C,BLayout::RowMajor,DYNAMIC,C/2>;
+        Part left(count),right(count);TASSIGN(left,0);TASSIGN(right,(C/2)*sizeof(float));
+        using GM=GlobalTensor<float,Shape<1,1,1,DYNAMIC,C/2>,pto::Stride<1,1,1,H*C/2,1>>;
+        GM ag(reinterpret_cast<__gm__ float*>(weighted_first)+((pos+stripe)*H+head)*(C/2),{1,1,1,count,C/2});
+        GM bg(reinterpret_cast<__gm__ float*>(weighted_second)+((pos+stripe)*H+head)*(C/2),{1,1,1,count,C/2});
+        TSTORE(ag,left);TSTORE(bg,right);pipe_barrier(PIPE_ALL);
     }
+    // Inverse joins use only the first 16 KiB of their 32 KiB workspace.
+    // The second half holds two producer/consumer coupling flags.
+    Tile<TileType::Vec,half,1,16> marker;TASSIGN(marker,168*1024);
+    TEXPANDS(marker,static_cast<half>(0));pipe_barrier(PIPE_ALL);
+    marker.SetValue(15,static_cast<half>(strongly_coupled?1:0));pipe_barrier(PIPE_ALL);
+    GlobalTensor<half,Shape<1,1,1,1,16>,pto::Stride<1,1,1,16,1>> flag(control+get_subblockid()*16);
+    TSTORE(flag,marker);pipe_barrier(PIPE_ALL);
 #endif
 }
 
@@ -192,7 +210,7 @@ AICORE inline void mega_initialize_state(__gm__ half* initial,__gm__ half* final
 // Base output exp(G)*Q*S remains in UB while the cube solves for residuals.
 template<int H,int C,int D>
 AICORE inline float mega_prepare_rhs(__gm__ half* v,__gm__ float* g,__gm__ float* glow,__gm__ half* beta,
-    __gm__ float* projection,__gm__ float* output_base,__gm__ half* rh,__gm__ half* rl,
+    __gm__ float* projection,__gm__ float* output_base,
     int64_t pos,int valid,int head,int64_t tokens)
 {
 #if defined(__DAV_VEC__)
@@ -222,30 +240,9 @@ AICORE inline float mega_prepare_rhs(__gm__ half* v,__gm__ float* g,__gm__ float
     TSTORE(saved,value);pipe_barrier(PIPE_ALL);
     mega_vector_load<R,D>(base,output_base+stripe*D,R,D,D);
     TROWEXPANDMUL(base,base,expcol);pipe_barrier(PIPE_ALL);
-    Tile<TileType::Vec,float,1,R> grow,lrow,decay,delta;
-    TASSIGN(grow,Gate+stripe*sizeof(float));TASSIGN(lrow,Gate+512+stripe*sizeof(float));
-    TASSIGN(decay,164*1024);TASSIGN(delta,165*1024);
-    float last=gates.GetValue(valid-1),last_low=lows.GetValue(valid-1);
-    TMULS(decay,grow,-1.0f);PipeBarrierVec();TADDS(decay,decay,last);PipeBarrierVec();
-    TMULS(delta,lrow,-1.0f);PipeBarrierVec();TADDS(delta,delta,last_low);PipeBarrierVec();
-    TADD(decay,decay,delta);PipeBarrierVec();TEXP(decay,decay);pipe_barrier(PIPE_ALL);
     return alpha;
 #else
     return 0.0f;
-#endif
-}
-
-template<int C,int D>
-AICORE inline void mega_scale_residual(__gm__ float* residual,__gm__ half* high,__gm__ half* low,int valid)
-{
-#if defined(__DAV_VEC__)
-    constexpr int R=C/2;
-    int stripe=get_subblockid()*R;
-    Tile<TileType::Vec,float,R,1,BLayout::ColMajor,R,1> column;TASSIGN(column,164*1024);
-    Tile<TileType::Vec,float,R,D> value;TASSIGN(value,0);
-    mega_vector_load<R,D>(value,residual+stripe*D,R,D,D);
-    TROWEXPANDMUL(value,value,column);pipe_barrier(PIPE_ALL);
-    mega_store_pair<R,D>(value,high+stripe*D,low+stripe*D);
 #endif
 }
 
@@ -388,9 +385,9 @@ AICORE inline void mega_compensated_recurrence(__gm__ half* q,__gm__ half* k,__g
 
 template<int H,int C,int D>
 AICORE inline void mega_fused_pipeline(__gm__ half* q,__gm__ half* k,__gm__ half* v,
-    __gm__ float* g,__gm__ float* glow,__gm__ half* beta,__gm__ half* inverse_high,
+    __gm__ float* g,__gm__ float* glow,__gm__ half* beta,__gm__ half* weighted_first,__gm__ half* weighted_second,
     __gm__ half* att_high,__gm__ half* att_low,
-    __gm__ half* wh_ws,__gm__ half* wl_ws,__gm__ half* uh_ws,__gm__ half* ul_ws,__gm__ half* k_ws,__gm__ half* state_ws,__gm__ half* solve_ws,
+    __gm__ half* uh_ws,__gm__ half* ul_ws,__gm__ half* k_ws,__gm__ half* state_ws,__gm__ half* solve_ws,
     __gm__ half* output,__gm__ half* final_state,__gm__ half* initial,bool has_initial,
     __gm__ int32_t* cu,int64_t sequences,int kh,int64_t tokens,
     __gm__ float* kk,__gm__ float* kk_upper,__gm__ float* qk,__gm__ float* lower,__gm__ float* full,__gm__ float* g_raw)
@@ -402,24 +399,26 @@ AICORE inline void mega_fused_pipeline(__gm__ half* q,__gm__ half* k,__gm__ half
     pipe_barrier(PIPE_ALL);
 #endif
 #if defined(__DAV_CUBE__)
-    MegaPair<D,D> state;MegaFloat<C,C> attention,inverse;MegaFloat<C,D> native_rhs,native_residual;MegaPair<C,D> scaled;
-    state.assign(0);TASSIGN(inverse,64*1024);TASSIGN(native_rhs,192*1024);scaled.assign(128*1024);
+    MegaPair<D,D> state;MegaFloat<C,C> attention,inverse;MegaFloat<C,D> native_rhs,native_residual,native_gamma;
+    state.assign(0);TASSIGN(inverse,64*1024);TASSIGN(native_rhs,192*1024);TASSIGN(native_gamma,256*1024);
     TASSIGN(attention,384*1024);TASSIGN(native_residual,448*1024);
-    typename MegaPair<C,D>::Mat key,query;
-    TASSIGN(key,256*1024);TASSIGN(query,320*1024);
-    TileAcc<float,C,D> acc,other;TASSIGN(acc,0);TASSIGN(other,64*1024);
-    using Tail=Tile<TileType::Mat,half,C,D,BLayout::ColMajor,DYNAMIC,D,SLayout::RowMajor,512,PadValue::Zero>;
+    typename MegaPair<2*C,D>::Mat inputs;TASSIGN(inputs,256*1024);
+    TileAcc<float,2*C,D> projections;TASSIGN(projections,0);
+    TileAcc<float,2*C,D,C,D> first_product,second_product;
+    TASSIGN(first_product,0);TASSIGN(second_product,C*16*sizeof(float));
+    TileAcc<float,C,D> acc;TASSIGN(acc,0);
+    using Tail=Tile<TileType::Mat,half,2*C,D,BLayout::ColMajor,DYNAMIC,D,SLayout::RowMajor,512,PadValue::Zero>;
 #endif
     int block=get_block_idx();auto exchange=reinterpret_cast<__gm__ float*>(state_ws+block*4*D*D);
     auto local_output=reinterpret_cast<__gm__ float*>(k_ws+block*2*C*D);
-    auto rh=wh_ws+block*C*D,rl=wl_ws+block*C*D;
     auto first=uh_ws+block*C*C,second=ul_ws+block*C*C;
     auto solve_scratch=reinterpret_cast<__gm__ float*>(solve_ws+block*C*C);
+    auto control=solve_ws+block*C*C+C*C/2;
     for(int64_t work=block;work<sequences*H;work+=get_block_num()){
         int seq=work/H,head=work%H;int64_t start=cu[seq],end=cu[seq+1];
 #if defined(__DAV_VEC__)
         if(start<end)mega_prepare_inverse<H,C>(g,glow,beta,kk,kk_upper,qk,lower,full,
-            inverse_high,att_high,att_low,start,min(static_cast<int64_t>(C),end-start),head,kh,tokens,first,second);
+            weighted_first,att_high,att_low,start,min(static_cast<int64_t>(C),end-start),head,kh,tokens,first,second,k,weighted_second,control);
         mega_initialize_state<D>(has_initial?initial+work*D*D:initial,final_state+work*D*D,exchange,has_initial,start==end);
 #endif
         if(start==end)continue;
@@ -437,10 +436,11 @@ AICORE inline void mega_fused_pipeline(__gm__ half* q,__gm__ half* k,__gm__ half
 #if defined(__DAV_VEC__)
             wait_flag_dev(7);
 #endif
-            auto marker=(pos*H+head)*C+C-1;
-            auto markers=reinterpret_cast<__gm__ uint16_t*>(inverse_high);
-            bool strongly_coupled=(markers[marker]&0x7fff)!=0;
-            if(valid>C/2)strongly_coupled|=(markers[marker+(C/2)*H*C]&0x7fff)!=0;
+            // DMA overwrites this reused slot; discard the previous scalar cache line.
+            dcci(control,SINGLE_CACHE_LINE);
+            auto markers=reinterpret_cast<__gm__ volatile uint16_t*>(control);
+            bool strongly_coupled=(markers[15]&0x7fff)!=0;
+            if(valid>C/2)strongly_coupled|=(markers[31]&0x7fff)!=0;
             if(strongly_coupled){
                 // Restart from the supplied initial state: a less precise prefix
                 // must not be amplified by a later strongly coupled update.
@@ -451,30 +451,28 @@ AICORE inline void mega_fused_pipeline(__gm__ half* q,__gm__ half* k,__gm__ half
             }
 #if defined(__DAV_VEC__)
             wait_flag_dev(5);
-            float alpha=mega_prepare_rhs<H,C,D>(v,g,glow,beta,exchange,local_output,rh,rl,pos,valid,head,tokens);
+            float alpha=mega_prepare_rhs<H,C,D>(v,g,glow,beta,exchange,local_output,pos,valid,head,tokens);
             ffts_cross_core_sync(PIPE_MTE3,1|(2<<4)|(6<<8));
             if(pos+C<end)mega_prepare_inverse<H,C>(g,glow,beta,kk,kk_upper,qk,lower,full,
-                inverse_high,att_high,att_low,pos+C,min(static_cast<int64_t>(C),end-pos-C),head,kh,tokens,first,second);
-            wait_flag_dev(3);
-            mega_scale_residual<C,D>(exchange,rh,rl,valid);
-            ffts_cross_core_sync(PIPE_MTE3,1|(2<<4)|(4<<8));
+                weighted_first,att_high,att_low,pos+C,min(static_cast<int64_t>(C),end-pos-C),head,kh,tokens,first,second,k,weighted_second,control);
             wait_flag_dev(9);
             mega_finish_output<H,C,D>(local_output,output+(pos*H+head)*D,valid);
-            wait_flag_dev(10);
             mega_update_state<D>(exchange,alpha,final_state+work*D*D,pos+C>=end);
             ffts_cross_core_sync(PIPE_MTE3,1|(2<<4)|(6<<8));
 #endif
 #if defined(__DAV_CUBE__)
-            Tail ktail(valid),qtail(valid);TASSIGN(ktail,256*1024);TASSIGN(qtail,320*1024);
+            Tail ktail(valid),qtail(valid);TASSIGN(ktail,256*1024);TASSIGN(qtail,256*1024+C*16*sizeof(half));
             using InputG=GlobalTensor<half,Shape<1,1,1,DYNAMIC,D>,pto::Stride<1,1,1,DYNAMIC,1>>;
             int64_t input_offset=(pos*kh+head/(H/kh))*D;
             InputG kgm(k+input_offset,{1,1,1,valid,D},{1,1,1,kh*D,1}),qgm(q+input_offset,{1,1,1,valid,D},{1,1,1,kh*D,1});
-            TLOAD(ktail,kgm);TLOAD(qtail,qgm);pipe_barrier(PIPE_ALL);
-            if(valid!=C){TFILLPAD(ktail,ktail);TFILLPAD(qtail,qtail);pipe_barrier(PIPE_ALL);}
-            mega_input_pair_product<C,D,D>(acc,key,state);
-            mega_input_pair_product<C,D,D>(other,query,state);
+            TLOAD(ktail,kgm);pipe_barrier(PIPE_ALL);
+            // Pad the whole stacked tile before Q is loaded into its lower
+            // half. This clears both tails without touching valid Q rows.
+            if(valid!=C){TFILLPAD(ktail,ktail);pipe_barrier(PIPE_ALL);}
+            TLOAD(qtail,qgm);pipe_barrier(PIPE_ALL);
+            mega_input_pair_product<2*C,D,D>(projections,inputs,state);
             GlobalTensor<float,Shape<1,1,1,C,D>,pto::Stride<1,1,1,D,1>> ex(exchange),og(local_output);
-            TSTORE(ex,acc);TSTORE(og,other);pipe_barrier(PIPE_ALL);
+            TSTORE(ex,first_product);TSTORE(og,second_product);pipe_barrier(PIPE_ALL);
             Tile<TileType::Mat,float,C,C,BLayout::ColMajor,C/2,C,SLayout::RowMajor,512> first_half,second_half;
             TASSIGN(first_half,64*1024);TASSIGN(second_half,64*1024+(C/2)*8*sizeof(float));
             GlobalTensor<float,Shape<1,1,1,C/2,C>,pto::Stride<1,1,1,C,1>> fg(reinterpret_cast<__gm__ float*>(first)),sg(reinterpret_cast<__gm__ float*>(second));
@@ -496,18 +494,17 @@ AICORE inline void mega_fused_pipeline(__gm__ half* q,__gm__ half* k,__gm__ half
             TMOV(invleft,inverse);TMOV(valright,native_rhs);pipe_barrier(PIPE_ALL);
             TMATMUL(acc,invleft,valright);pipe_barrier(PIPE_ALL);
             TSTORE(ex,acc);pipe_barrier(PIPE_ALL);
-            ffts_cross_core_sync(PIPE_FIX,1|(2<<4)|(3<<8));
             TLOAD(native_residual,ex);pipe_barrier(PIPE_ALL);
-            TMOV(invleft,attention);TMOV(valright,native_residual);pipe_barrier(PIPE_ALL);
-            TMATMUL(other,invleft,valright);pipe_barrier(PIPE_ALL);
-            TSTORE(og,other);pipe_barrier(PIPE_ALL);
+            AP gfirst(valid),gsecond(valid);TASSIGN(gfirst,256*1024);TASSIGN(gsecond,288*1024);
+            AG gg1(reinterpret_cast<__gm__ float*>(weighted_first)+offset/2,{1,1,1,valid,C/2});
+            AG gg2(reinterpret_cast<__gm__ float*>(weighted_second)+offset/2,{1,1,1,valid,C/2});
+            TLOAD(gfirst,gg1);TLOAD(gsecond,gg2);pipe_barrier(PIPE_ALL);
+            if(valid!=C){TFILLPAD(gfirst,gfirst);TFILLPAD(gsecond,gsecond);pipe_barrier(PIPE_ALL);}
+            using GT=Tile<TileType::Mat,float,D,C,BLayout::RowMajor,D,C,SLayout::ColMajor,512>;
+            GT transpose;TRESHAPE(transpose,native_gamma);
+            mega_combined_residual_products<C,D>(projections,attention,transpose,native_residual);
+            TSTORE(og,first_product);TSTORE(ex,second_product);pipe_barrier(PIPE_ALL);
             ffts_cross_core_sync(PIPE_FIX,1|(2<<4)|(9<<8));
-            wait_flag_dev(4);mega_load_pair<C,D>(scaled,rh,rl);
-            using Trans=Tile<TileType::Mat,half,D,C,BLayout::RowMajor,D,C,SLayout::ColMajor,512>;
-            Trans transpose;TRESHAPE(transpose,key);
-            mega_input_pair_product<D,C,D>(acc,transpose,scaled);
-            TSTORE(ex,acc);pipe_barrier(PIPE_ALL);
-            ffts_cross_core_sync(PIPE_FIX,1|(2<<4)|(10<<8));
             wait_flag_dev(6);mega_load_pair<D,D>(state,sh,sh+D,D,2*D);
             ffts_cross_core_sync(PIPE_MTE2,1|(2<<4)|(7<<8));
 #endif

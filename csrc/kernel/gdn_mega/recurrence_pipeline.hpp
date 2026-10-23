@@ -62,3 +62,23 @@ AICORE inline void mega_float_inverse(Mat& inverse,__gm__ float* scratch)
     mega_float_join<64,C>(inverse,0,scratch);
 #endif
 }
+
+// Assemble two independent left operands in L0A, sharing each R panel in L0B.
+// K is split in half so the stacked FP32 operand fits the 64 KiB L0A capacity.
+template<int C,int D,typename Acc,typename Attention,typename Gamma,typename Residual>
+AICORE inline void mega_combined_residual_products(Acc& result,Attention& attention,Gamma& gamma,Residual& residual)
+{
+#if defined(__DAV_CUBE__)
+    static_assert(C==D);
+    TileLeft<float,2*C,C/2> left;
+    TileLeft<float,C,C/2> top,bottom;
+    TileRight<float,C/2,D> right;
+    TASSIGN(left,0);TASSIGN(top,0);TASSIGN(bottom,C*(C/2)*sizeof(float));TASSIGN(right,0);
+    for(int part=0;part<2;++part){
+        TEXTRACT(top,attention,0,part*(C/2));TEXTRACT(bottom,gamma,0,part*(C/2));
+        TEXTRACT(right,residual,part*(C/2),0);pipe_barrier(PIPE_ALL);
+        if(part==0)TMATMUL(result,left,right);else TMATMUL_ACC(result,result,left,right);
+        pipe_barrier(PIPE_ALL);
+    }
+#endif
+}
