@@ -417,3 +417,56 @@ GFLOPs versus TFLOP/s, the two global phases inside one launch, head-persistent
 chunk processing, and its head-count scheduling implications. Initial sweep
 stopped on the baseline numerical failure; the runner now records numerical
 failures explicitly and the validated resume completed the remaining row.
+
+## 2026-10-23 — correctness audit and tested tensor-view fix
+
+Implementation/evidence commit: **d1396f9** (`Audit GDN pointwise accuracy and
+expose inverse overflow regression`). This entry records a testing improvement
+and a verified host-pointer fix, **not numerical acceptance or a new speedup**.
+
+The old checker printed maximum absolute error but enforced only relative RMSE;
+nine head-configuration tests omitted final state. The suite now checks every
+element using abs(error) <= 1e-5 + 1e-3 * abs(reference), plus RMSE < 0.005,
+finite values and exact shapes. New CPU FP64 token recurrence avoids the shared
+chunked/inverse reference and reports raw output, attention-scaled output, and
+final-state errors separately. No tolerance relaxation, skip or xfail hides the
+failures. No expected-output leakage or test/seed-specific production branch
+was found in the inspected source.
+
+Guarded output views exposed a real pointer bug: shared host conversion used
+storage().data() and ignored a tensor's storage offset. Changed it to data_ptr().
+The GDN-only build passes, the contiguous-view regression passes five launches,
+and the independent checker/oracle/workspace-reuse checks pass. Device arithmetic,
+ABI and required allocation sizes are unchanged. Only the GDN runtime path of
+this shared wrapper fix was tested. The device library hash remains
+`a1e1be91cfb087f8ab4f1fc1d4df9f185135fd672ba66c11780110533155ec60`.
+
+**Actual results:** full suite **16 passed / 48 failed** in 46.23 s, exit 1.
+Original cases: 1/32 pass under the stricter policy. New independent cases:
+3/20 pass; all 20 pass five-repeat input-integrity, output-canary and poisoned-
+scratch determinism checks after the pointer fix. The remaining 12 checker,
+reference, pointer and reused-workspace tests pass. Rounding the independent
+oracle directly to FP16 passes for all 20 numerical cases.
+
+The optimized kernel returns entirely nonfinite output/state for identical unit
+keys, no decay, beta 0.5 or 1. The original 10748eb library stays finite on the
+same two cases and passes the old RMSE criterion, although it fails the new
+pointwise criterion. This is a real optimized-device regression, consistent with
+FP16 inverse powers overflowing despite the full 64-term fallback. It is still
+unfixed. Typical finite cases also violate pointwise tolerances: T32768/H8 raw
+output max abs error 0.00136296; weak-decay T8192/H8 max abs error 0.00161894.
+
+Saved the full findings, all 20 case tables, source/library hashes and original-
+kernel comparison in `docs/gdn_mega/accuracy_audit.{md,json,csv}` and
+`docs/gdn_mega/accuracy_baseline_correlated.json`. Previous report/heatmap passes
+are now explicitly labeled historical RMSE-only acceptance, including the figure.
+The benchmark rejects pointwise failures before timing and validates graph replay;
+the sweep fingerprints validation code and rejects incompatible resume artifacts.
+Verified H8/T128 failure handling: null latencies/speedup and exit 1. Removing a
+resume validation fingerprint produces exit 2. A passing H8/Hg2/T1 case with zero
+initial state completes timing and post-replay validation without changing policy.
+Python syntax, SVG parsing/visual inspection and git diff --check pass.
+
+Reproduction commands and detailed failure metrics are in
+`docs/gdn_mega/accuracy_audit.md`. Numerical corrections are required before
+claiming correctness-qualified performance improvements again.
