@@ -485,3 +485,13 @@ Strong path latency remains a major limitation, not a target-speed result.
   three phases/private raw Gram copies, chunk-parallel affine maps, one stacked
   native product per recurrent chunk. Existing allocations reused; unaligned
   sequences retain fused path. Not yet hardware tested at this entry.
+
+2026-10-23 affine maps hardware result:
+- Corrected map implementation15 selectedtests pass;4K1.253943ms: reject vs
+  retained0.794724ms. Initial missing set_mask_norm caused UB exception; fixed
+  before valid timing. No tolerance/selection changes.
+- Snapshot /tmp/gdn_affine_candidate and generation scripts /tmp/gdn_affine_edit.py,
+  /tmp/gdn_affine_pipeline.hpp are experimental only. Production affine file
+  removed; restored exact bfc99e1 source and rebuilt library hash
+  92c7bfe1d266cf8a3fc5a17c632fb83e6cc03a10624b910e91423d8877dc92ef,
+  matching the80-test/shared_decay_benchmark checkpoint.

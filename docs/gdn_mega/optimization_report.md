@@ -1,4 +1,4 @@
-> Current numerical/performance status: [verified hybrid checkpoint](hybrid_checkpoint.md). The measurements below are historical.
+> Current numerical/performance status: [stable checkpoint and final measurements](current_status.md). The measurements below are historical.
 
 # GDN mega-kernel branch report
 

@@ -75,6 +75,42 @@ The physical recurrence has the conservative bound
 Positive log gates, unnormalized keys or beta outside that condition need a
 separate bound; the existing extended stress tests remain enabled.
 
+## A tighter bound on the physical state
+
+The contraction bound above can be sharpened using the update's energy. This is
+an algebraic bound derived here, not a measured model-trace limit. Let
+`X = exp(g_i)*S_(i-1)`, `a = k_iᵀ X`, `r² = ||k_i||²`, and `rho = beta_i*r²`.
+For beta>0 and rho<2, completing the square gives
+
+    ||S_i||_F² = ||X||_F²
+      - beta*(2-rho)*||a - (1-rho)/(2-rho)*v_i||²
+      + beta/(2-rho)*||v_i||².
+
+With nonpositive log gates,
+
+    ||S_t||_F² <= ||S_0||_F² + sum_i beta_i/(2-beta_i*||k_i||²) * ||v_i||².
+
+For the main positive-uniform FLA generator before rounding, unit keys,
+beta <= sigmoid(1), V components in[0,1), D128 and zero initial state, this
+bounds the physical state norm by **1554.49 at32768 tokens**. Unit queries give
+the same bound on each output vector's norm, so individual state/output entries
+are also below that number. The energy factor is beta/(2-beta) <=0.576117.
+Substituting a supplied squared-key-norm bound of1.002 gives about1555.38 instead;
+actual rounded norms and beta must be used when applying this to stored inputs.
+The derivation bounds exact recurrence arithmetic, not rounding error in a kernel.
+
+Thus the bounded main generator does not need enormous physical states to
+produce an overflowing inverse power series. The desired values can fit FP16
+while an unstable construction does not. This supports changing the algorithm,
+but does not justify FP16-only arithmetic: cancellation and near-zero absolute
+errors still require enough precision.
+
+This bound is conditional. Gaussian V/initial states have no finite generator
+bound. As doubled beta approaches2/||k||², the denominator tends to zero;
+at equality use the earlier triangle bound, and above it the contraction
+assumption fails. FP16 rounding can cross that endpoint. These families cannot
+be covered by the1554.49 figure, nor is it a blanket production input limit.
+
 ## Algorithm screening
 
 `benchmarking/gdn_mega_algorithms.py` evaluates alternative solves against the independent

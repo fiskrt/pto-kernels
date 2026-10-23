@@ -76,3 +76,26 @@ median cube time was845.05us, with175.58us arithmetic,205.25us MTE2,148.49us FIX
 and166.43us RHS/state waits. Vector0 had358.29us vector work. These overlapping
 per-pipe counters cannot be added as stage durations. They support removing
 redundant preparation/transfers; they do not show a compute-saturated kernel.
+
+
+## Full affine chunk maps
+
+Precompute U = inverse*beta*V, W = inverse*beta*exp(G)*K,
+Y = attention*U, B = Gammaᵀ*U, E = exp(G)*Q-attention*W,
+F = alpha*I-Gammaᵀ*W. The state loop becomes one stacked native product
+[E;F]*S plus Y/B additions. Private raw Gram copies allow chunk-parallel map
+construction without overwriting another value head's inputs. It uses three
+global phases for aligned inputs and reuses existing allocations. Unaligned
+sequences retain the stable fused schedule. Strong coupling retains compensated
+recurrence; no tolerance or test was weakened.
+
+The first launch exposed a missing vector-mask reset after gate scanning and
+raised a UB bounds exception; subsequent test failures in that process were
+cascades from the poisoned stream. Restoring normal vector-mask mode fixed it.
+The corrected implementation passes15 selected tests, covering all supported
+head counts, initial states and selected FLA distributions. Checked H16/Hg4/4K
+initial-state timing: **1.253943 ms**, versus0.794724 ms for the retained version.
+Extra map construction/transfers outweigh the shorter recurrence. Rejected;
+no affine kernel or unused selectable schedule remains in production.
+[Raw timing](affine_benchmark.json), [selected tests](affine_selected_tests.txt).
+A full80-test certificate is not claimed for this rejected experiment.
