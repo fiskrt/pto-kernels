@@ -1,3 +1,18 @@
+#pragma once
+
+// Order only the engines used by the on-chip inverse. Independent operand
+// DMA on MTE2 can progress while these cube/FIX/MTE1 dependencies resolve.
+AICORE inline void mega_inverse_sync()
+{
+#if defined(__DAV_CUBE__)
+    set_flag(PIPE_MTE1, PIPE_M, EVENT_ID0); wait_flag(PIPE_MTE1, PIPE_M, EVENT_ID0);
+    set_flag(PIPE_M, PIPE_FIX, EVENT_ID0); wait_flag(PIPE_M, PIPE_FIX, EVENT_ID0);
+    set_flag(PIPE_FIX, PIPE_MTE1, EVENT_ID0); wait_flag(PIPE_FIX, PIPE_MTE1, EVENT_ID0);
+#else
+    pipe_barrier(PIPE_ALL);
+#endif
+}
+
 // Two independent diagonal solves share an instruction schedule, not data.
 // Queue independent cube work before waiting for FIX exports, preserving the
 // original FP32 accumulators and FP16 rounding at every polynomial step.
@@ -55,5 +70,27 @@ AICORE inline void mega_inverse_interleaved(Mat input, Mat identity, int terms)
     }
     TINSERT(input, X0, 0, 0); TINSERT(input, X1, B, B);
     set_flag(PIPE_FIX, PIPE_MTE1, EVENT_ID0); wait_flag(PIPE_FIX, PIPE_MTE1, EVENT_ID0);
+#endif
+}
+
+template <int B, typename Mat>
+AICORE inline void mega_inverse_join(Mat negative_input, Mat result, int offset)
+{
+#if defined(__DAV_CUBE__)
+    using Small = Tile<TileType::Mat, half, B, B, BLayout::ColMajor, B, B, SLayout::RowMajor, 512>;
+    Small tmp;
+    TASSIGN(tmp, 5 * 128 * 128 * sizeof(half));
+    TileLeft<half, B, B> a;
+    TileRight<half, B, B> b;
+    TileAcc<float, B, B> c;
+    TASSIGN(a, 0); TASSIGN(b, 0); TASSIGN(c, 0);
+    TEXTRACT(a, result, offset + B, offset + B);
+    TEXTRACT(b, negative_input, offset + B, offset);
+    mega_inverse_sync();
+    TMATMUL(c, a, b); mega_inverse_sync();
+    TMOV(tmp, c); mega_inverse_sync();
+    TMOV(a, tmp); TEXTRACT(b, result, offset, offset); mega_inverse_sync();
+    TMATMUL(c, a, b); mega_inverse_sync();
+    TINSERT(result, c, offset + B, offset); mega_inverse_sync();
 #endif
 }

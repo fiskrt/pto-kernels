@@ -23,9 +23,6 @@ set(CMAKE_LINK_DEPENDS_USE_LINKER OFF)
 
 option(PIP_INSTALL "True if building via pip" OFF)
 option(GDN_MEGA_ONLY "Build only the fused GDN kernel and its Python binding" OFF)
-set(GDN_MEGA_HEAD "" CACHE STRING "Optional single value-head specialization for fast experiments")
-set(GDN_MEGA_DEFINITIONS "" CACHE STRING "Extra GDN experiment compile definitions")
-option(GDN_MEGA_MANUAL_SYNC "Use explicit GDN synchronization only (experimental)" OFF)
 
 # Kernel toolchain selection.
 #
@@ -195,16 +192,6 @@ if(GDN_MEGA_ONLY)
   set(PTO_KERNEL_SOURCES csrc/kernel/gdn_mega/kernel_gdn_mega.cpp)
 endif()
 ascendc_library(no_workspace_kernel SHARED ${PTO_KERNEL_SOURCES})
-if(GDN_MEGA_MANUAL_SYNC)
-  set_source_files_properties(csrc/kernel/gdn_mega/kernel_gdn_mega.cpp
-    PROPERTIES COMPILE_OPTIONS "--cce-auto-sync=off")
-endif()
-if(GDN_MEGA_HEAD)
-  ascendc_compile_definitions(no_workspace_kernel PRIVATE GDN_MEGA_HEAD=${GDN_MEGA_HEAD})
-endif()
-if(GDN_MEGA_DEFINITIONS)
-  ascendc_compile_definitions(no_workspace_kernel PRIVATE ${GDN_MEGA_DEFINITIONS})
-endif()
 
 if(USE_ASC_LANGUAGE)
   # pto_kernels_ops is linked with RUNPATH $ORIGIN/build/lib, so the kernel

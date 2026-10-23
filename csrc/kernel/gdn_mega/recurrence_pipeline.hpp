@@ -1,3 +1,5 @@
+#pragma once
+
 // Schedule the six products as one dependency graph. Each L0 operand bank
 // holds two independent 128x128 tiles; the two FP32 accumulators fill L0C.
 template <int H, int C, typename Mat, typename Acc>

@@ -1,3 +1,5 @@
+#pragma once
+
 // Parallel prefix scan and layout conversion for the fused GDN pipeline.
 // Seven vector additions replace the serial 128-row accumulation chain.
 template <int H, int C>

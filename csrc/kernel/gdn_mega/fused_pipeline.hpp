@@ -1,22 +1,4 @@
-#ifdef GDN_INTERLEAVED_INVERSE
-#include "inverse_interleaved.cpp"
-#endif
-
-#if defined(GDN_SKIP_ZERO_DECAY) && !defined(GDN_REUSE_OPERANDS)
-#error "GDN_SKIP_ZERO_DECAY requires decay metadata (GDN_REUSE_OPERANDS)"
-#endif
-
-#if defined(GDN_REUSE_OPERANDS) && (!defined(GDN_ADAPTIVE_INVERSE) || !defined(GDN_JOINT_PRODUCTS))
-#error "GDN_REUSE_OPERANDS requires adaptive metadata and joint output products"
-#endif
-
-#if defined(GDN_PREFETCH) && !defined(GDN_NEGATIVE_A)
-#error "GDN_PREFETCH requires in-place signed inversion (GDN_NEGATIVE_A)"
-#endif
-
-#ifdef GDN_PIPELINED_RECURRENCE
-#include "recurrence_pipeline.cpp"
-#endif
+#pragma once
 
 // Head-persistent pipeline. The two vector subblocks prepare chunk-local
 // factors while the cube consumes earlier chunks. All inverse/WY/state/output
@@ -27,7 +9,7 @@ AICORE inline void mega_prepare_chunk(
     __gm__ half* raw_kk, __gm__ half* raw_qk, __gm__ float* lower, __gm__ float* full,
     __gm__ half* neg_i, __gm__ half* a, __gm__ half* w, __gm__ half* u,
     __gm__ half* scaled_k, __gm__ half* scaled_q, __gm__ half* attention, __gm__ half* decay,
-    int64_t pos, int valid, int head, int kh, int64_t tokens, int64_t matrix, __gm__ volatile int32_t* control)
+    int64_t pos, int valid, int head, int kh, int64_t tokens, __gm__ volatile int32_t* control)
 {
 #if defined(__DAV_VEC__)
     constexpr int R = C / 2, F = R * C * sizeof(float);
@@ -61,9 +43,7 @@ AICORE inline void mega_prepare_chunk(
     // All three consumers use the same prefix exponentials.
     TEXP(exp_gates, gates);
     set_flag(PIPE_V, PIPE_S, EVENT_ID0); wait_flag(PIPE_V, PIPE_S, EVENT_ID0);
-#ifdef GDN_ADAPTIVE_INVERSE
     int inverse_terms = 2;
-#endif
     if (count > 0) {
         HP part(count, C), raw_part(count, C);
         TASSIGN(part, 4 * F); TASSIGN(raw_part, 4 * F + F / 2);
@@ -103,13 +83,10 @@ AICORE inline void mega_prepare_chunk(
         TMUL(values, values, coeff); PipeBarrierVec();
         TMUL(values, values, mask); PipeBarrierVec();
         TROWEXPANDMUL(values, values, beta_col); PipeBarrierVec();
-#ifdef GDN_NEGATIVE_A
         TMULS(values, values, -1.0f); PipeBarrierVec();
-#endif
         TCVT(raw, values, RoundMode::CAST_NONE); pipe_barrier(PIPE_ALL);
         GlobalTensor<half, S, Str> agm(a + output_offset, {1, 1, 1, count, C}, {1, 1, 1, C, 1});
         TSTORE(agm, raw_part); pipe_barrier(PIPE_ALL);
-#ifdef GDN_ADAPTIVE_INVERSE
         // Bound the geometric-series tail using the actual FP16 input matrix.
         // Each stripe bounds its diagonal block by the full row absolute sum.
         // The cube uses the larger bound for both diagonal blocks.
@@ -130,7 +107,6 @@ AICORE inline void mega_prepare_chunk(
         // the block join amplifies this by <1.5 at the loosest (n=8) case.
         inverse_terms = rho <= 0.0005f ? 2 : rho <= 0.03125f ? 4 :
                         rho <= 0.2f ? 8 : rho <= 0.4f ? 16 : rho <= 0.6f ? 32 : 64;
-#endif
 
         GlobalTensor<half, S, Str> kgm(k + raw_offset, {1, 1, 1, count, C}, {1, 1, 1, kh * C, 1});
         TLOAD(part, kgm); pipe_barrier(PIPE_ALL);
@@ -167,35 +143,22 @@ AICORE inline void mega_prepare_chunk(
         TSTORE(qout, part); pipe_barrier(PIPE_ALL);
     }
     float exp_last = exp_gates.GetValue(valid - 1);
-    if (exp_last < 0x1p-25f) {
-#ifndef GDN_SKIP_ZERO_DECAY
-        TEXPANDS(data, static_cast<half>(0)); pipe_barrier(PIPE_ALL);
-#endif
-    } else {
+    if (!(exp_last < 0x1p-25f)) {
         GlobalTensor<half, S, Str> igm(neg_i + stripe * C, {1, 1, 1, R, C}, {1, 1, 1, C, 1});
         TLOAD(data, igm); pipe_barrier(PIPE_ALL);
         // Identity entries are exactly 0/-1, so half multiplication gives the
         // same stored diagonal without two matrix-wide dtype conversions.
         TMULS(data, data, static_cast<half>(-exp_last)); pipe_barrier(PIPE_ALL);
+        GlobalTensor<half, S, Str> dgm(decay + stripe * C,
+            {1, 1, 1, R, C}, {1, 1, 1, C, 1});
+        TSTORE(dgm, data); pipe_barrier(PIPE_ALL);
     }
-    GlobalTensor<half, S, Str> dgm(decay + stripe * C,
-        {1, 1, 1, R, C}, {1, 1, 1, C, 1});
-#ifdef GDN_SKIP_ZERO_DECAY
-    if (!(exp_last < 0x1p-25f))
-#endif
-    { TSTORE(dgm, data); pipe_barrier(PIPE_ALL); }
-#ifdef GDN_ADAPTIVE_INVERSE
-#ifdef GDN_REUSE_OPERANDS
     // Below the half round-to-nearest zero threshold, the stored decay matrix
-    // is exactly zero. Reusing that matrix introduces no further truncation.
+    // is exactly zero. Omitting its product introduces no further truncation.
     control[0] = inverse_terms | (exp_last < 0x1p-25f ? 0x10000 : 0);
-#else
-    control[0] = inverse_terms;
-#endif
     dcci(control, SINGLE_CACHE_LINE);
     // Publish scalar-written metadata before the MTE3 ready notification.
     dsb(DSB_DDR);
-#endif
 
 #endif
 }
@@ -207,11 +170,8 @@ AICORE inline void mega_fused_pipeline(
     __gm__ half* neg_i, __gm__ half* a_gm, __gm__ half* w, __gm__ half* u,
     __gm__ half* scaled_k, __gm__ half* scaled_q, __gm__ half* output, __gm__ half* decays,
     __gm__ half* final_state, __gm__ half* initial, bool has_initial,
-    __gm__ int32_t* cu, int64_t sequences, int kh, int64_t tokens, __gm__ half* debug)
+    __gm__ int32_t* cu, int64_t sequences, int kh, int64_t tokens, __gm__ half* control_workspace)
 {
-#ifdef GDN_FUSED_TIMING
-    uint64_t wait_ticks = 0, phase_ticks = 0, rest_ticks = 0, chunks_done = 0, stamp = 0;
-#endif
 #if defined(__DAV_VEC__)
     set_mask_norm(); set_vector_mask(-1, -1);
 #endif
@@ -232,7 +192,6 @@ AICORE inline void mega_fused_pipeline(
     TileLeft<half, C, C> left; TileRight<half, C, C> right;
     TileAcc<float, C, C> acc, out_acc;
     TASSIGN(left, 0); TASSIGN(right, 0); TASSIGN(acc, 0); TASSIGN(out_acc, C * C * sizeof(float));
-#ifdef GDN_EARLY_PREPARE
     // The first vector operands do not depend on cube identity/state setup.
     if (get_block_idx() < sequences * H) {
 #if __CCE_AICORE__ == 220
@@ -242,20 +201,15 @@ AICORE inline void mega_fused_pipeline(
         GdnSignalBothVec<PIPE_MTE2>(7); GdnSignalBothVec<PIPE_MTE2>(8);
 #endif
     }
-#endif
     mega_load_packed<C, C, C>(negative_identity, negative_identity, neg_i, C, C);
     pipe_barrier(PIPE_ALL);
     TMOV(left, negative_identity); TMOV(right, negative_identity); pipe_barrier(PIPE_ALL);
     TMATMUL(acc, left, right); pipe_barrier(PIPE_ALL);
     TMOV(identity, acc); pipe_barrier(PIPE_ALL);
 #endif
-#if defined(__DAV_CUBE__) && defined(GDN_REUSE_OPERANDS)
-    bool previous_decay_zero = false;
-#endif
     for (int64_t work = get_block_idx(); work < sequences * H; work += get_block_num()) {
         int seq = work / H, head = work % H;
-        int64_t start = cu[seq], end = cu[seq + 1], chunk_base = 0;
-        for (int s = 0; s < seq; ++s) chunk_base += (cu[s + 1] - cu[s] + C - 1) / C;
+        int64_t start = cu[seq], end = cu[seq + 1];
 #if defined(__DAV_CUBE__)
         bool state_in_joint_acc = false;
         if (has_initial) {
@@ -273,47 +227,31 @@ AICORE inline void mega_fused_pipeline(
             TMATMUL_ACC(acc, acc, left, right); pipe_barrier(PIPE_ALL);
             TMOV(state, acc); pipe_barrier(PIPE_ALL);
         }
-#ifdef GDN_EARLY_PREPARE
         if (work != get_block_idx()) {
-#endif
 #if __CCE_AICORE__ == 220
         ffts_cross_core_sync(PIPE_FIX, 1 | (2 << 4) | (7 << 8));
         ffts_cross_core_sync(PIPE_FIX, 1 | (2 << 4) | (8 << 8));
 #else
         GdnSignalBothVec<PIPE_FIX>(7); GdnSignalBothVec<PIPE_FIX>(8);
 #endif
-#ifdef GDN_EARLY_PREPARE
         }
-#endif
 #endif
         int ci = 0;
         for (int64_t pos = start; pos < end; pos += C, ++ci) {
             int valid = min(static_cast<int64_t>(C), end - pos);
             int slot = ci & 1;
-            int64_t m = (chunk_base + ci) * H + head;
 #if defined(__DAV_VEC__)
-#ifdef GDN_FUSED_TIMING
-            stamp = get_sys_cnt();
-#endif
 #if __CCE_AICORE__ == 220
             wait_flag_dev(7 + slot);
 #else
             wait_intra_block(PIPE_MTE3, 7 + slot);
 #endif
-#ifdef GDN_FUSED_TIMING
-            wait_ticks += get_sys_cnt() - stamp;
-            stamp = get_sys_cnt();
-#endif
             auto slot_buffer = decays + (get_block_idx() * 4 + slot * 2) * C * C;
             mega_prepare_chunk<H, C>(q, k, v, g, beta, raw_kk, raw_qk, lower, full, neg_i,
                                      a_gm, w, u, scaled_k, scaled_q, slot_buffer, slot_buffer + C * C,
-                                     pos, valid, head, kh, tokens, m,
-                                     reinterpret_cast<__gm__ int32_t*>(debug) + get_block_idx() * 16384 +
+                                     pos, valid, head, kh, tokens,
+                                     reinterpret_cast<__gm__ int32_t*>(control_workspace) + get_block_idx() * 16384 +
                                          8192 + slot * 64 + get_subblockid() * 32);
-#ifdef GDN_FUSED_TIMING
-            phase_ticks += get_sys_cnt() - stamp;
-            ++chunks_done;
-#endif
 #if __CCE_AICORE__ == 220
             ffts_cross_core_sync(PIPE_MTE3, 1 | (2 << 4) | ((5 + slot) << 8));
 #else
@@ -321,9 +259,6 @@ AICORE inline void mega_fused_pipeline(
 #endif
 #endif
 #if defined(__DAV_CUBE__)
-#ifdef GDN_FUSED_TIMING
-            stamp = get_sys_cnt();
-#endif
 #if __CCE_AICORE__ == 220
             wait_flag_dev(5 + slot);
 
@@ -331,90 +266,35 @@ AICORE inline void mega_fused_pipeline(
             GdnWaitBothVec<PIPE_MTE2>(5 + slot);
 
 #endif
-#ifdef GDN_FUSED_TIMING
-            wait_ticks += get_sys_cnt() - stamp;
-            stamp = get_sys_cnt();
-#endif
             int64_t offset = (pos * H + head) * C;
             int64_t packed = (head * tokens + pos) * C;
             auto slot_buffer = decays + (get_block_idx() * 4 + slot * 2) * C * C;
-#ifdef GDN_NEGATIVE_A
             Tail at(valid, valid); TASSIGN(at, 2 * Bytes);
             mega_load_packed<C, C, C>(inverse, at, a_gm + packed, valid, valid);
             pipe_barrier(PIPE_ALL);
             if (valid != C) TFILLPAD(at, at);
-#else
-            Tail at(valid, valid); TASSIGN(at, 0);
-            mega_load_packed<C, C, C>(input, at, a_gm + packed, valid, valid);
-            pipe_barrier(PIPE_ALL);
-            if (valid != C) TFILLPAD(at, at);
-            TMOV(left, negative_identity); TMOV(right, input); pipe_barrier(PIPE_ALL);
-            TMATMUL(acc, left, right); pipe_barrier(PIPE_ALL);
-            TMOV(negative, acc); TMOV(inverse, acc); pipe_barrier(PIPE_ALL);
-#endif
-            int terms = 64;
-#ifdef GDN_ADAPTIVE_INVERSE
-            auto controls = reinterpret_cast<__gm__ volatile int32_t*>(debug) + get_block_idx() * 16384 + 8192 + slot * 64;
+            auto controls = reinterpret_cast<__gm__ volatile int32_t*>(control_workspace) + get_block_idx() * 16384 + 8192 + slot * 64;
             dcci(controls, SINGLE_CACHE_LINE); dcci(controls + 32, SINGLE_CACHE_LINE);
             dsb(DSB_DDR);
             int first_terms = controls[0], second_terms = controls[32];
-#ifdef GDN_REUSE_OPERANDS
             bool decay_zero = (first_terms & 0x10000) && (second_terms & 0x10000);
-            bool reuse_decay = decay_zero && previous_decay_zero;
-            terms = max(first_terms & 0xffff, second_terms & 0xffff);
-#else
-            terms = max(first_terms, second_terms);
-#endif
-#endif
+            int terms = max(first_terms & 0xffff, second_terms & 0xffff);
             Tail wt(valid, C), ut(valid, C), ktail(valid, C), qtail(valid, C), att(valid, valid);
             TASSIGN(wt, 0); TASSIGN(ut, Bytes); TASSIGN(ktail, 9 * Bytes);
             TASSIGN(qtail, 10 * Bytes); TASSIGN(att, 11 * Bytes);
-#ifdef GDN_PREFETCH
             mega_load_packed<C, C, C>(input, wt, w + packed, valid, C);
             mega_load_packed<C, C, C>(negative, ut, u + packed, valid, C);
             mega_load_packed<C, C, C>(kt, ktail, scaled_k + packed, valid, C);
             mega_load_packed<C, C, C>(query, qtail, scaled_q + packed, valid, C);
             mega_load_packed<C, C, C>(attention, att, slot_buffer, valid, valid);
-#if defined(GDN_SKIP_ZERO_DECAY)
-            if (!decay_zero)
-#elif defined(GDN_REUSE_OPERANDS)
-            if (!reuse_decay)
-#endif
-            mega_load_packed<C, C, C>(decay, decay, slot_buffer + C * C, C, C);
-#endif
-#ifdef GDN_NEGATIVE_A
+            if (!decay_zero) {
+                mega_load_packed<C, C, C>(decay, decay, slot_buffer + C * C, C, C);
+            }
             // With B=-A and +I, the same polynomial computes (I+A)^-1.
             // Invert diagonal blocks in place; the lower offdiagonal B is
             // untouched until the join consumes and replaces it.
-#ifdef GDN_INTERLEAVED_INVERSE
             mega_inverse_interleaved(inverse, identity, terms);
-#else
-            mega_inverse_diagonal<64>(inverse, identity, inverse, 0, terms);
-            mega_inverse_diagonal<64>(inverse, identity, inverse, 64, terms);
-#endif
             mega_inverse_join<64>(inverse, inverse, 0);
-#else
-            mega_inverse_diagonal<64>(input, negative_identity, inverse, 0, terms);
-            mega_inverse_diagonal<64>(input, negative_identity, inverse, 64, terms);
-            mega_inverse_join<64>(negative, inverse, 0);
-#endif
-#ifdef GDN_FUSED_TIMING
-            phase_ticks += get_sys_cnt() - stamp;
-            stamp = get_sys_cnt();
-#endif
-#ifndef GDN_PREFETCH
-            mega_load_packed<C, C, C>(input, wt, w + packed, valid, C);
-            mega_load_packed<C, C, C>(negative, ut, u + packed, valid, C);
-            mega_load_packed<C, C, C>(kt, ktail, scaled_k + packed, valid, C);
-            mega_load_packed<C, C, C>(query, qtail, scaled_q + packed, valid, C);
-            mega_load_packed<C, C, C>(attention, att, slot_buffer, valid, valid);
-#if defined(GDN_SKIP_ZERO_DECAY)
-            if (!decay_zero)
-#elif defined(GDN_REUSE_OPERANDS)
-            if (!reuse_decay)
-#endif
-            mega_load_packed<C, C, C>(decay, decay, slot_buffer + C * C, C, C);
-#endif
             pipe_barrier(PIPE_ALL);
             if (valid != C) {
                 TFILLPAD(wt, wt); TFILLPAD(ut, ut); TFILLPAD(ktail, ktail);
@@ -426,110 +306,70 @@ AICORE inline void mega_fused_pipeline(
 #else
             GdnSignalBothVec<PIPE_MTE2>(7 + slot);
 #endif
-#ifdef GDN_PIPELINED_RECURRENCE
             if (ci != 0 || has_initial) {
                 mega_recurrence_pipeline<H, C>(input, negative, inverse, state, kt, query,
                                                attention, residual, decay, acc, out_acc, output + offset, valid, decay_zero);
-                previous_decay_zero = decay_zero;
                 state_in_joint_acc = false;
-            } else
-#endif
-            {
-            TMOV(left, inverse); TMOV(right, negative); pipe_barrier(PIPE_ALL);
-            TMATMUL(acc, left, right); pipe_barrier(PIPE_ALL); // U, retained in FP32.
-            TMOV(right, input); pipe_barrier(PIPE_ALL);
-            TMATMUL(out_acc, left, right); pipe_barrier(PIPE_ALL);
-
-            TMOV(input, out_acc); pipe_barrier(PIPE_ALL); // -W.
-            if (ci != 0 || has_initial) {
-                TMOV(left, input); TMOV(right, state); pipe_barrier(PIPE_ALL);
-                TMATMUL_ACC(acc, acc, left, right); pipe_barrier(PIPE_ALL);
-            }
-            TMOV(residual, acc); pipe_barrier(PIPE_ALL);
-#ifdef GDN_SKIP_ZERO_DECAY
-            if (decay_zero) {
-                // S*0 contributes nothing even when S itself is nonzero.
-                TMOV(left, query);
-                if (ci == 0 && !has_initial) TMOV(right, state);
-                pipe_barrier(PIPE_ALL);
+            } else {
+                // First chunk without an initial state uses the validated startup schedule.
+                TMOV(left, inverse); TMOV(right, negative); pipe_barrier(PIPE_ALL);
+                TMATMUL(acc, left, right); pipe_barrier(PIPE_ALL); // U, retained in FP32.
+                TMOV(right, input); pipe_barrier(PIPE_ALL);
                 TMATMUL(out_acc, left, right); pipe_barrier(PIPE_ALL);
-                Trans kt_trans; TRESHAPE(kt_trans, kt);
-                TEXTRACT(left, kt_trans, 0, 0); TMOV(right, residual); pipe_barrier(PIPE_ALL);
-                TMATMUL(acc, left, right); pipe_barrier(PIPE_ALL);
-                TMOV(state, acc); pipe_barrier(PIPE_ALL);
-                TMOV(left, attention); pipe_barrier(PIPE_ALL);
-                TMATMUL_ACC(out_acc, out_acc, left, right); pipe_barrier(PIPE_ALL);
-                TileAcc<float, C, C, DYNAMIC, C> ot(valid); TASSIGN(ot, C * C * sizeof(float));
-                mega_store_packed<C, C, H * C>(out_acc, ot, output + offset, valid, C);
-                pipe_barrier(PIPE_ALL);
-                previous_decay_zero = true;
-                state_in_joint_acc = false;
-            } else
-#endif
-            {
-#ifdef GDN_JOINT_PRODUCTS
-            // Output and next state consume exactly the same two RHS matrices.
-            // [O; S_next] = [Q_scaled; decay*I] S + [attention; K_tilde^T] R.
-            TileLeft<half, 2 * C, C> output_left;
-            TileLeft<half, C, C> state_left;
-            TileAcc<float, 2 * C, C> output_state;
-            TASSIGN(output_left, 0); TASSIGN(state_left, Bytes); TASSIGN(output_state, 0);
-            TMOV(left, query);
-#ifdef GDN_REUSE_OPERANDS
-            // L0A was overwritten by K_tilde^T; only the L1 decay copy survives.
-            TMOV(state_left, decay);
-            // W*S leaves S resident in this same L0B tile.
-            if (ci == 0 && !has_initial) TMOV(right, state);
-            previous_decay_zero = decay_zero;
-#else
-            TMOV(state_left, decay); TMOV(right, state);
-#endif
-            pipe_barrier(PIPE_ALL);
-            TMATMUL(output_state, output_left, right); pipe_barrier(PIPE_ALL);
-            Trans kt_trans; TRESHAPE(kt_trans, kt);
-            TMOV(left, attention); TEXTRACT(state_left, kt_trans, 0, 0); TMOV(right, residual);
-            pipe_barrier(PIPE_ALL);
-            TMATMUL_ACC(output_state, output_state, output_left, right); pipe_barrier(PIPE_ALL);
-            TEXTRACT(state, output_state, C, 0); pipe_barrier(PIPE_ALL);
-            state_in_joint_acc = true;
-            TileAcc<float, 2 * C, C, DYNAMIC, C> ot(valid);
-            TASSIGN(ot, 0);
-            mega_store_packed<C, C, H * C>(ot, ot, output + offset, valid, C);
-            pipe_barrier(PIPE_ALL);
-#else
-            TMOV(left, query); TMOV(right, state); pipe_barrier(PIPE_ALL);
-            TMATMUL(out_acc, left, right); pipe_barrier(PIPE_ALL);
-            TMOV(left, state); TMOV(right, decay); pipe_barrier(PIPE_ALL);
-            TMATMUL(acc, left, right); pipe_barrier(PIPE_ALL);
-            Trans kt_trans; TRESHAPE(kt_trans, kt);
-            TEXTRACT(left, kt_trans, 0, 0); TMOV(right, residual); pipe_barrier(PIPE_ALL);
-            TMATMUL_ACC(acc, acc, left, right); pipe_barrier(PIPE_ALL);
-            TMOV(state, acc); pipe_barrier(PIPE_ALL);
-            TMOV(left, attention); pipe_barrier(PIPE_ALL);
-            TMATMUL_ACC(out_acc, out_acc, left, right); pipe_barrier(PIPE_ALL);
-            TileAcc<float, C, C, DYNAMIC, DYNAMIC> ot(valid, C);
-            TASSIGN(ot, C * C * sizeof(float));
-            mega_store_packed<C, C, H * C>(out_acc, ot, output + offset, valid, C);
-            pipe_barrier(PIPE_ALL);
-#endif
+
+                TMOV(input, out_acc); pipe_barrier(PIPE_ALL); // -W.
+                TMOV(residual, acc); pipe_barrier(PIPE_ALL);
+                if (decay_zero) {
+                    // S*0 contributes nothing even when S itself is nonzero.
+                    TMOV(left, query);
+                    TMOV(right, state);
+                    pipe_barrier(PIPE_ALL);
+                    TMATMUL(out_acc, left, right); pipe_barrier(PIPE_ALL);
+                    Trans kt_trans; TRESHAPE(kt_trans, kt);
+                    TEXTRACT(left, kt_trans, 0, 0); TMOV(right, residual); pipe_barrier(PIPE_ALL);
+                    TMATMUL(acc, left, right); pipe_barrier(PIPE_ALL);
+                    TMOV(state, acc); pipe_barrier(PIPE_ALL);
+                    TMOV(left, attention); pipe_barrier(PIPE_ALL);
+                    TMATMUL_ACC(out_acc, out_acc, left, right); pipe_barrier(PIPE_ALL);
+                    TileAcc<float, C, C, DYNAMIC, C> ot(valid); TASSIGN(ot, C * C * sizeof(float));
+                    mega_store_packed<C, C, H * C>(out_acc, ot, output + offset, valid, C);
+                    pipe_barrier(PIPE_ALL);
+                    state_in_joint_acc = false;
+                } else {
+                    // Output and next state consume exactly the same two RHS matrices.
+                    // [O; S_next] = [Q_scaled; decay*I] S + [attention; K_tilde^T] R.
+                    TileLeft<half, 2 * C, C> output_left;
+                    TileLeft<half, C, C> state_left;
+                    TileAcc<float, 2 * C, C> output_state;
+                    TASSIGN(output_left, 0); TASSIGN(state_left, Bytes); TASSIGN(output_state, 0);
+                    TMOV(left, query);
+                    // L0A was overwritten by K_tilde^T; only the L1 decay copy survives.
+                    TMOV(state_left, decay);
+                    // This first chunk starts from the explicitly initialized zero state.
+                    TMOV(right, state);
+                    pipe_barrier(PIPE_ALL);
+                    TMATMUL(output_state, output_left, right); pipe_barrier(PIPE_ALL);
+                    Trans kt_trans; TRESHAPE(kt_trans, kt);
+                    TMOV(left, attention); TEXTRACT(state_left, kt_trans, 0, 0); TMOV(right, residual);
+                    pipe_barrier(PIPE_ALL);
+                    TMATMUL_ACC(output_state, output_state, output_left, right); pipe_barrier(PIPE_ALL);
+                    TEXTRACT(state, output_state, C, 0); pipe_barrier(PIPE_ALL);
+                    state_in_joint_acc = true;
+                    TileAcc<float, 2 * C, C, DYNAMIC, C> ot(valid);
+                    TASSIGN(ot, 0);
+                    mega_store_packed<C, C, H * C>(ot, ot, output + offset, valid, C);
+                    pipe_barrier(PIPE_ALL);
+                }
             }
-            }
-#ifdef GDN_FUSED_TIMING
-            rest_ticks += get_sys_cnt() - stamp;
-            ++chunks_done;
-#endif
 #endif
         }
 #if defined(__DAV_CUBE__)
-#ifdef GDN_JOINT_PRODUCTS
         if (end > start && state_in_joint_acc) {
             TileAcc<float, 2 * C, C, C, C> last_state;
             TASSIGN(last_state, C * 16 * sizeof(float));
             mega_store_packed<C, C, C>(last_state, last_state, final_state + work * C * C, C, C);
-        } else
-#endif
-        {
-        mega_store_packed<C, C, C>(acc, acc, final_state + work * C * C, C, C);
+        } else {
+            mega_store_packed<C, C, C>(acc, acc, final_state + work * C * C, C, C);
         }
         pipe_barrier(PIPE_ALL);
 #elif defined(__DAV_VEC__)
@@ -542,15 +382,4 @@ AICORE inline void mega_fused_pipeline(
 #endif
 #endif
     }
-#ifdef GDN_FUSED_TIMING
-#if defined(__DAV_CUBE__)
-    int unit = 0;
-#else
-    int unit = 1 + get_subblockid();
-#endif
-    auto timing = reinterpret_cast<__gm__ uint64_t*>(debug) + (get_block_idx() * 3 + unit) * 16;
-    timing[0] = wait_ticks; timing[1] = phase_ticks; timing[2] = rest_ticks; timing[3] = chunks_done;
-    dcci(timing, SINGLE_CACHE_LINE);
-#endif
-
 }
