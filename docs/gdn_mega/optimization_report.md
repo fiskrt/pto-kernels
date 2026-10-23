@@ -224,3 +224,6 @@ profiling builds were used only for the explicitly labeled phase table.
 - [Checkpoint phase FLOPs and timings CSV](checkpoint_stages.csv)
 - [Original vs cleaned production latency CSV](production_latency.csv)
 - [Raw measurements, environment, FLOP counts, and validation JSON](measurements.json)
+
+The [head-count/sequence-length heatmap](heatmap.md) adds a full shape sweep and
+explains executed FLOPs versus throughput and the persistent execution model.

@@ -3,6 +3,7 @@
 PYTHONPATH=python timeout 120 python benchmarking/gdn_mega.py --output baseline.json
 """
 import argparse
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -28,6 +29,53 @@ def errors(actual, expected):
     }
 
 
+def benchmark_case(args, length):
+    """Check and time one shape; release its graph/tensors on return."""
+    inputs = _make_inputs(length, args.heads, args.key_heads)
+    inputs[3].mul_(args.gate_scale)
+    q, k = _expand_kv_heads(inputs[0], inputs[1], args.heads)
+    initial = torch.randn(1, args.heads, 128, 128, dtype=torch.float16) * 0.1 if args.initial_state else None
+    expected, expected_state = _reference(q, k, *inputs[2:], initial_state=initial)
+    launch = _prepare_gdn_mega(
+        *(t.to(args.device) for t in inputs),
+        torch.tensor([0, length], dtype=torch.int32, device=args.device),
+        initial.to(args.device) if initial is not None else None,
+    )
+    for _ in range(1 if args.profile_once else 5):
+        pto_gdn_mega(**launch)
+        torch.npu.synchronize()
+        actual = launch["out"].cpu().float() * 128**-0.5
+        state = launch["final_state"].cpu().view_as(expected_state)
+        _assert_close("out", actual, expected)
+        _assert_close("state", state, expected_state)
+    if args.profile_once:
+        print(json.dumps(dict(length=length, output_error=errors(actual, expected),
+                              state_error=errors(state, expected_state))), flush=True)
+        return None
+    # Capture launches so Python dispatch cannot leave gaps between kernels.
+    graph = torch.npu.NPUGraph()
+    with torch.npu.graph(graph):
+        for _ in range(args.inner):
+            pto_gdn_mega(**launch)
+    graph.replay()
+    torch.npu.synchronize()
+    times = []
+    for _ in range(args.trials):
+        start, end = (torch.npu.Event(enable_timing=True) for _ in range(2))
+        start.record()
+        graph.replay()
+        end.record()
+        end.synchronize()
+        times.append(start.elapsed_time(end) * 1000 / args.inner)
+    record = dict(length=length, heads=args.heads, key_heads=args.key_heads, initial_state=args.initial_state, gate_scale=args.gate_scale,
+                  median_us=statistics.median(times), min_us=min(times), max_us=max(times),
+                  output_error=errors(actual, expected), state_error=errors(state, expected_state))
+    # Verify the timed graph also leaves correct outputs, outside its timing.
+    _assert_close("out after replay", launch["out"].cpu().float() * 128**-0.5, expected)
+    _assert_close("state after replay", launch["final_state"].cpu().view_as(expected_state), expected_state)
+    return record
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--lengths", nargs="+", type=int, default=[128, 256, 1024, 4096])
@@ -44,52 +92,38 @@ def main():
     torch.set_num_threads(4)
     torch.npu.set_device(args.device)
     torch.npu.config.allow_internal_format = False
+    # Verify which implementation the dynamic loader actually selected.
+    libraries = {line.split()[-1] for line in Path("/proc/self/maps").read_text().splitlines()
+                 if line.split()[-1].endswith("/libno_workspace_kernel.so")}
+    if len(libraries) != 1:
+        raise RuntimeError(f"Expected one loaded kernel library, found {libraries}")
+    library_hash = hashlib.sha256(Path(libraries.pop()).read_bytes()).hexdigest()
+    properties = torch.npu.get_device_properties(args.device)
+    environment = dict(device_name=properties.name, cube_cores=properties.cube_core_num,
+                       vector_cores=properties.vector_core_num, torch_version=torch.__version__,
+                       torch_npu_version=torch_npu.__version__)
     records = []
     for length in args.lengths:
-        inputs = _make_inputs(length, args.heads, args.key_heads)
-        inputs[3].mul_(args.gate_scale)
-        q, k = _expand_kv_heads(inputs[0], inputs[1], args.heads)
-        initial = torch.randn(1, args.heads, 128, 128, dtype=torch.float16) * 0.1 if args.initial_state else None
-        expected, expected_state = _reference(q, k, *inputs[2:], initial_state=initial)
-        launch = _prepare_gdn_mega(
-            *(t.to(args.device) for t in inputs),
-            torch.tensor([0, length], dtype=torch.int32, device=args.device),
-            initial.to(args.device) if initial is not None else None,
-        )
-        for _ in range(1 if args.profile_once else 5):
-            pto_gdn_mega(**launch)
-            torch.npu.synchronize()
-            actual = launch["out"].cpu().float() * 128**-0.5
-            state = launch["final_state"].cpu().view_as(expected_state)
-            _assert_close("out", actual, expected)
-            _assert_close("state", state, expected_state)
-        if args.profile_once:
-            print(json.dumps(dict(length=length, output_error=errors(actual, expected),
-                                  state_error=errors(state, expected_state))), flush=True)
-            continue
-        # Capture launches so Python dispatch cannot leave gaps between kernels.
-        graph = torch.npu.NPUGraph()
-        with torch.npu.graph(graph):
-            for _ in range(args.inner):
-                pto_gdn_mega(**launch)
-        graph.replay()
-        torch.npu.synchronize()
-        times = []
-        for _ in range(args.trials):
-            start, end = (torch.npu.Event(enable_timing=True) for _ in range(2))
-            start.record()
-            graph.replay()
-            end.record()
-            end.synchronize()
-            times.append(start.elapsed_time(end) * 1000 / args.inner)
-        record = dict(length=length, heads=args.heads, key_heads=args.key_heads, initial_state=args.initial_state, gate_scale=args.gate_scale,
-                      median_us=statistics.median(times), min_us=min(times), max_us=max(times),
-                      output_error=errors(actual, expected), state_error=errors(state, expected_state))
-        records.append(record)
-        print(json.dumps(record), flush=True)
-    if args.output:
-        args.output.parent.mkdir(parents=True, exist_ok=True)
-        args.output.write_text(json.dumps(records, indent=2) + "\n")
+        try:
+            record = benchmark_case(args, length)
+            if record is not None:
+                record["status"] = "passed"
+        except AssertionError as error:
+            # Preserve numerical failures, never assign them a timing/speedup.
+            record = dict(length=length, heads=args.heads, key_heads=args.key_heads,
+                          initial_state=args.initial_state, gate_scale=args.gate_scale,
+                          status="failed", error=str(error))
+        if record is not None:
+            record["kernel_library_sha256"] = library_hash
+            record["environment"] = environment
+            records.append(record)
+            print(json.dumps(record), flush=True)
+            if args.output:
+                args.output.parent.mkdir(parents=True, exist_ok=True)
+                args.output.write_text(json.dumps(records, indent=2) + "\n")
+
+    if any(record["status"] == "failed" for record in records):
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":

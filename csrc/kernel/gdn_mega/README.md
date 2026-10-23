@@ -78,3 +78,5 @@ schedule. No algorithm configuration is required.
 
 Measured comparisons, FLOP accounting, memory sizes, and acceptance results are
 in the [branch report](../../../docs/gdn_mega/optimization_report.md).
+
+For a shape sweep and annotated plot, see the [heatmap benchmark](../../../docs/gdn_mega/heatmap.md).
