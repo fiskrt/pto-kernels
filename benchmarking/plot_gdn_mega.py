@@ -62,9 +62,12 @@ def main():
     bar.set_ticks([norm.vmin, 1.0, *range(2, int(np.ceil(norm.vmax)))])
     state = "nonzero" if data["initial_state"] else "zero"
     hardware = data.get("environment", {}).get("device_name", data["device"])
+    acceptance = ("Pointwise + RMSE acceptance" if data.get("validation_sha256") else
+                  "Historical RMSE-only acceptance; no pointwise accuracy guarantee")
     fig.supxlabel(
         f"{hardware} · D = chunk size = 128 · GQA group {data['group_size']} · {state} initial state · gate scale {data['gate_scale']:g}\n"
-        f"5 checked warmups · median of 15 × 20 graph calls · allocation excluded · gray = correctness failure",
+        f"5 checked warmups · median of 15 × 20 graph calls · allocation excluded · gray = correctness failure\n"
+        f"{acceptance}",
         fontsize=10,
     )
     output = args.output or args.input.with_suffix("")

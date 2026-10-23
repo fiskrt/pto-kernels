@@ -1,5 +1,12 @@
 # Production GDN mega kernel
 
+**Known numerical failures:** the [independent accuracy audit](../../../docs/gdn_mega/accuracy_audit.md)
+finds pointwise errors beyond the FP16 test policy and nonfinite results for
+identical unit keys with no decay and beta 0.5 or 1. The full inverse-series
+fallback does not prevent intermediate FP16 overflow. Earlier test passes used
+RMSE alone. Current conformance tests deliberately fail until these issues are
+resolved; historical speedups are not numerical acceptance certificates.
+
 One launch, two global phases, one compiled production schedule:
 
 1. Vector gate prefix scan and layout conversion run concurrently with cube
@@ -64,6 +71,8 @@ From the repository root, using the prepared CANN container:
 ```bash
 bash scripts/gdn_mega_docker.sh bash scripts/build_gdn_mega.sh
 bash scripts/gdn_mega_docker.sh timeout 120 python -m pytest tests/test_gdn_mega.py -q
+bash scripts/gdn_mega_docker.sh timeout 600 python benchmarking/audit_gdn_mega.py \
+  --output benchmark_data/gdn_mega/accuracy_audit.json
 bash scripts/gdn_mega_docker.sh timeout 300 python benchmarking/gdn_mega.py \
   --initial-state --lengths 128 256 1024 4096 8192 16384 32768 \
   --output benchmark_data/gdn_mega/production.json

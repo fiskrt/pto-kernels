@@ -15,18 +15,26 @@ import torch_npu  # noqa: F401
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tests"))
 from test_gdn_mega import (  # noqa: E402
-    _assert_close, _expand_kv_heads, _make_inputs, _prepare_gdn_mega, _reference,
+    _expand_kv_heads, _make_inputs, _prepare_gdn_mega, _reference,
 )
+from gdn_mega_validation import POLICY, error_metrics  # noqa: E402
 from pto_kernels import pto_gdn_mega  # noqa: E402
 
 
-def errors(actual, expected):
-    actual, expected = actual.float().cpu(), expected.float().cpu()
-    diff = actual - expected
-    return {
-        "max_abs": diff.abs().max().item(),
-        "relative_rmse": (diff.square().mean() / expected.square().mean().clamp_min(1e-16)).sqrt().item(),
-    }
+class AccuracyFailure(AssertionError):
+    def __init__(self, metrics):
+        self.metrics = metrics
+        super().__init__("Pointwise/RMSE acceptance failed; see numerical_errors")
+
+
+def check_outputs(launch, expected, expected_state):
+    raw = launch["out"].cpu().double()
+    metrics = {"raw_output": error_metrics(raw, expected.double() * 128**.5),
+               "scaled_output": error_metrics(raw * 128**-.5, expected),
+               "final_state": error_metrics(launch["final_state"].cpu().view_as(expected_state), expected_state)}
+    if not all(value["passed"] for value in metrics.values()):
+        raise AccuracyFailure(metrics)
+    return metrics
 
 
 def benchmark_case(args, length):
@@ -44,13 +52,9 @@ def benchmark_case(args, length):
     for _ in range(1 if args.profile_once else 5):
         pto_gdn_mega(**launch)
         torch.npu.synchronize()
-        actual = launch["out"].cpu().float() * 128**-0.5
-        state = launch["final_state"].cpu().view_as(expected_state)
-        _assert_close("out", actual, expected)
-        _assert_close("state", state, expected_state)
+        metrics = check_outputs(launch, expected, expected_state)
     if args.profile_once:
-        print(json.dumps(dict(length=length, output_error=errors(actual, expected),
-                              state_error=errors(state, expected_state))), flush=True)
+        print(json.dumps(dict(length=length, numerical_errors=metrics, validation_policy=POLICY)), flush=True)
         return None
     # Capture launches so Python dispatch cannot leave gaps between kernels.
     graph = torch.npu.NPUGraph()
@@ -69,10 +73,9 @@ def benchmark_case(args, length):
         times.append(start.elapsed_time(end) * 1000 / args.inner)
     record = dict(length=length, heads=args.heads, key_heads=args.key_heads, initial_state=args.initial_state, gate_scale=args.gate_scale,
                   median_us=statistics.median(times), min_us=min(times), max_us=max(times),
-                  output_error=errors(actual, expected), state_error=errors(state, expected_state))
+                  numerical_errors=metrics)
     # Verify the timed graph also leaves correct outputs, outside its timing.
-    _assert_close("out after replay", launch["out"].cpu().float() * 128**-0.5, expected)
-    _assert_close("state after replay", launch["final_state"].cpu().view_as(expected_state), expected_state)
+    record["after_replay_errors"] = check_outputs(launch, expected, expected_state)
     return record
 
 
@@ -113,8 +116,12 @@ def main():
             record = dict(length=length, heads=args.heads, key_heads=args.key_heads,
                           initial_state=args.initial_state, gate_scale=args.gate_scale,
                           status="failed", error=str(error))
+            if isinstance(error, AccuracyFailure):
+                record["numerical_errors"] = error.metrics
         if record is not None:
             record["kernel_library_sha256"] = library_hash
+            record["validation_policy"] = POLICY
+            record["reference"] = "CPU FP32 chunked; independent FP64 audit in audit_gdn_mega.py"
             record["environment"] = environment
             records.append(record)
             print(json.dumps(record), flush=True)

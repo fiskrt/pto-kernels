@@ -1,5 +1,13 @@
 # GDN mega-kernel branch report
 
+**Accuracy correction (2026-10-23): prior “passes” in this report mean RMSE-only
+acceptance.** Absolute errors were printed, not enforced. The
+[independent FP64 recurrence audit](accuracy_audit.md) finds pointwise failures
+and nonfinite results for strongly correlated keys. The latency measurements
+below remain historical measurements, not proof of numerical equivalence.
+In particular, the inverse-series truncation bound does not bound FP16 rounding
+or overflow in intermediate powers, even when all terms are retained.
+
 Measured on 2026-10-23. This report preserves the comparison of the starting
 checkpoint **10748eb** with optimized checkpoint **9ea497c**, then records the
 production cleanup and longer-sequence measurements below. The 4,096-token

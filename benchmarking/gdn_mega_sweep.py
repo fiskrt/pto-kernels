@@ -21,7 +21,8 @@ SUPPORTED_HEADS = [8, 12, 16, 24, 32, 48, 64]
 
 def save_report(report, output):
     for row in report["records"]:
-        row.setdefault("status", "passed")
+        if row.get("status") not in ("passed", "failed"):
+            raise ValueError("Every comparison must have an explicit validation status")
     output.write_text(json.dumps(report, indent=2) + "\n")
     with output.with_suffix(".csv").open("w", newline="") as f:
         fields = ["heads", "key_heads", "length", "status", "baseline_ms", "current_ms", "speedup"]
@@ -60,12 +61,18 @@ def main():
         "chunk_size": 128, "head_dim": 128, "seed": 0, "warmups": 5, "trials": 15, "calls_per_trial": 20,
         "timing": "Median device-event time per graph-replayed call, warm cache; allocation and checks excluded",
         "library_sha256": fingerprints, "records": [],
+        # Never reuse historical RMSE-only passes after changing acceptance or
+        # its oracle. Include both the shared checker and the worker/reference.
+        "validation_sha256": hashlib.sha256(b"".join((ROOT / name).read_bytes() for name in
+            ("tests/gdn_mega_validation.py", "tests/test_gdn_mega.py", "benchmarking/gdn_mega.py"))).hexdigest(),
+        "validation": "pointwise atol=1e-5, rtol=1e-3 AND relative RMSE < 0.005; raw output and final state",
     }
     if args.resume and output.exists():
         previous = json.loads(output.read_text())
         for key in ["heads", "lengths", "group_size", "gate_scale", "initial_state", "device",
-                    "chunk_size", "head_dim", "seed", "warmups", "trials", "calls_per_trial", "library_sha256"]:
-            if previous[key] != report[key]:
+                    "chunk_size", "head_dim", "seed", "warmups", "trials", "calls_per_trial", "library_sha256",
+                    "validation_sha256", "validation"]:
+            if previous.get(key) != report[key]:
                 parser.error(f"Cannot resume: {key} differs")
         report = previous
     save_report(report, output)
@@ -114,6 +121,7 @@ def main():
             save_report(report, output)
     save_report(report, output)
     print(f"\nSaved {len(report['records'])} comparison results to {output}", flush=True)
+    raise SystemExit(any(row["status"] == "failed" for row in report["records"]))
 
 
 if __name__ == "__main__":

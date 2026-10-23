@@ -2499,5 +2499,7 @@
   },
   "validation_notes": [
     "Current passes all 49 shapes. Baseline passes 48; H=64, T=32768 fails output correctness in two processes: relative RMSE 0.087156 initially and 0.087424 on recheck. No baseline timing or speedup is reported for that cell."
-  ]
+  ],
+  "validation": "Historical: finite outputs and relative RMSE < 0.005 only. max_abs was reported, not enforced. No pointwise guarantee.",
+  "accuracy_audit": "accuracy_audit.md"
 }

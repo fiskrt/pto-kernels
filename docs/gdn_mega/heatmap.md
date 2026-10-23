@@ -1,5 +1,13 @@
 # GDN speedup heatmap and execution model
 
+**Accuracy correction (2026-10-23): these are historical RMSE-only results.**
+Maximum absolute error was recorded but was not a pass/fail criterion. The new
+[independent accuracy audit](accuracy_audit.md) finds pointwise failures and
+nonfinite results on additional valid inputs. This figure preserves measured
+latencies; its green cells do not establish current numerical acceptance.
+The updated benchmark enforces pointwise tolerances in raw output units and
+rejects resuming these old results under the new policy.
+
 The heatmap compares original checkpoint **10748eb** with the cleaned production
 kernel **5141f56**. The later acceptance commit 1e92737 changes documentation only.
 Measurements use Ascend 910B2 / CANN 9.1.0 / torch and torch-npu 2.10.0, NPU 0.
@@ -15,7 +23,7 @@ state. This is a controlled synthetic workload, not a guarantee for every gate
 or key distribution. Other gate scales and grouping ratios can be swept with
 the same script.
 
-Both output and final state must pass against the CPU FP32 reference before a
+Both output and final state had to pass the RMSE-only check against the CPU FP32 reference before a
 shape receives a speedup. Passing shapes use five checked warmups and another
 check after graph replay. Failed shapes record the assertion and skip timing. Timing uses the median
 of 15 trials of 20 graph-replayed calls, warm cache, with allocations and checks
@@ -30,7 +38,7 @@ requested library. Raw numerical errors and latency ranges accompany the CSV.
 
 ## Results and validation
 
-The optimized kernel passes **all 49 shapes**. The **48 valid comparisons** range
+The optimized kernel passed the historical RMSE-only criterion for **all 49 shapes**. The **48 historical comparisons** range
 from **2.91x to 7.53x**. Its largest output/state relative RMSE is 0.0004342,
 well below the unchanged 0.005 threshold.
 

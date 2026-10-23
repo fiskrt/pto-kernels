@@ -22,11 +22,10 @@ import torch
 import torch.nn.functional as F
 
 from pto_kernels import pto_gdn_mega
+from gdn_mega_validation import assert_numerically_close
 
 C = 128  # chunk size, fixed by the kernel build
 D = 128  # head dimension, fixed by the kernel build
-
-MAX_RMSE_RATIO = 0.005
 
 # (num_value_heads, num_key_heads) pairs the kernel dispatches.
 SUPPORTED_HEAD_CONFIGS = [
@@ -48,7 +47,7 @@ SUPPORTED_HEAD_CONFIGS = [
 
 
 def _inv_tril(A: torch.Tensor) -> torch.Tensor:
-    """Inverse of (I + A) for a strictly lower-triangular A, computed in place."""
+    """Inverse of (I - A) for a strictly lower-triangular A, computed in place."""
     assert A.shape[-2] == A.shape[-1]
     chunk_size = A.shape[-1]
     for i in range(1, chunk_size):
@@ -273,20 +272,20 @@ def _run_gdn_mega(q, k, v, g, beta, cu_seqlens, initial_state=None):
 
 
 def _assert_close(name: str, actual: torch.Tensor, expected: torch.Tensor) -> None:
-    diff = (actual.float().cpu() - expected.float().cpu()).abs()
-    max_abs = diff.max().item()
-    assert torch.isfinite(actual).all(), f"{name}: nonfinite output"
-    rmse = torch.sqrt((diff.flatten() ** 2).mean()).item()
-    base = torch.sqrt((expected.float().cpu().flatten() ** 2).mean()).item()
-    ratio = rmse / max(base, 1e-8)
-    assert ratio < MAX_RMSE_RATIO, (
-        f"{name}: max_abs={max_abs:.6f} rmse_ratio={ratio:.6f}"
-    )
+    assert_numerically_close(name, actual, expected)
+    if name.startswith("out"):
+        # Helpers historically return attention-scaled output. Also enforce the
+        # absolute tolerance in the raw units of the public kernel's output.
+        assert_numerically_close(name + " (raw units)", actual.double() * D**.5,
+                                 expected.double() * D**.5)
 
 
 def _make_inputs(seq_len, num_value_heads, num_key_heads, seed=0):
-    """Build CPU inputs. q/k are L2-normalised so that the reference's
-    128-step triangular inverse stays well conditioned."""
+    """Build one ordinary normalized-input distribution, not an accuracy bound.
+
+    Adversarial keys, amplitudes and independent references live in
+    test_gdn_mega_validation.py; normalized keys alone do not bound conditioning.
+    """
     torch.manual_seed(seed)
     q = F.normalize(torch.randn(1, seq_len, num_key_heads, D), p=2, dim=-1).half()
     k = F.normalize(torch.randn(1, seq_len, num_key_heads, D), p=2, dim=-1).half()
@@ -339,7 +338,7 @@ def test_gdn_mega_head_configs(num_value_heads, num_key_heads, npu_device):
     q, k, v, g, beta = _make_inputs(seq_len, num_value_heads, num_key_heads)
     cu_seqlens = torch.tensor([0, seq_len], dtype=torch.int32, device=npu_device)
 
-    actual, _ = _run_gdn_mega(
+    actual, actual_final = _run_gdn_mega(
         q.to(npu_device),
         k.to(npu_device),
         v.to(npu_device),
@@ -350,9 +349,10 @@ def test_gdn_mega_head_configs(num_value_heads, num_key_heads, npu_device):
     torch.npu.synchronize()
 
     q_ref, k_ref = _expand_kv_heads(q, k, num_value_heads)
-    expected, _ = _reference(q_ref, k_ref, v, g, beta)
+    expected, expected_final = _reference(q_ref, k_ref, v, g, beta)
 
     _assert_close("out", actual, expected)
+    _assert_close("final_state", actual_final, expected_final)
 
 
 def test_gdn_mega_with_initial_state(npu_device):
@@ -433,11 +433,8 @@ def test_gdn_mega_correlated_keys(beta_value, npu_device):
         torch.npu.synchronize()
         pairs = [(args["out"].cpu().float() * D**-0.5, expected),
                  (args["final_state"].cpu().view_as(expected_state).float(), expected_state)]
-        for actual, reference in pairs:
-            assert torch.isfinite(actual).all()
-            relative_rmse = ((actual - reference).square().mean() /
-                             reference.square().mean().clamp_min(1e-16)).sqrt().item()
-            assert relative_rmse < 0.005, relative_rmse
+        for name, (actual, reference) in zip(("out", "final_state"), pairs):
+            _assert_close(name, actual, reference)
 
 
 def test_gdn_mega_changing_decay(npu_device):
