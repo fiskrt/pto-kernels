@@ -529,3 +529,14 @@ these timings are explicitly saved in docs/gdn_mega/hybrid_checkpoint.md.
 Input-range derivation, measured inverse-power growth (4.76e18 for FLA-style
 positive/no-decay keys despite inverse maxabs 1), rejected major algorithm
 experiments, raw timings and accuracy evidence are in docs/gdn_mega/.
+
+2026-10-23 — `a329112` — shared-operand projection and residual pipeline.
+All80 strict tests pass after correcting scalar-cache invalidation for reused
+coupling flags. Preweight K independently, then share R between output/state
+products; remove the dependent residual-scale exchange and three flags per chunk.
+H16/Hg4, nonzero initial state,128/4K/8K/16K/32K:
+0.069667/0.844893/1.672497/3.392108/6.872840ms. At4K1.072× vs prior stable
+0.905793ms,1.490× vs correct FP32 predecessor1.259212ms. The128-token case
+regresses; conservative strong-coupling fallback remains slow.3× target unmet.
+ABI/dtypes/allocation sizes unchanged. Full evidence and failed/fixed regression
+records: docs/gdn_mega/fused_checkpoint.md and adjacent JSON/logs.
