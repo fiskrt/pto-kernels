@@ -492,3 +492,14 @@ This is slower than the historical FP16 optimized path; no speedup is claimed.
 Raw results: `benchmark_data/gdn_mega/fp32_first_benchmark.json`.
 Further work targets the dense scalar-decay product and FP32 transfer overhead,
 without relaxing the numerical policy.
+
+## 2026-10-23 — paired FP16 stable checkpoint
+
+Commit **ff86de2**: stable block inverse, paired FP16 products with FP32 state,
+overlapped inverse preparation, and compensated restart for strongly coupled heads.
+**70/70 tests pass** with unchanged strict absolute/relative criteria.
+H16/Hg4, nonzero initial state, 4K: **0.968760 ms**, versus correct FP32
+1.259212 ms (**1.30×**). 8K/16K/32K: 1.915925/3.907988/7.935392 ms.
+ABI/dtypes/caller allocation sizes unchanged. Strong-coupling fallback can be slow.
+Historical ~0.87 ms original and ~0.25 ms inaccurate FP16 timings are not beaten;
+the requested target remains unmet. Full evidence: docs/gdn_mega/paired_checkpoint/.
