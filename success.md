@@ -372,3 +372,48 @@ Tracked report and all tables: docs/gdn_mega/optimization_report.md,
 checkpoint_latency.csv, checkpoint_stages.csv, production_latency.csv, and
 measurements.json. JSON preserves raw timing/error metrics, environment, dense
 matrix FLOP accounting, and measured kernel-library SHA-256 fingerprints.
+
+## 2a5cce3 — checked shape sweep, heatmap, and execution explanation
+
+Added a reusable benchmark sweep and a separate CPU plotting script. The sweep
+varies H=8/12/16/24/32/48/64 and T=128/256/1024/4096/8192/16384/32768 with fixed
+GQA group4, D=C128, ordinary logsigmoid gates, seed0, and nonzero initial states.
+Original10748eb and cleaned5141f56 libraries run in separate processes. Their
+actually loaded SHA-256 fingerprints match the saved branch-report artifacts.
+Each passing implementation/shape checks output and final state over five
+warmups and after timed graph replay; medians use15trials of20calls. Allocation
+and reference checks are outside timing. The runner releases per-shape graphs
+and tensors, checkpoints results, and supports validated resume.
+
+All49 optimized shapes pass (largest output/state relative RMSE0.000434155,
+threshold0.005 unchanged). There are48 valid speedups ranging2.90654x–7.52798x.
+The original baseline fails output correctness atH64/Hg16/T32768 in two processes:
+relative RMSE0.087156 then0.087424. Its cell is explicitly gray/failed, without
+baseline latency or a speedup. The optimized kernel passes that shape at7.51260ms,
+with output/state relative RMSE0.000430010/0.000377453. The baseline failure's
+cause has not been diagnosed; no tolerance relaxation or baseline modification.
+
+Validated real-device normal/failure paths, matching CSV/JSON shape grids and
+ratios, resume without retiming completed rows, rejection of incomplete plotting
+grids, PNG visual inspection, SVG XML parsing, Python syntax, and git diff
+--check. No production kernel or interface changes. Existing32-test acceptance
+remains in the previous entry; this change adds the larger benchmark coverage.
+
+Commands (repository root):
+
+```bash
+bash scripts/gdn_mega_docker.sh timeout 1800 python benchmarking/gdn_mega_sweep.py \
+  --baseline-lib benchmark_data/gdn_mega/baseline_lib \
+  --output docs/gdn_mega/heatmap.json
+bash scripts/gdn_mega_docker.sh timeout 900 python benchmarking/gdn_mega_sweep.py \
+  --baseline-lib benchmark_data/gdn_mega/baseline_lib \
+  --output docs/gdn_mega/heatmap.json --resume
+bash scripts/gdn_mega_docker.sh python benchmarking/plot_gdn_mega.py \
+  docs/gdn_mega/heatmap.json
+```
+
+Saved docs/gdn_mega/heatmap.{png,svg,csv,json,md}. The Markdown explains executed
+GFLOPs versus TFLOP/s, the two global phases inside one launch, head-persistent
+chunk processing, and its head-count scheduling implications. Initial sweep
+stopped on the baseline numerical failure; the runner now records numerical
+failures explicitly and the validated resume completed the remaining row.
