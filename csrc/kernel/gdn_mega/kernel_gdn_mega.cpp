@@ -1,7 +1,8 @@
 // GDN mega kernel: one launch, two global phases, one production schedule.
 // Phase 1: gate prefix scan/layout and shared KK/QK products run concurrently.
-// Phase 2: a head-persistent pipeline fuses preparation, inverse, WY, state,
-// and output. See README.md for the file map and workspace contract.
+// Phase 2: a head-persistent pipeline overlaps next-chunk inverse preparation
+// with residual, state and output products. Strong coupling uses compensated
+// recurrence. See README.md for the file map and workspace contract.
 #ifndef GM_ADDR
 #define GM_ADDR __gm__ uint8_t*
 #endif
@@ -29,12 +30,12 @@ AICORE inline void mega_kernel_impl(GM_ADDR q_ptr, GM_ADDR k_ptr, GM_ADDR v_ptr,
                                     uint32_t num_key_heads, int64_t batch_size, int64_t seq_len,
                                     int64_t total_tokens, uint32_t num_matrices)
 {
-    constexpr int32_t D = 128, C = 32;
+    constexpr int32_t D = 128, C = 128;
     if (num_key_heads == 0 || (static_cast<uint32_t>(H) % num_key_heads) != 0) {
         return;
     }
 
-    // Internal tiles are smaller than the public scratch allocation unit.
+    // Count packed 128-token chunks, including independent short tails.
     auto cu = reinterpret_cast<__gm__ int32_t*>(cu_seqlens_ptr);
     uint32_t internal_matrices = 0;
     for (int64_t seq = 0; seq < batch_size; ++seq)
@@ -49,26 +50,22 @@ AICORE inline void mega_kernel_impl(GM_ADDR q_ptr, GM_ADDR k_ptr, GM_ADDR v_ptr,
                          reinterpret_cast<__gm__ int32_t*>(cu_seqlens_ptr), batch_size, total_tokens);
 
     mega_shared_grams<H, C, D>(reinterpret_cast<__gm__ half*>(k_ptr),
-                              reinterpret_cast<__gm__ float*>(v_new_ptr),
+                              reinterpret_cast<__gm__ float*>(v_new_ptr), reinterpret_cast<__gm__ float*>(s_ptr),
                               reinterpret_cast<__gm__ int32_t*>(cu_seqlens_ptr), internal_matrices, num_key_heads,
                               reinterpret_cast<__gm__ half*>(q_ptr),
                               reinterpret_cast<__gm__ float*>(A_inv_f32_ptr));
 
     mega_sync_all();
 
-    // Phase 2: persistent vector preparation and cube inverse/WY/state/output.
-    mega_fused_pipeline<H, C, D>(
-        reinterpret_cast<__gm__ half*>(q_ptr), reinterpret_cast<__gm__ half*>(k_ptr), reinterpret_cast<__gm__ half*>(v_ptr),
-        reinterpret_cast<__gm__ float*>(g_t_ptr), reinterpret_cast<__gm__ half*>(beta_t_ptr),
-        reinterpret_cast<__gm__ float*>(v_new_ptr), reinterpret_cast<__gm__ float*>(A_inv_f32_ptr),
-        reinterpret_cast<__gm__ float*>(msk_lower_ptr), reinterpret_cast<__gm__ float*>(msk_full_ptr),
-        reinterpret_cast<__gm__ half*>(minus_id_ptr),
-        reinterpret_cast<__gm__ float*>(wy_ws_a1_ptr), reinterpret_cast<__gm__ float*>(wy_ws_a2_ptr),
-        reinterpret_cast<__gm__ float*>(o_ws_qs_ptr), reinterpret_cast<__gm__ float*>(o_ws_gated_ptr),
-        reinterpret_cast<__gm__ float*>(kkt_ws_ptr), reinterpret_cast<__gm__ float*>(o_ws_qk_ptr),
-        reinterpret_cast<__gm__ float*>(h_ws_ptr), reinterpret_cast<__gm__ half*>(o_ptr),
-        reinterpret_cast<__gm__ half*>(fs_ptr), reinterpret_cast<__gm__ half*>(h0_ptr), has_initial_state,
-        cu, batch_size, num_key_heads, total_tokens);
+    mega_fused_pipeline<H,C,D>(reinterpret_cast<__gm__ half*>(q_ptr),reinterpret_cast<__gm__ half*>(k_ptr),reinterpret_cast<__gm__ half*>(v_ptr),
+        reinterpret_cast<__gm__ float*>(g_t_ptr),reinterpret_cast<__gm__ float*>(g_sum_ptr),reinterpret_cast<__gm__ half*>(beta_t_ptr),
+        reinterpret_cast<__gm__ half*>(A_ptr),reinterpret_cast<__gm__ half*>(w_ptr),reinterpret_cast<__gm__ half*>(A_inv_ptr),reinterpret_cast<__gm__ half*>(u_ptr),
+        reinterpret_cast<__gm__ half*>(minus_id_ptr),reinterpret_cast<__gm__ half*>(wy_ws_a1_ptr),reinterpret_cast<__gm__ half*>(wy_ws_a2_ptr),
+        reinterpret_cast<__gm__ half*>(o_ws_qs_ptr),reinterpret_cast<__gm__ half*>(o_ws_gated_ptr),reinterpret_cast<__gm__ half*>(kkt_ws_ptr),
+        reinterpret_cast<__gm__ half*>(h_ws_ptr),reinterpret_cast<__gm__ half*>(o_ptr),reinterpret_cast<__gm__ half*>(fs_ptr),
+        reinterpret_cast<__gm__ half*>(h0_ptr),has_initial_state,cu,batch_size,num_key_heads,total_tokens,
+        reinterpret_cast<__gm__ float*>(v_new_ptr),reinterpret_cast<__gm__ float*>(s_ptr),reinterpret_cast<__gm__ float*>(A_inv_f32_ptr),
+        reinterpret_cast<__gm__ float*>(msk_lower_ptr),reinterpret_cast<__gm__ float*>(msk_full_ptr),reinterpret_cast<__gm__ float*>(g_in_ptr));
     pipe_barrier(PIPE_ALL);
 }
 

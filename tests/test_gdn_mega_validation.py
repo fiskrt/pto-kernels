@@ -29,6 +29,16 @@ AUDIT_CASES = [
     dict(name="keys_norm2_stable_beta", seed=859, lengths=(257,), heads=8, key_heads=2, key_scale=2., beta=.1),
     dict(name="long_8k_weak", seed=863, lengths=(8192,), heads=8, key_heads=2, gate_scale=.01),
     dict(name="long_32k", seed=877, lengths=(32768,), heads=8, key_heads=2),
+    dict(name="correlated_random_beta09", seed=883, lengths=(513,), heads=8, key_heads=2,
+         correlated_random=True, gate_scale=0., beta=.9, amplitude=32.),
+    dict(name="nearly_correlated_beta1", seed=887, lengths=(257,), heads=16, key_heads=4,
+         nearly_correlated=True, gate_scale=0., beta=1., amplitude=32.),
+    dict(name="positive_log_gates", seed=907, lengths=(257,), heads=8, key_heads=2, gate_scale=-.01),
+    dict(name="long_16k_no_decay", seed=919, lengths=(16384,), heads=8, key_heads=2, gate_scale=0.),
+    dict(name="delayed_nearly_correlated", seed=929, lengths=(385,), heads=8, key_heads=2,
+         nearly_correlated=True, correlated_after=128, gate_scale=0., beta=1., amplitude=32.),
+    dict(name="strong_correlated_decay", seed=937, lengths=(257,), heads=8, key_heads=2,
+         nearly_correlated=True, gate_scale=.01, beta=.9, amplitude=32.),
 ]
 READ_ONLY = ("q", "k", "v", "g", "beta", "mask_lower", "mask_full", "minus_identity", "cu_seqlens")
 
@@ -43,6 +53,13 @@ def make_audit_inputs(case):
         # Exact unit vectors: stable delta-rule recurrence even with beta=1.
         k.zero_()
         k[..., 0] = 1
+    if case.get("correlated_random") or case.get("nearly_correlated"):
+        keys = k[:, :1].float().expand_as(k).clone()
+        if case.get("nearly_correlated"):
+            keys += .01 * torch.randn_like(keys)
+            keys /= keys.norm(dim=-1, keepdim=True)
+        after = case.get("correlated_after", 0)
+        k[:, after:].copy_(keys[:, after:].half())
     k.mul_(case.get("key_scale", 1.))
     if "beta" in case:
         beta.fill_(case["beta"])

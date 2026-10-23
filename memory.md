@@ -368,3 +368,52 @@ Device profile:device_gram_pipeline/OPPROF_20261022172022_WQDJDGCBKTHCAPFG,
 1800MHz; active cube0..15 median busy31.06%,MTE126.67%,FIX21.26%; waits
 cube54.57%,MTE151.50%. Summary:gram_profile_summary.json. The further2x target
 is not achieved; source and build are restored to the tested Gram improvement.
+
+## 2026-10-23 — precision/performance experiments after the FP32 correction
+
+The strict pointwise policy remains unchanged. The 64-case FP32 checkpoint is
+`41f0549` (1.259212 ms at H16/Hg4/T4096 with initial state). Four additional
+adversarial cases were subsequently fixed before testing: random correlated
+keys/beta=.9/amplitude32, nearly correlated keys/beta=1/amplitude32, positive
+log gates, and 16K no decay. The nearly correlated case exposes further errors;
+it must not be removed or accepted through RMSE alone.
+
+Measured experimental H16/Hg4/T4096 candidates (not accepted releases):
+
+| Candidate | ms | Status |
+|---|---:|---|
+| FP32 32-token, parallel vector inverses | 1.189890 | original audit passed; added near-collinear case fails |
+| Paired FP16, 32-token | 1.392073 | no improvement |
+| Paired FP16, 128-token, diagonal16 | 1.278445 | 67/68 tests pass |
+| Same, diagonal32 | 1.368102 | benchmark passes; no improvement |
+| Same, diagonal64 | 1.334599 | benchmark passes; no improvement |
+| Residual before inverse, original FP16 K/Q | 1.057365 | ordinary and overflow smoke cases pass; near-collinear case fails |
+| Bounded single-FP16 inverse + Newton residual correction | 1.102940 | ordinary/weak/no-decay/overflow pass; near-collinear case fails |
+
+Residual-first identity: `R = inv * [beta * (V - exp(G) * K*S)]` replaces
+`inv*(beta*V) - [inv*(beta*exp(G)*K)]*S`. Original K and Q need only two products
+against a high/low state pair. Scaling R for the state update on vector permits
+another exact-input half product. Output and authoritative state stay FP32 on
+vector; only public stores round to FP16. Existing workspace sizes are retained.
+
+Latest profiler: `profile_residual/OPPROF_20261023144109_OWBQIAEZWKUOQDLE`.
+Block0 cube: 1.026 ms total, 203.7 us cube active (~19.6%), 141.3 us MTE1,
+186.9 us MTE2, 110.6 us FIX, 246.3 us global vector-preparation wait, 65.5 us
+RHS/state wait. Vector0: 256.3 us vector, 305.6 us waiting for inverse/RHS solve.
+These are overlapping per-pipe counters, not additive stage timings.
+
+Two actual implementation hazards found and corrected: vector temporary reuse
+requires V->MTE2 ordering before a new DMA load, and short dependent cube MADs
+require a PIPE_M barrier (otherwise a 16x16 product retained earlier Gram data).
+The poisoned-workspace tests detected the latter; integer beta=1 diagnostics
+localized it. Do not remove either dependency to improve timings.
+
+Overflow mechanism: for identical unit keys, beta=1, g=0, signed strict-lower
+A has entries -1. Its powers contain binomial coefficients despite `(I-A)^-1`
+being just a unit diagonal and a -1 first subdiagonal. Scaling the enormous
+power-series terms prevents infinities but cannot undo catastrophic cancellation.
+Stable diagonal substitution plus block joins avoids those powers altogether.
+A CPU experiment with bounded FP16 block inversion + one Newton correction
+reduced inverse error on a no-decay sample from 1.52e-4 to 1.20e-7, but the NPU
+correction cost outweighed its savings. Raw results are in ignored
+`benchmark_data/gdn_mega/`; the candidate remains experimental.

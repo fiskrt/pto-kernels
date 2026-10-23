@@ -1,91 +1,105 @@
 # Production GDN mega kernel
 
-**Known numerical failures:** the [independent accuracy audit](../../../docs/gdn_mega/accuracy_audit.md)
-finds pointwise errors beyond the FP16 test policy and nonfinite results for
-identical unit keys with no decay and beta 0.5 or 1. The full inverse-series
-fallback does not prevent intermediate FP16 overflow. Earlier test passes used
-RMSE alone. Current conformance tests deliberately fail until these issues are
-resolved; historical speedups are not numerical acceptance certificates.
+One launch and two global phases, with a fixed compiled schedule on Ascend 910B2:
 
-One launch, two global phases, one compiled production schedule:
+1. Vector computes compensated gate prefixes and transposes beta while cube
+   computes FP32 KKᵀ and QKᵀ, shared by grouped value heads. A global barrier
+   joins these independent producers.
+2. Each active cube/vector group retains one head across its chunks. Vector
+   prepares the next chunk's inverse and attention while cube processes the
+   current chunk. The recurrent state stays in vector-local FP32 storage.
 
-1. Vector gate prefix scan and layout conversion run concurrently with cube
-   KKᵀ/QKᵀ products shared across key heads. One global barrier joins them.
-2. A head-persistent pipeline alternates two vector preparation slots while the
-   cube performs the inverse, WY products, state recurrence, and output. State
-   stays on-chip across chunks. Slot handshakes enforce producer/consumer order.
+The inverse uses stable 16×16 FP32 triangular substitution followed by
+block-triangular joins. It never forms the large powers of A that caused the
+previous FP16 overflow. Matrix operands use two FP16 components; products
+accumulate the leading product and both first-order rounding corrections in
+FP32. This is an approximation, not an exact FP32 emulation.
 
-These are execution phases, not file counts. The inverse still uses bounded
-runtime term selection with a full 64-term fallback. Nonzero initial states,
-finite decay, tails, and packed sequences remain supported.
+The residual is formed before applying the inverse:
+
+`R = inverse * [beta * (V - exp(G) * K*S)]`.
+
+This avoids separately multiplying the inverse by both WY operands. Original
+FP16 K and Q remain exact inputs to their products with paired state/residuals.
+Output accumulation and state updates remain FP32, with final FP16 stores.
+Gate differences retain `G_i-G_j`; there is no inverse-power truncation based
+on decay and no division by a potentially underflowed gate exponential.
+
+Strong coupling can amplify small chunk-solve errors. When any strict-lower
+coefficient `abs(beta_i * exp(G_i-G_j) * dot(k_i,k_j))` exceeds 0.5, the head
+is recomputed from its supplied initial state using compensated FP32 token
+recurrence and balanced dot reductions. This also corrects a previously computed
+prefix when coupling appears later. Selection depends on input arithmetic, not
+seeds, test identifiers, or reference outputs. This conservative path is slower;
+latency consequently depends on the values as well as the shape.
+
+A persistent kernel means that the same hardware group loops over successive
+chunks of a head, retaining state locally. It does not mean a background process
+or an additional launch. File count does not equal stage count.
 
 | File | Used for |
 |---|---|
-| `kernel_gdn_mega.cpp` | Two-phase orchestration, kernel entry, runtime head dispatch |
-| `common.hpp` | Device synchronization, packed tile I/O, packed sequence indexing |
-| `gate_scan.hpp` | Parallel prefix scan and gate/beta layout conversion |
-| `shared_grams.hpp` | Shared KKᵀ/QKᵀ; single-wave and pipelined multi-wave execution |
-| `inverse.hpp` | Interleaved 64×64 diagonal solves and off-diagonal join |
-| `recurrence_pipeline.hpp` | Overlapped WY, state, and output matrix operations |
-| `fused_pipeline.hpp` | Vector operand preparation, persistent slots, startup/final state |
+| `kernel_gdn_mega.cpp` | Two-phase orchestration, entry and head dispatch |
+| `common.hpp` | Synchronization, packed I/O and sequence indexing |
+| `gate_scan.hpp` | Compensated prefix scan and gate/beta layout conversion |
+| `shared_grams.hpp` | Shared FP32 KKᵀ/QKᵀ with pipelined input loads |
+| `inverse.hpp` | Batched 16×16 triangular substitution |
+| `recurrence_pipeline.hpp` | Paired FP16 cube products and block joins |
+| `fused_pipeline.hpp` | Preparation overlap, recurrent state, output and compensated path |
 
-Every helper is included by the entry point. There are no legacy mega stages,
-probe kernels, timing hooks, early-exit debug modes, or tuning `#ifdef`s.
-Compiler/architecture guards remain because cube and vector execute different
-instructions. Target validation is Ascend 910B2; the inherited A5 synchronization
-path is not validated and still lacks a verified device-wide barrier.
+All seven files are used by the entry point. There are no probe kernels, runtime
+accuracy knobs, or selectable tuning configurations. Compiler architecture and
+cube/vector guards remain necessary. Hardware validation is on Ascend 910B2;
+the inherited A5 synchronization path is not a verified implementation.
 
 ## Caller contract
 
-The public entry point remains `pto_gdn_mega`. Its arguments, shapes, dtypes,
-allocation sizes, and in-place output behavior are unchanged. T and packed
-sequence count N are dynamic; H dispatches among 8/12/16/24/32/48/64 and Hg divides
-H. D=C=128. The supported launch policy uses the runtime physical cube-core count
-(24 on the tested 910B2), not one hardware block per token/chunk.
+`pto_gdn_mega` keeps the same arguments, tensor shapes, dtypes, allocation sizes
+and in-place output behavior. No additional caller allocation is required.
+T and packed sequence count N are dynamic; H supports 8/12/16/24/32/48/64, Hg
+must divide H, and D=C=128. The launch uses the runtime physical cube-core count
+(24 on the tested device). Nonzero initial states, absent initial state, empty
+packed sequences and short tails are supported.
 
-Only `out` and `final_state` are primary outputs. Existing output scaling by
-`128**-0.5` is applied by the reference/test caller, not introduced by this branch.
+Only `out` and `final_state` are primary outputs. The existing caller applies
+`128**-0.5` to raw output; the device does not introduce that scaling.
 
-| Supplied buffer | Production role |
+| Supplied scratch | Current role |
 |---|---|
-| `g_sum`, `g_t`, `beta_t` | Prefix sums and transposed gates/beta |
-| `A` | Signed gated matrix, internally packed by head |
-| `A_inv_f32` | Reinterpreted FP16 storage for scaled K and shared QK |
-| `A_inv` | Scaled Q, internally packed by head |
-| `w`, `u` | Prepared WY operands, internally packed by head |
-| `v_new` | Shared KK products |
-| `kkt_workspace` | Per-core inverse/decay control metadata |
-| `h_workspace` | Two attention/decay producer slots per cube |
-| `s`, `wy_workspace_a1/a2`, `o_workspace_qk/qs/gated` | Reserved compatibility arguments; currently unused |
+| `g_t`, `g_sum`, `beta_t` | Head-major high/low gate prefixes and beta |
+| `A`, `w` | Inverse high/low components; unused upper entries carry coupling markers |
+| `A_inv`, `u` | Attention high/low components |
+| `A_inv_f32` | FP32 QKᵀ shared by grouped heads |
+| `v_new`, `s` | Two column halves of FP32 KKᵀ |
+| `wy_workspace_a1/a2` | Reused RHS and weighted-residual high/low slots |
+| `kkt_workspace` | FP32 output-product exchange |
+| `h_workspace` | FP32 projection/residual/state and paired-state exchange |
+| `o_workspace_qk/qs/gated` | Reserved compatibility storage |
 
-All these buffers are scratch, not a post-call intermediate-results API. Keep
-allocating their existing shapes; do not infer their layout from historical
-names. No extra allocation is needed. The exact declarations are documented in
-[`torch_gdn_mega.h`](../../host/torch_gdn_mega.h), and allocation is demonstrated
-by `_prepare_gdn_mega` in [`test_gdn_mega.py`](../../../tests/test_gdn_mega.py).
+Scratch contents are not a post-call intermediate-results API. Continue allocating
+existing shapes, as demonstrated by `_prepare_gdn_mega` in
+[`test_gdn_mega.py`](../../../tests/test_gdn_mega.py). The
+[`host declaration`](../../host/torch_gdn_mega.h) describes the public arguments.
 
-## Build, test, benchmark
-
-From the repository root, using the prepared CANN container:
+## Build and verify
 
 ```bash
 bash scripts/gdn_mega_docker.sh bash scripts/build_gdn_mega.sh
-bash scripts/gdn_mega_docker.sh timeout 120 python -m pytest tests/test_gdn_mega.py -q
+bash scripts/gdn_mega_docker.sh timeout 240 python -m pytest \
+  tests/test_gdn_mega.py tests/test_gdn_mega_validation.py -q
 bash scripts/gdn_mega_docker.sh timeout 600 python benchmarking/audit_gdn_mega.py \
-  --output benchmark_data/gdn_mega/accuracy_audit.json
-bash scripts/gdn_mega_docker.sh timeout 300 python benchmarking/gdn_mega.py \
-  --initial-state --lengths 128 256 1024 4096 8192 16384 32768 \
-  --output benchmark_data/gdn_mega/production.json
-bash scripts/gdn_mega_docker.sh timeout 300 python benchmarking/gdn_mega.py \
-  --initial-state --gate-scale 0.01 --lengths 4096 8192 16384 32768 \
-  --output benchmark_data/gdn_mega/production_weak.json
+  --output benchmark_data/gdn_mega/current_accuracy.json
+bash scripts/gdn_mega_docker.sh timeout 600 python benchmarking/gdn_mega.py \
+  --initial-state --lengths 128 4096 8192 16384 32768 \
+  --output benchmark_data/gdn_mega/current_performance.json
 ```
 
-The build-scope option `GDN_MEGA_ONLY=ON` avoids compiling unrelated public
-operators. All supported mega head specializations use the same production
-schedule. No algorithm configuration is required.
-
-Measured comparisons, FLOP accounting, memory sizes, and acceptance results are
-in the [branch report](../../../docs/gdn_mega/optimization_report.md).
-
-For a shape sweep and annotated plot, see the [heatmap benchmark](../../../docs/gdn_mega/heatmap.md).
+The independent oracle is CPU FP64 token recurrence. Acceptance checks every
+raw-output and final-state element against `1e-5 + 1e-3*abs(reference)`, as well
+as relative RMSE < 0.005, finiteness, exact shapes, guarded outputs, unchanged
+inputs, and repeated launches with poisoned scratch. No tolerance was relaxed.
+Historical RMSE-only results in the
+[branch report](../../../docs/gdn_mega/optimization_report.md) are not certificates
+for this stricter policy. Current milestones and remaining limitations are
+recorded in [`success.md`](../../../success.md) and
+[`memory.md`](../../../memory.md).

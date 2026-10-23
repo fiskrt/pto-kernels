@@ -1,63 +1,111 @@
 #pragma once
 
-// The A2 Acc-to-L1 instruction narrows to FP16/BF16. Use the already consumed
-// producer slot for lossless FP32 export/reload; release it only afterwards.
-template <int R, int K, typename Mat, typename Acc>
-AICORE inline void mega_keep_fp32(Mat& dst, Acc& src, __gm__ float* scratch)
+// Two FP16 components retain a leading value and its rounding correction.
+// Products include high*high and both first-order cross corrections, accumulated
+// in FP32. The second-order low*low term is omitted; tests enforce the resulting
+// error, including near-zero elements. Recurrent state has an FP32 copy.
+template <int R, int K> struct MegaPair;
+#ifdef __CCE_AICORE__
+template <int R, int K>
+struct MegaPair {
+    using Mat = Tile<TileType::Mat, half, R, K, BLayout::ColMajor, R, K, SLayout::RowMajor, 512>;
+    Mat high, low;
+    AICORE inline void assign(uint32_t address) {
+        TASSIGN(high, address); TASSIGN(low, address + R * K * sizeof(half));
+    }
+};
+#endif
+
+template <int R, int K, int N, bool Accumulate = false, typename Acc, typename A, typename B>
+AICORE inline void mega_pair_product(Acc& result, A& a, B& b)
 {
 #if defined(__DAV_CUBE__)
-    GlobalTensor<float, Shape<1, 1, 1, R, K>, pto::Stride<1, 1, 1, K, 1>> gm(scratch);
-    TSTORE(gm, src); pipe_barrier(PIPE_ALL);
-    TLOAD(dst, gm); pipe_barrier(PIPE_ALL);
+    TileLeft<half, R, K> ah, al;
+    TileRight<half, K, N> bh, bl;
+    TASSIGN(ah, 0); TASSIGN(al, R * K * sizeof(half));
+    TASSIGN(bh, 0); TASSIGN(bl, K * N * sizeof(half));
+    TEXTRACT(ah, a.high, 0, 0); TEXTRACT(al, a.low, 0, 0);
+    TMOV(bh, b.high); TMOV(bl, b.low); pipe_barrier(PIPE_ALL);
+    if constexpr (Accumulate) TMATMUL_ACC(result, result, ah, bl);
+    else TMATMUL(result, ah, bl);
+    pipe_barrier(PIPE_M);
+    TMATMUL_ACC(result, result, al, bh);pipe_barrier(PIPE_M);
+    TMATMUL_ACC(result, result, ah, bh);
+    pipe_barrier(PIPE_ALL);
 #endif
 }
 
-
-// Preserve FP32 through every product and through recurrent state. Only the
-// public output/final-state stores round to FP16. No inverse powers or skipped
-// small state contributions are used.
-template <int H, int C, int D, typename MatCD, typename MatCC, typename MatDD>
-AICORE inline void mega_recurrence_pipeline(MatCD& w, MatCD& u, MatCC& inverse,
-    MatDD& state, MatCD& kt, MatCD& query, MatCC& attention, MatCD& residual,
-    MatDD& decay, __gm__ half* output, int valid, __gm__ half* final_state, bool last,
-    __gm__ float* w_scratch, __gm__ float* r_scratch, __gm__ float* state_scratch)
+// Obtain X_hi and X_lo directly in L1. Subtracting the exactly representable
+// X_hi from its FP32 accumulator preserves the residual before rounding it.
+template <int R, int K, typename Acc, typename Identity>
+AICORE inline void mega_pair_from_acc(MegaPair<R, K>& pair, Acc& acc, Identity& minus_identity)
 {
 #if defined(__DAV_CUBE__)
-    TileLeft<float, C, C> inv_left, att_left;
-    TileLeft<float, C, D> w_left, q_left;
-    TileLeft<float, D, D> decay_left;
-    TileLeft<float, D, C> kt_left;
-    TileRight<float, C, D> values_right;
-    TileRight<float, D, D> state_right;
-    TileAcc<float, C, D> r_acc, out_acc;
-    TileAcc<float, D, D> state_acc;
-    TASSIGN(inv_left, 0); TASSIGN(att_left, 0); TASSIGN(w_left, 0);
-    TASSIGN(q_left, 0); TASSIGN(decay_left, 0); TASSIGN(kt_left, 0);
-    TASSIGN(values_right, 0); TASSIGN(state_right, 0);
-    TASSIGN(r_acc, 0); TASSIGN(state_acc, 0); TASSIGN(out_acc, D * D * sizeof(float));
-    TMOV(inv_left, inverse); TMOV(values_right, u); pipe_barrier(PIPE_ALL);
-    TMATMUL(r_acc, inv_left, values_right); pipe_barrier(PIPE_ALL);
-    TMOV(values_right, w); pipe_barrier(PIPE_ALL);
-    TMATMUL(out_acc, inv_left, values_right); pipe_barrier(PIPE_ALL);
-    mega_keep_fp32<C, D>(w, out_acc, w_scratch);
-    TMOV(w_left, w); TMOV(state_right, state); pipe_barrier(PIPE_ALL);
-    TMATMUL_ACC(r_acc, r_acc, w_left, state_right); pipe_barrier(PIPE_ALL);
-    mega_keep_fp32<C, D>(residual, r_acc, r_scratch);
-    TMOV(q_left, query); pipe_barrier(PIPE_ALL);
-    TMATMUL(out_acc, q_left, state_right); pipe_barrier(PIPE_ALL);
-    TMOV(decay_left, decay); pipe_barrier(PIPE_ALL);
-    TMATMUL(state_acc, decay_left, state_right); pipe_barrier(PIPE_ALL);
-    using Trans = Tile<TileType::Mat, float, D, C, BLayout::RowMajor, D, C, SLayout::ColMajor, 512>;
-    Trans transpose; TRESHAPE(transpose, kt);
-    TEXTRACT(kt_left, transpose, 0, 0); TMOV(values_right, residual); pipe_barrier(PIPE_ALL);
-    TMATMUL_ACC(state_acc, state_acc, kt_left, values_right); pipe_barrier(PIPE_ALL);
-    mega_keep_fp32<D, D>(state, state_acc, state_scratch);
-    TMOV(att_left, attention); pipe_barrier(PIPE_ALL);
-    TMATMUL_ACC(out_acc, out_acc, att_left, values_right); pipe_barrier(PIPE_ALL);
-    TileAcc<float, C, D, DYNAMIC, D> tail(valid);
-    TASSIGN(tail, D * D * sizeof(float));
-    mega_store_packed<C, D, H * D>(out_acc, tail, output, valid, D);
-    if (last) mega_store_packed<D, D, D>(state_acc, state_acc, final_state, D, D);
+    TMOV(pair.high, acc); pipe_barrier(PIPE_ALL);
+    TileLeft<half, R, K> high;
+    TileRight<half, K, K> negative;
+    TASSIGN(high, 0); TASSIGN(negative, 0);
+    TMOV(high, pair.high); TMOV(negative, minus_identity); pipe_barrier(PIPE_ALL);
+    TMATMUL_ACC(acc, acc, high, negative); pipe_barrier(PIPE_ALL);
+    TMOV(pair.low, acc); pipe_barrier(PIPE_ALL);
+#endif
+}
+
+// Block-triangular inversion combines already solved 16x16 diagonals.
+// The off-diagonal block is still signed A: inv21 = inv22 * A21 * inv11.
+template<int B,typename Acc,typename A,typename D>
+AICORE inline void mega_pair_slice_product(Acc& acc,A& a,int ar,int ac,D& b,int br,int bc)
+{
+#if defined(__DAV_CUBE__)
+    TileLeft<half,B,B> ah,al;TileRight<half,B,B> bh,bl;
+    TASSIGN(ah,0);TASSIGN(al,B*B*sizeof(half));TASSIGN(bh,0);TASSIGN(bl,B*B*sizeof(half));
+    TEXTRACT(ah,a.high,ar,ac);TEXTRACT(al,a.low,ar,ac);
+    TEXTRACT(bh,b.high,br,bc);TEXTRACT(bl,b.low,br,bc);pipe_barrier(PIPE_ALL);
+    TMATMUL(acc,ah,bl);pipe_barrier(PIPE_M);TMATMUL_ACC(acc,acc,al,bh);pipe_barrier(PIPE_M);TMATMUL_ACC(acc,acc,ah,bh);
     pipe_barrier(PIPE_ALL);
+#endif
+}
+
+template<int B,int C>
+AICORE inline void mega_inverse_join(MegaPair<C,C>& inverse,int offset,__gm__ half* negative_gm)
+{
+#if defined(__DAV_CUBE__)
+    MegaPair<B,B> temporary;temporary.assign(128*1024);
+    typename MegaPair<B,B>::Mat negative;TASSIGN(negative,192*1024);
+    mega_load_packed<B,B,128>(negative,negative,negative_gm,B,B);pipe_barrier(PIPE_ALL);
+    TileAcc<float,B,B> acc;TASSIGN(acc,0);
+    mega_pair_slice_product<B>(acc,inverse,offset+B,offset+B,inverse,offset+B,offset);
+    mega_pair_from_acc<B,B>(temporary,acc,negative);
+    mega_pair_slice_product<B>(acc,temporary,0,0,inverse,offset,offset);
+    TINSERT(inverse.high,acc,offset+B,offset);pipe_barrier(PIPE_ALL);
+    TileLeft<half,B,B> high;TileRight<half,B,B> unit;
+    TASSIGN(high,0);TASSIGN(unit,0);
+    TEXTRACT(high,inverse.high,offset+B,offset);TMOV(unit,negative);pipe_barrier(PIPE_ALL);
+    TMATMUL_ACC(acc,acc,high,unit);pipe_barrier(PIPE_ALL);
+    TINSERT(inverse.low,acc,offset+B,offset);pipe_barrier(PIPE_ALL);
+#endif
+}
+
+template<int C>
+AICORE inline void mega_complete_inverse(MegaPair<C,C>& inverse,__gm__ half* negative)
+{
+#if defined(__DAV_CUBE__)
+    static_assert(C==128);
+    for(int offset=0;offset<C;offset+=32)mega_inverse_join<16,C>(inverse,offset,negative);
+    for(int offset=0;offset<C;offset+=64)mega_inverse_join<32,C>(inverse,offset,negative);
+    mega_inverse_join<64,C>(inverse,0,negative);
+#endif
+}
+
+// The left operand is an original FP16 input, so its rounding residual is zero.
+template<int R,int K,int N,typename Acc,typename A,typename B>
+AICORE inline void mega_input_pair_product(Acc& result,A& a,B& b)
+{
+#if defined(__DAV_CUBE__)
+    TileLeft<half,R,K> left;TileRight<half,K,N> high,low;
+    TASSIGN(left,0);TASSIGN(high,0);TASSIGN(low,K*N*sizeof(half));
+    TEXTRACT(left,a,0,0);TMOV(high,b.high);TMOV(low,b.low);pipe_barrier(PIPE_ALL);
+    TMATMUL(result,left,low);pipe_barrier(PIPE_M);
+    TMATMUL_ACC(result,result,left,high);pipe_barrier(PIPE_ALL);
 #endif
 }

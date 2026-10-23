@@ -21,10 +21,11 @@ AICORE inline void mega_gate_scan(__gm__ float* g, __gm__ half* beta,
                       SLayout::NoneBox, 512, PadValue::Zero>;
     using Trans = Tile<TileType::Vec, float, P, C, BLayout::RowMajor, P, C>;
     using TransPart = Tile<TileType::Vec, float, P, C, BLayout::RowMajor, DYNAMIC, DYNAMIC>;
-    Full buffers[2], tmp;
+    Full buffers[2], lows[2], tmp;
     TASSIGN(buffers[0], 0);
     TASSIGN(buffers[1], Bytes);
-    TASSIGN(tmp, 3 * Bytes);
+    TASSIGN(lows[0], 2 * Bytes); TASSIGN(lows[1], 3 * Bytes);
+    TASSIGN(tmp, 5 * Bytes);
     Trans trans;
     TASSIGN(trans, 2 * Bytes);
     int64_t chunk_index = 0;
@@ -41,34 +42,45 @@ AICORE inline void mega_gate_scan(__gm__ float* g, __gm__ half* beta,
             wait_flag(PIPE_MTE2, PIPE_V, EVENT_ID0);
             TFILLPAD_INPLACE(buffers[0], input);
             PipeBarrierVec();
+            TEXPANDS(lows[0], 0.0f); PipeBarrierVec();
             int current = 0;
             for (int offset = 1; offset < C; offset *= 2) {
                 Part prefix(offset, P), dest_prefix(offset, P);
                 TASSIGN(prefix, current * Bytes);
                 TASSIGN(dest_prefix, (1 - current) * Bytes);
                 TMOV(dest_prefix, prefix);
+                Part lp(offset, P), ld(offset, P);
+                TASSIGN(lp, (2 + current) * Bytes); TASSIGN(ld, (3 - current) * Bytes);
+                TMOV(ld, lp);
                 Part a(C - offset, P), b(C - offset, P), dest(C - offset, P);
                 TASSIGN(a, current * Bytes + offset * P * sizeof(float));
                 TASSIGN(b, current * Bytes);
                 TASSIGN(dest, (1 - current) * Bytes + offset * P * sizeof(float));
                 TADD(dest, a, b);
                 PipeBarrierVec();
+                // Error-free TwoSum of the high parts, plus their low parts.
+                Part ar(C-offset,P), br(C-offset,P), la(C-offset,P), lb(C-offset,P), lo(C-offset,P);
+                TASSIGN(ar, 4 * Bytes); TASSIGN(br, 5 * Bytes);
+                TASSIGN(la, (2 + current) * Bytes + offset * P * sizeof(float));
+                TASSIGN(lb, (2 + current) * Bytes); TASSIGN(lo, (3 - current) * Bytes + offset * P * sizeof(float));
+                TSUB(br, dest, a); PipeBarrierVec();
+                TSUB(ar, dest, br); PipeBarrierVec();
+                TSUB(ar, a, ar); TSUB(br, b, br); PipeBarrierVec();
+                TADD(ar, ar, br); TADD(lo, la, lb); PipeBarrierVec();
+                TADD(lo, lo, ar); PipeBarrierVec();
                 current = 1 - current;
             }
-            TTRANS(trans, buffers[current], tmp);
-            PipeBarrierVec();
-            Part sum_out(valid, H);
-            TASSIGN(sum_out, current * Bytes);
-            TransPart trans_out(H, valid);
-            TASSIGN(trans_out, 2 * Bytes);
-            set_flag(PIPE_V, PIPE_MTE3, EVENT_ID0);
-            wait_flag(PIPE_V, PIPE_MTE3, EVENT_ID0);
-            GlobalTensor<float, Shape2, Stride2> sum_gm(sums + pos * H, {1, 1, 1, valid, H}, {1, 1, 1, H, 1});
-            GlobalTensor<float, Shape2, Stride2> trans_gm(transposed + pos, {1, 1, 1, H, valid}, {1, 1, 1, tokens, 1});
-            TSTORE(sum_gm, sum_out);
-            TSTORE(trans_gm, trans_out);
-            set_flag(PIPE_MTE3, PIPE_MTE2, EVENT_ID0);
-            wait_flag(PIPE_MTE3, PIPE_MTE2, EVENT_ID0);
+            // Reuse the dead ping-pong slots for transpose output/scratch.
+            TASSIGN(trans, (1-current) * Bytes); TASSIGN(tmp, (3-current) * Bytes);
+            TransPart trans_out(H, valid); TASSIGN(trans_out, (1-current) * Bytes);
+            GlobalTensor<float, Shape2, Stride2> high_gm(transposed + pos,
+                {1,1,1,H,valid}, {1,1,1,tokens,1});
+            GlobalTensor<float, Shape2, Stride2> low_gm(sums + pos,
+                {1,1,1,H,valid}, {1,1,1,tokens,1});
+            TTRANS(trans, buffers[current], tmp); pipe_barrier(PIPE_ALL);
+            TSTORE(high_gm, trans_out); pipe_barrier(PIPE_ALL);
+            TTRANS(trans, lows[current], tmp); pipe_barrier(PIPE_ALL);
+            TSTORE(low_gm, trans_out); pipe_barrier(PIPE_ALL);
             using HalfFull = Tile<TileType::Vec, half, C, P, BLayout::RowMajor, C, P, SLayout::NoneBox, 512, PadValue::Zero>;
             using HalfIn = Tile<TileType::Vec, half, C, P, BLayout::RowMajor, DYNAMIC, DYNAMIC,
                                 SLayout::NoneBox, 512, PadValue::Zero>;

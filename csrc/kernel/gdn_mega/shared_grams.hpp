@@ -3,7 +3,7 @@
 // Compute a key Gram matrix once per key head, concurrently with vector gate
 // preparation. Packed row storage also fits arbitrarily short sequence tails.
 template <int H, int C, int D>
-AICORE inline void mega_shared_grams_serial(__gm__ half* k, __gm__ float* scratch,
+AICORE inline void mega_shared_grams_serial(__gm__ half* k, __gm__ float* scratch, __gm__ float* scratch_upper,
                                     __gm__ int32_t* cu, uint32_t matrices, int key_heads,
                                     __gm__ half* q, __gm__ float* qk_out)
 {
@@ -40,10 +40,13 @@ AICORE inline void mega_shared_grams_serial(__gm__ half* k, __gm__ float* scratc
         pipe_barrier(PIPE_ALL);
         TileAcc<float, C, C, DYNAMIC, DYNAMIC> result(valid, C);
         TASSIGN(result, 0);
-        GlobalTensor<float, Shape2, Stride2> output(scratch + info.bsnd_offset,
-            {1, 1, 1, valid, C}, {1, 1, 1, key_heads * C, 1});
-        TSTORE(output, result);
-        pipe_barrier(PIPE_ALL);
+        TileAcc<float, C, C/2, DYNAMIC, C/2> low(valid), high(valid);
+        TASSIGN(low, 0); TASSIGN(high, C * C/2 * sizeof(float));
+        GlobalTensor<float, Shape2, Stride2> output(scratch + info.bsnd_offset/2,
+            {1,1,1,valid,C/2}, {1,1,1,key_heads*C/2,1});
+        GlobalTensor<float, Shape2, Stride2> upper(scratch_upper + info.bsnd_offset/2,
+            {1,1,1,valid,C/2}, {1,1,1,key_heads*C/2,1});
+        TSTORE(output, low); TSTORE(upper, high); pipe_barrier(PIPE_ALL);
         GlobalTensor<half, Shape2, Stride2> query_gm(q + (pos * key_heads + head) * D,
             {1, 1, 1, valid, D}, {1, 1, 1, key_heads * D, 1});
         TLOAD(tail, query_gm); pipe_barrier(PIPE_ALL);
@@ -81,7 +84,7 @@ AICORE inline void mega_load_gram_pair(__gm__ half* k, __gm__ half* q,
 }
 
 template <int H, int C, int D>
-AICORE inline void mega_shared_grams_pipelined(__gm__ half* k, __gm__ float* scratch,
+AICORE inline void mega_shared_grams_pipelined(__gm__ half* k, __gm__ float* scratch, __gm__ float* scratch_upper,
     __gm__ int32_t* cu, uint32_t matrices, int key_heads,
     __gm__ half* q, __gm__ float* qk_out)
 {
@@ -131,11 +134,15 @@ AICORE inline void mega_shared_grams_pipelined(__gm__ half* k, __gm__ float* scr
         set_flag(PIPE_M, PIPE_MTE1, EVENT_ID0);
         TileAcc<float, C, C, DYNAMIC, DYNAMIC> kresult(valid, C), qresult(valid, C);
         TASSIGN(kresult, 0); TASSIGN(qresult, C * C * sizeof(float));
-        GlobalTensor<float, S, Str> kgm(scratch + info.bsnd_offset,
-            {1, 1, 1, valid, C}, {1, 1, 1, key_heads * C, 1});
+        TileAcc<float, C, C/2, DYNAMIC, C/2> low(valid), high(valid);
+        TASSIGN(low, 0); TASSIGN(high, C * C/2 * sizeof(float));
+        GlobalTensor<float, S, Str> kgm(scratch + info.bsnd_offset/2,
+            {1,1,1,valid,C/2}, {1,1,1,key_heads*C/2,1});
+        GlobalTensor<float, S, Str> upper(scratch_upper + info.bsnd_offset/2,
+            {1,1,1,valid,C/2}, {1,1,1,key_heads*C/2,1});
         GlobalTensor<float, S, Str> qgm(qk_out + info.bsnd_offset,
             {1, 1, 1, valid, C}, {1, 1, 1, key_heads * C, 1});
-        wait_flag(PIPE_M, PIPE_FIX, EVENT_ID0); TSTORE(kgm, kresult);
+        wait_flag(PIPE_M, PIPE_FIX, EVENT_ID0); TSTORE(kgm, low); TSTORE(upper, high);
         wait_flag(PIPE_M, PIPE_FIX, EVENT_ID1); TSTORE(qgm, qresult);
         set_flag(PIPE_FIX, PIPE_M, EVENT_ID0);
     }
@@ -147,16 +154,16 @@ AICORE inline void mega_shared_grams_pipelined(__gm__ half* k, __gm__ float* scr
 
 
 template <int H, int C, int D>
-AICORE inline void mega_shared_grams(__gm__ half* k, __gm__ float* scratch,
+AICORE inline void mega_shared_grams(__gm__ half* k, __gm__ float* scratch, __gm__ float* scratch_upper,
     __gm__ int32_t* cu, uint32_t matrices, int key_heads,
     __gm__ half* q, __gm__ float* qk_out)
 {
 #if defined(__DAV_CUBE__)
     // A single wave has no next pair to prefetch; retain its shorter setup.
     if (matrices / H * key_heads > get_block_num()) {
-        mega_shared_grams_pipelined<H, C, D>(k, scratch, cu, matrices, key_heads, q, qk_out);
+        mega_shared_grams_pipelined<H, C, D>(k, scratch, scratch_upper, cu, matrices, key_heads, q, qk_out);
         return;
     }
-    mega_shared_grams_serial<H, C, D>(k, scratch, cu, matrices, key_heads, q, qk_out);
+    mega_shared_grams_serial<H, C, D>(k, scratch, scratch_upper, cu, matrices, key_heads, q, qk_out);
 #endif
 }
