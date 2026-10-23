@@ -3,9 +3,9 @@
 // Compute a key Gram matrix once per key head, concurrently with vector gate
 // preparation. Packed row storage also fits arbitrarily short sequence tails.
 template <int H, int C, int D>
-AICORE inline void mega_shared_grams_serial(__gm__ half* k, __gm__ half* scratch,
+AICORE inline void mega_shared_grams_serial(__gm__ half* k, __gm__ float* scratch,
                                     __gm__ int32_t* cu, uint32_t matrices, int key_heads,
-                                    __gm__ half* q, __gm__ half* qk_out)
+                                    __gm__ half* q, __gm__ float* qk_out)
 {
 #if defined(__DAV_CUBE__)
     using Mat = Tile<TileType::Mat, half, C, D, BLayout::ColMajor, C, D, SLayout::RowMajor, 512>;
@@ -40,7 +40,7 @@ AICORE inline void mega_shared_grams_serial(__gm__ half* k, __gm__ half* scratch
         pipe_barrier(PIPE_ALL);
         TileAcc<float, C, C, DYNAMIC, DYNAMIC> result(valid, C);
         TASSIGN(result, 0);
-        GlobalTensor<half, Shape2, Stride2> output(scratch + info.bsnd_offset,
+        GlobalTensor<float, Shape2, Stride2> output(scratch + info.bsnd_offset,
             {1, 1, 1, valid, C}, {1, 1, 1, key_heads * C, 1});
         TSTORE(output, result);
         pipe_barrier(PIPE_ALL);
@@ -51,7 +51,7 @@ AICORE inline void mega_shared_grams_serial(__gm__ half* k, __gm__ half* scratch
         TEXTRACT(left, key, 0, 0); pipe_barrier(PIPE_ALL);
         // K^T remains in L0B while the Q tile replaces K in L1/L0A.
         TMATMUL(acc, left, right); pipe_barrier(PIPE_ALL);
-        GlobalTensor<half, Shape2, Stride2> qk_gm(qk_out + info.bsnd_offset,
+        GlobalTensor<float, Shape2, Stride2> qk_gm(qk_out + info.bsnd_offset,
             {1, 1, 1, valid, C}, {1, 1, 1, key_heads * C, 1});
         TSTORE(qk_gm, result); pipe_barrier(PIPE_ALL);
 
@@ -81,9 +81,9 @@ AICORE inline void mega_load_gram_pair(__gm__ half* k, __gm__ half* q,
 }
 
 template <int H, int C, int D>
-AICORE inline void mega_shared_grams_pipelined(__gm__ half* k, __gm__ half* scratch,
+AICORE inline void mega_shared_grams_pipelined(__gm__ half* k, __gm__ float* scratch,
     __gm__ int32_t* cu, uint32_t matrices, int key_heads,
-    __gm__ half* q, __gm__ half* qk_out)
+    __gm__ half* q, __gm__ float* qk_out)
 {
 #if defined(__DAV_CUBE__)
     using Mat = Tile<TileType::Mat, half, C, D, BLayout::ColMajor, C, D, SLayout::RowMajor, 512>;
@@ -131,9 +131,9 @@ AICORE inline void mega_shared_grams_pipelined(__gm__ half* k, __gm__ half* scra
         set_flag(PIPE_M, PIPE_MTE1, EVENT_ID0);
         TileAcc<float, C, C, DYNAMIC, DYNAMIC> kresult(valid, C), qresult(valid, C);
         TASSIGN(kresult, 0); TASSIGN(qresult, C * C * sizeof(float));
-        GlobalTensor<half, S, Str> kgm(scratch + info.bsnd_offset,
+        GlobalTensor<float, S, Str> kgm(scratch + info.bsnd_offset,
             {1, 1, 1, valid, C}, {1, 1, 1, key_heads * C, 1});
-        GlobalTensor<half, S, Str> qgm(qk_out + info.bsnd_offset,
+        GlobalTensor<float, S, Str> qgm(qk_out + info.bsnd_offset,
             {1, 1, 1, valid, C}, {1, 1, 1, key_heads * C, 1});
         wait_flag(PIPE_M, PIPE_FIX, EVENT_ID0); TSTORE(kgm, kresult);
         wait_flag(PIPE_M, PIPE_FIX, EVENT_ID1); TSTORE(qgm, qresult);
@@ -147,9 +147,9 @@ AICORE inline void mega_shared_grams_pipelined(__gm__ half* k, __gm__ half* scra
 
 
 template <int H, int C, int D>
-AICORE inline void mega_shared_grams(__gm__ half* k, __gm__ half* scratch,
+AICORE inline void mega_shared_grams(__gm__ half* k, __gm__ float* scratch,
     __gm__ int32_t* cu, uint32_t matrices, int key_heads,
-    __gm__ half* q, __gm__ half* qk_out)
+    __gm__ half* q, __gm__ float* qk_out)
 {
 #if defined(__DAV_CUBE__)
     // A single wave has no next pair to prefetch; retain its shorter setup.

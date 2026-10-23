@@ -1,76 +1,63 @@
 #pragma once
 
-// Schedule the six products as one dependency graph. Each L0 operand bank
-// holds two independent 128x128 tiles; the two FP32 accumulators fill L0C.
-template <int H, int C, typename Mat, typename Acc>
-AICORE inline void mega_recurrence_pipeline(Mat input, Mat u, Mat inverse, Mat state,
-    Mat kt, Mat query, Mat attention, Mat residual, Mat decay, Acc acc, Acc out,
-    __gm__ half* output, int valid, bool decay_zero)
+// The A2 Acc-to-L1 instruction narrows to FP16/BF16. Use the already consumed
+// producer slot for lossless FP32 export/reload; release it only afterwards.
+template <int R, int K, typename Mat, typename Acc>
+AICORE inline void mega_keep_fp32(Mat& dst, Acc& src, __gm__ float* scratch)
 {
 #if defined(__DAV_CUBE__)
-    constexpr int Bytes = C * C * sizeof(half);
-    TileLeft<half, C, C> left, next_left;
-    TileRight<half, C, C> right, next_right;
-    TASSIGN(left, 0); TASSIGN(next_left, Bytes);
-    TASSIGN(right, 0); TASSIGN(next_right, Bytes);
-    TMOV(left, inverse); TMOV(right, u); TMOV(next_right, input);
-    set_flag(PIPE_MTE1, PIPE_M, EVENT_ID0); wait_flag(PIPE_MTE1, PIPE_M, EVENT_ID0);
-    TMATMUL(acc, left, right);
-    TMATMUL(out, left, next_right);
-    set_flag(PIPE_M, PIPE_FIX, EVENT_ID0);
-    set_flag(PIPE_M, PIPE_MTE1, EVENT_ID0);
-    wait_flag(PIPE_M, PIPE_FIX, EVENT_ID0);
-    TMOV(input, out);
-    set_flag(PIPE_FIX, PIPE_MTE1, EVENT_ID0);
-    wait_flag(PIPE_M, PIPE_MTE1, EVENT_ID0);
-    TMOV(right, state); TMOV(next_left, query);
-    wait_flag(PIPE_FIX, PIPE_MTE1, EVENT_ID0);
-    TMOV(left, input);
-    set_flag(PIPE_MTE1, PIPE_M, EVENT_ID0); wait_flag(PIPE_MTE1, PIPE_M, EVENT_ID0);
-    TMATMUL_ACC(acc, acc, left, right); // R = U - W*S.
-    set_flag(PIPE_M, PIPE_FIX, EVENT_ID0);
-    set_flag(PIPE_M, PIPE_MTE1, EVENT_ID0);
-    TMATMUL(out, next_left, right); // Q*S overlaps residual export.
-    set_flag(PIPE_M, PIPE_FIX, EVENT_ID1);
-    set_flag(PIPE_M, PIPE_MTE1, EVENT_ID1);
-    wait_flag(PIPE_M, PIPE_FIX, EVENT_ID0);
-    TMOV(residual, acc);
-    set_flag(PIPE_FIX, PIPE_MTE1, EVENT_ID0);
-    set_flag(PIPE_FIX, PIPE_M, EVENT_ID0);
-    wait_flag(PIPE_M, PIPE_MTE1, EVENT_ID0);
-    if (!decay_zero) {
-        // The same schedule also retains finite incoming-state decay.
-        // S remains resident in right while residual uses next_right.
-        TMOV(left, decay);
-        set_flag(PIPE_MTE1, PIPE_M, EVENT_ID0); wait_flag(PIPE_MTE1, PIPE_M, EVENT_ID0);
-        wait_flag(PIPE_FIX, PIPE_M, EVENT_ID0);
-        TMATMUL(acc, left, right);
-        set_flag(PIPE_M, PIPE_MTE1, EVENT_ID0); wait_flag(PIPE_M, PIPE_MTE1, EVENT_ID0);
-    }
-    using Trans = Tile<TileType::Mat, half, C, C, BLayout::RowMajor, C, C, SLayout::ColMajor, 512>;
-    Trans kt_trans; TRESHAPE(kt_trans, kt);
-    TEXTRACT(left, kt_trans, 0, 0);
-    wait_flag(PIPE_FIX, PIPE_MTE1, EVENT_ID0);
-    TMOV(next_right, residual);
-    set_flag(PIPE_MTE1, PIPE_M, EVENT_ID0); wait_flag(PIPE_MTE1, PIPE_M, EVENT_ID0);
-    if (decay_zero) {
-        wait_flag(PIPE_FIX, PIPE_M, EVENT_ID0);
-        TMATMUL(acc, left, next_right);
-    } else {
-        TMATMUL_ACC(acc, acc, left, next_right);
-    }
-    set_flag(PIPE_M, PIPE_FIX, EVENT_ID0);
-    wait_flag(PIPE_M, PIPE_MTE1, EVENT_ID1);
-    TMOV(next_left, attention);
-    set_flag(PIPE_MTE1, PIPE_M, EVENT_ID0); wait_flag(PIPE_MTE1, PIPE_M, EVENT_ID0);
-    wait_flag(PIPE_M, PIPE_FIX, EVENT_ID1);
-    TMATMUL_ACC(out, out, next_left, next_right);
-    set_flag(PIPE_M, PIPE_FIX, EVENT_ID1);
-    wait_flag(PIPE_M, PIPE_FIX, EVENT_ID0);
-    TMOV(state, acc); // State export overlaps the final output product.
-    wait_flag(PIPE_M, PIPE_FIX, EVENT_ID1);
-    TileAcc<float, C, C, DYNAMIC, C> tail(valid); TASSIGN(tail, C * C * sizeof(float));
-    mega_store_packed<C, C, H * C>(out, tail, output, valid, C);
+    GlobalTensor<float, Shape<1, 1, 1, R, K>, pto::Stride<1, 1, 1, K, 1>> gm(scratch);
+    TSTORE(gm, src); pipe_barrier(PIPE_ALL);
+    TLOAD(dst, gm); pipe_barrier(PIPE_ALL);
+#endif
+}
+
+
+// Preserve FP32 through every product and through recurrent state. Only the
+// public output/final-state stores round to FP16. No inverse powers or skipped
+// small state contributions are used.
+template <int H, int C, int D, typename MatCD, typename MatCC, typename MatDD>
+AICORE inline void mega_recurrence_pipeline(MatCD& w, MatCD& u, MatCC& inverse,
+    MatDD& state, MatCD& kt, MatCD& query, MatCC& attention, MatCD& residual,
+    MatDD& decay, __gm__ half* output, int valid, __gm__ half* final_state, bool last,
+    __gm__ float* w_scratch, __gm__ float* r_scratch, __gm__ float* state_scratch)
+{
+#if defined(__DAV_CUBE__)
+    TileLeft<float, C, C> inv_left, att_left;
+    TileLeft<float, C, D> w_left, q_left;
+    TileLeft<float, D, D> decay_left;
+    TileLeft<float, D, C> kt_left;
+    TileRight<float, C, D> values_right;
+    TileRight<float, D, D> state_right;
+    TileAcc<float, C, D> r_acc, out_acc;
+    TileAcc<float, D, D> state_acc;
+    TASSIGN(inv_left, 0); TASSIGN(att_left, 0); TASSIGN(w_left, 0);
+    TASSIGN(q_left, 0); TASSIGN(decay_left, 0); TASSIGN(kt_left, 0);
+    TASSIGN(values_right, 0); TASSIGN(state_right, 0);
+    TASSIGN(r_acc, 0); TASSIGN(state_acc, 0); TASSIGN(out_acc, D * D * sizeof(float));
+    TMOV(inv_left, inverse); TMOV(values_right, u); pipe_barrier(PIPE_ALL);
+    TMATMUL(r_acc, inv_left, values_right); pipe_barrier(PIPE_ALL);
+    TMOV(values_right, w); pipe_barrier(PIPE_ALL);
+    TMATMUL(out_acc, inv_left, values_right); pipe_barrier(PIPE_ALL);
+    mega_keep_fp32<C, D>(w, out_acc, w_scratch);
+    TMOV(w_left, w); TMOV(state_right, state); pipe_barrier(PIPE_ALL);
+    TMATMUL_ACC(r_acc, r_acc, w_left, state_right); pipe_barrier(PIPE_ALL);
+    mega_keep_fp32<C, D>(residual, r_acc, r_scratch);
+    TMOV(q_left, query); pipe_barrier(PIPE_ALL);
+    TMATMUL(out_acc, q_left, state_right); pipe_barrier(PIPE_ALL);
+    TMOV(decay_left, decay); pipe_barrier(PIPE_ALL);
+    TMATMUL(state_acc, decay_left, state_right); pipe_barrier(PIPE_ALL);
+    using Trans = Tile<TileType::Mat, float, D, C, BLayout::RowMajor, D, C, SLayout::ColMajor, 512>;
+    Trans transpose; TRESHAPE(transpose, kt);
+    TEXTRACT(kt_left, transpose, 0, 0); TMOV(values_right, residual); pipe_barrier(PIPE_ALL);
+    TMATMUL_ACC(state_acc, state_acc, kt_left, values_right); pipe_barrier(PIPE_ALL);
+    mega_keep_fp32<D, D>(state, state_acc, state_scratch);
+    TMOV(att_left, attention); pipe_barrier(PIPE_ALL);
+    TMATMUL_ACC(out_acc, out_acc, att_left, values_right); pipe_barrier(PIPE_ALL);
+    TileAcc<float, C, D, DYNAMIC, D> tail(valid);
+    TASSIGN(tail, D * D * sizeof(float));
+    mega_store_packed<C, D, H * D>(out_acc, tail, output, valid, D);
+    if (last) mega_store_packed<D, D, D>(state_acc, state_acc, final_state, D, D);
     pipe_barrier(PIPE_ALL);
 #endif
 }
