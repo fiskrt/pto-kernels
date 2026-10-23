@@ -540,3 +540,11 @@ H16/Hg4, nonzero initial state,128/4K/8K/16K/32K:
 regresses; conservative strong-coupling fallback remains slow.3× target unmet.
 ABI/dtypes/allocation sizes unchanged. Full evidence and failed/fixed regression
 records: docs/gdn_mega/fused_checkpoint.md and adjacent JSON/logs.
+
+2026-10-23 — `bfc99e1` — share the prepared decay matrix between QK and KK
+weighting. Removes a redundant full matrix construction/exp; keeps G_i-G_j and
+every inverse term. All80 strict tests pass. H16/Hg4/4K with initial state:
+0.794724ms,1.063× faster than the fused checkpoint0.844893ms,1.583× faster than
+the correct FP32 predecessor1.259212ms.3× target still unmet. ABI/allocation
+sizes unchanged. Raw records: docs/gdn_mega/shared_decay_benchmark.json and
+shared_decay_tests.txt. Batched-small-join variant was slower and was removed.
