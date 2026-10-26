@@ -37,7 +37,7 @@ def recurrent_reference(q, k, v, g, beta, initial_state=None, cu_seqlens=None):
     return output, torch.stack(states)
 
 
-def error_metrics(actual, expected):
+def error_metrics(actual, expected, *, include_percentiles=True):
     """No broadcasting, rescaling, fitting, or outlier removal is allowed."""
     assert actual.shape == expected.shape, f"shape mismatch: {actual.shape} != {expected.shape}"
     actual, expected = actual.detach().cpu().double(), expected.detach().cpu().double()
@@ -57,15 +57,15 @@ def error_metrics(actual, expected):
     max_index = int(diff.flatten().argmax())
     # Exact nearest-rank percentiles. torch.quantile rejects tensors above 2**24
     # elements (already exceeded by T=32768, H=8); never subsample outliers.
-    quantiles = [diff.flatten().kthvalue(max(1, math.ceil(p * diff.numel()))).values.item()
-                 for p in (.5, .99, .999)]
+    percentiles = ({name: diff.flatten().kthvalue(max(1, math.ceil(p * diff.numel()))).values.item()
+                    for name, p in (("p50_abs", .5), ("p99_abs", .99), ("p999_abs", .999))}
+                   if include_percentiles else {})
     centered = (expected - expected.mean()).square().sum()
     r_squared = 1 - diff.square().sum().item() / max(centered.item(), 1e-30)
     return {
         "passed": violations == 0 and relative_rmse < MAX_RMSE_RATIO,
         "finite": True, "elements": diff.numel(), "max_abs": diff.max().item(),
-        "mean_abs": diff.mean().item(), "p50_abs": quantiles[0],
-        "p99_abs": quantiles[1], "p999_abs": quantiles[2],
+        "mean_abs": diff.mean().item(), **percentiles,
         "relative_rmse": relative_rmse, "r_squared": r_squared,
         "pointwise_violations": violations, "max_tolerance_ratio": (diff / allowed).max().item(),
         "reference_abs_max": expected.abs().max().item(), "max_error_flat_index": max_index,
