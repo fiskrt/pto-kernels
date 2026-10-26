@@ -69,5 +69,20 @@
     "description": "CPU median wall seconds; same supplied inputs and FP64 golden; allocation included, no device transfer",
     "baseline_source_commit": "4a45216",
     "current_source_commit": "e9714dd"
+  },
+  "validation_sources_commit": "e7c916d",
+  "display_refresh": {
+    "description": "Asterisks are attached to failing implementation runtimes only; ratios are unmarked.",
+    "source_sha256": {
+      "benchmarking/plot_gdn_mega.py": "7c3b7fa38edaaeb739743eabb751ee22ac527956e2cc2dbc6d4b876c98454aa6",
+      "benchmarking/gdn_mega_report_text.py": "6ee537e3736b77b0dd39808fd4505131a7883afb93ec068c732d849e42907d23"
+    },
+    "annotation_tests": "5 passed, 15 deselected in 8.31s",
+    "svg_checks": {
+      "unmarked_ratios": 63,
+      "unmarked_current_runtimes": 63,
+      "marked_failing_baseline_runtimes": 63
+    },
+    "visual_inspection": "PNG inspected; all cells show ratio, our median total microseconds and baseline median total microseconds."
   }
 }

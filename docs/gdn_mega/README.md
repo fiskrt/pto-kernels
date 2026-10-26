@@ -122,8 +122,9 @@ bash scripts/gdn_mega_docker.sh python benchmarking/gdn_mega_errors.py \
 
 There were no saved historical original timings for the new rows. The script
 checks and times the original even when accuracy fails, retaining the failed
-status. Starred ratios and baseline timings denote numerical problems; the
-current median total µs remains below the ratio in every heatmap cell. Numerical
+status. Each heatmap cell shows the ratio, our median total µs, and the baseline
+median total µs. Only a failing implementation's runtime gets an asterisk; ratios
+and passing runtimes remain unmarked. Numerical
 failures and runtime are separate measurements, and all errors remain visible.
 
 ### Measured checker cost

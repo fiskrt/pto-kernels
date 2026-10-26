@@ -42,7 +42,7 @@ def write_latency(data, source, stem, markdown):
     warning = ('Original timings combine frozen historical measurements with fresh timings\n'
                'for previously missing cells. ' if historical else '')
     warning += (f'Original fails strict numerical checks on **{failures}/{len(rows)} cells**.\n'
-                'Starred timings and ratios are **runtime comparisons, not accuracy-equivalent speedups**.\n')
+                'Ratios involving a starred runtime are **not accuracy-equivalent speedups**.\n')
     text = f'''# GDN speedup heatmap
 
 Generated from measurements dated {data['created_utc'][:10]}.
@@ -50,11 +50,11 @@ Original **{baseline}**, current **{current}**. [Overview](README.md).
 
 ![Original/current latency]({link(stem.with_suffix('.png'), markdown)})
 
-Each cell shows the runtime ratio above our kernel's **median total time
-in µs per call**, including cells where the original fails. This covers the full
-kernel, not an individual stage; allocation and validation are excluded.
-`*` marks a numerical failure; its runtime is retained and its failed accuracy
-status is unchanged. See the [matched error report](error_heatmap.md).
+Each cell shows three lines: **runtime ratio**, **ours: median total µs**, and
+**base: median total µs**. The times cover the full kernel, not an individual
+stage; allocation and validation are excluded.
+`*` appears only beside a failing implementation's runtime, never on the ratio.
+Passing runtimes stay unmarked. See the [matched error report](error_heatmap.md).
 
 {warning}
 Current passes **{passed}/{len(rows)} shapes**. There are {len(ratios)} measured runtime

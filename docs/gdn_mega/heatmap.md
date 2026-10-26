@@ -5,15 +5,15 @@ Original **10748eb**, current **aac5a4d**. [Overview](README.md).
 
 ![Original/current latency](figures/heatmap.png)
 
-Each cell shows the runtime ratio above our kernel's **median total time
-in µs per call**, including cells where the original fails. This covers the full
-kernel, not an individual stage; allocation and validation are excluded.
-`*` marks a numerical failure; its runtime is retained and its failed accuracy
-status is unchanged. See the [matched error report](error_heatmap.md).
+Each cell shows three lines: **runtime ratio**, **ours: median total µs**, and
+**base: median total µs**. The times cover the full kernel, not an individual
+stage; allocation and validation are excluded.
+`*` appears only beside a failing implementation's runtime, never on the ratio.
+Passing runtimes stay unmarked. See the [matched error report](error_heatmap.md).
 
 Original timings combine frozen historical measurements with fresh timings
 for previously missing cells. Original fails strict numerical checks on **63/63 cells**.
-Starred timings and ratios are **runtime comparisons, not accuracy-equivalent speedups**.
+Ratios involving a starred runtime are **not accuracy-equivalent speedups**.
 
 Current passes **63/63 shapes**. There are 63 measured runtime
 ratios, ranging from **1.18× to 4.16×**.

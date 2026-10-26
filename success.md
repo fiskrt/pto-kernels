@@ -656,3 +656,12 @@ passing current result. Verified all63 displayed current medians, input/oracle/
 library/source fingerprints, complete grids, zero current violations, local
 links and plots. Removed redundant selected-shape FP64 reports; maintained docs
 remain four Markdown pages. Kernel code and numerical tolerances are unchanged.
+
+2026-10-26 — heatmap display correction: removed asterisks from runtime ratios.
+Each cell now explicitly labels our median total microseconds and the baseline's
+median total microseconds. Only a numerically failing implementation's own time
+receives a marker. Verified63 unmarked ratios,63 unmarked current times and63
+marked failing baseline times against saved measurements. The5 mixed pass/fail
+annotation tests pass; PNG visually inspected. Numerical data and kernel are
+unchanged. Full-suite evidence remains tied to e7c916d; display checks are saved
+separately in data/validation.json.

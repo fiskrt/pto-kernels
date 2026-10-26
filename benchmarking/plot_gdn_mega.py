@@ -55,7 +55,7 @@ def main():
     # A fixed 1x neutral point makes regressions visibly different from wins.
     norm = TwoSlopeNorm(vmin=min(0.5, float(valid.min())), vcenter=1.0,
                         vmax=max(1.5, float(valid.max())))
-    fig, ax = plt.subplots(figsize=(11, 7), layout="constrained")
+    fig, ax = plt.subplots(figsize=(11, 8.5), layout="constrained")
     cmap = plt.get_cmap("RdYlGn").copy()
     cmap.set_bad("#d9dde3")
     mesh = ax.imshow(np.ma.masked_invalid(values), cmap=cmap, norm=norm, aspect="auto")
@@ -75,16 +75,16 @@ def main():
                 label = (failed[0] if len(failed) == 1 else "both") + " FAIL"
                 color = "#374151"
             else:
-                failed = any(numerical_failure(cells[h, n], v) for v in ('baseline', 'current'))
-                label = f"{value:.2f}×" + ('*' if failed else '')
+                label = f"{value:.2f}×"
                 color = "white" if norm(value) > 0.8 or norm(value) < 0.15 else "#17202a"
-            ax.text(j, i - .12, label, ha="center", va="center", fontsize=10 if np.isnan(value) else 12,
+            ax.text(j, i - .25, label, ha="center", va="center", fontsize=10 if np.isnan(value) else 12,
                     weight="bold", color=color)
-            current_ms = cells[h, n]["current_ms"]
-            latency = f"{current_ms * 1000:,.1f} µs" if current_ms is not None else "no current timing"
-            if current_ms is not None and numerical_failure(cells[h, n], 'current'):
-                latency += '*'
-            ax.text(j, i + .21, latency, ha="center", va="center", fontsize=9, color=color)
+            for variant, name, offset, size in [('current', 'ours', .04, 9), ('baseline', 'base', .30, 8)]:
+                milliseconds = cells[h, n][f'{variant}_ms']
+                latency = f"{name}: {milliseconds * 1000:,.1f} µs" if milliseconds is not None else f"{name}: no timing"
+                if milliseconds is not None and numerical_failure(cells[h, n], variant):
+                    latency += '*'
+                ax.text(j, i + offset, latency, ha="center", va="center", fontsize=size, color=color)
     ax.set_xticks(np.arange(-0.5, len(lengths)), minor=True)
     ax.set_yticks(np.arange(-0.5, len(heads)), minor=True)
     ax.grid(which="minor", color="white", linewidth=2)
@@ -108,8 +108,8 @@ def main():
     fig.supxlabel(
         f"{hardware} · D = chunk size = 128 · explicit H/Hg rows · {state} initial state · gate scale {data['gate_scale']:g}\n"
         f"5 checked warmups · median of 15 × 20 graph calls · allocation excluded · gray = missing timing\n"
-        "Each cell: runtime ratio above; current kernel median total µs per call below\n"
-        "* Numerical failure: runtime comparison only; see error heatmaps for accuracy\n"
+        "Each cell: runtime ratio / our median total µs / baseline median total µs\n"
+        "* Only on the runtime of an implementation that fails numerical checks; ratios are unmarked\n"
         f"{acceptance}\n"
         f"Original {baseline_commit} / current {current_commit} · 1× = equal latency; below 1× = current slower",
         fontsize=9,
