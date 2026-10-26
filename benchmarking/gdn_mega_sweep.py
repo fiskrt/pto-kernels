@@ -4,6 +4,7 @@ Runs gdn_mega.py in isolated processes so each implementation is actually loaded
 Every cell checks output and final state; allocation/reference time is excluded.
 """
 import argparse
+import ast
 import csv
 from datetime import datetime, timezone
 import hashlib
@@ -17,6 +18,18 @@ import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
 SUPPORTED_HEADS = [8, 12, 16, 24, 32, 48, 64]
+
+
+def input_generator_hash():
+    tree = ast.parse((ROOT / "tests/test_gdn_mega.py").read_text())
+    node = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "_make_inputs")
+    if ast.get_docstring(node):
+        node.body = node.body[1:]
+    # Python 3.12 adds an empty type_params AST field to ordinary functions.
+    for child in ast.walk(node):
+        if hasattr(child, "type_params") and not child.type_params:
+            del child.type_params
+    return hashlib.sha256(ast.dump(node, include_attributes=False).encode()).hexdigest()
 
 
 def save_report(report, output):
@@ -33,7 +46,10 @@ def save_report(report, output):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--baseline-lib", type=Path, required=True, help="Directory containing original libno_workspace_kernel.so")
+    baseline = parser.add_mutually_exclusive_group(required=True)
+    baseline.add_argument("--baseline-lib", type=Path, help="Directory containing original libno_workspace_kernel.so")
+    baseline.add_argument("--baseline-report", type=Path,
+                          help="Frozen historical-baseline timings; preserves their original validation limitations")
     parser.add_argument("--current-lib", type=Path, default=ROOT / "build/lib")
     parser.add_argument("--heads", type=int, nargs="+", default=SUPPORTED_HEADS)
     parser.add_argument("--lengths", type=int, nargs="+", default=[128, 256, 1024, 4096, 8192, 16384, 32768])
@@ -48,9 +64,16 @@ def main():
             or any(n <= 0 for n in args.lengths) or len(set(args.heads)) != len(args.heads)
             or len(set(args.lengths)) != len(args.lengths)):
         parser.error("Use distinct supported heads divisible by group-size and distinct positive lengths")
-    libraries = {"baseline": args.baseline_lib.resolve(), "current": args.current_lib.resolve()}
+    libraries = {"current": args.current_lib.resolve()}
+    if args.baseline_lib:
+        libraries["baseline"] = args.baseline_lib.resolve()
     fingerprints = {name: hashlib.sha256((path / "libno_workspace_kernel.so").read_bytes()).hexdigest()
                     for name, path in libraries.items()}
+    historical = json.loads(args.baseline_report.read_text()) if args.baseline_report else None
+    if historical:
+        if historical.get("kind") != "historical_baseline":
+            parser.error("Expected a frozen historical_baseline report, not an old optimized sweep")
+        fingerprints["baseline"] = historical["library_sha256"]
     output = args.output.resolve()
     output.parent.mkdir(parents=True, exist_ok=True)
     report = {
@@ -66,12 +89,42 @@ def main():
         "validation_sha256": hashlib.sha256(b"".join((ROOT / name).read_bytes() for name in
             ("tests/gdn_mega_validation.py", "tests/test_gdn_mega.py", "benchmarking/gdn_mega.py"))).hexdigest(),
         "validation": "pointwise atol=1e-5, rtol=1e-3 AND relative RMSE < 0.005; raw output and final state",
+        "current_kernel_commit": subprocess.check_output(
+            ["git", "-c", f"safe.directory={ROOT}", "log", "-1", "--format=%H", "--", "csrc/kernel/gdn_mega"],
+            cwd=ROOT, text=True).strip(),
     }
+    historical_cells = {}
+    if historical:
+        for key in ["group_size", "gate_scale", "initial_state", "device", "chunk_size", "head_dim",
+                    "seed", "warmups", "trials", "calls_per_trial"]:
+            if historical.get(key) != report[key]:
+                parser.error(f"Historical baseline mismatch: {key}")
+        if historical.get("input_generator_ast_sha256") != input_generator_hash():
+            parser.error("Historical baseline input generator differs")
+        historical_cells = {(row["heads"], row["length"]): row for row in historical["records"]}
+        if len(historical_cells) != len(historical["records"]):
+            parser.error("Historical baseline has duplicate cells")
+        for h in args.heads:
+            for n in args.lengths:
+                row = historical_cells.get((h, n))
+                if row is None or row.get("key_heads") != h // args.group_size:
+                    parser.error(f"Historical baseline missing or mismatched cell: H={h}, T={n}")
+                if row.get("kernel_library_sha256") != fingerprints["baseline"]:
+                    parser.error("Historical baseline contains a different library hash")
+                if row.get("status") not in ("passed", "failed") or (row["status"] == "passed" and not row.get("median_us", 0) > 0):
+                    parser.error("Historical baseline has an invalid validation/timing record")
+        report["baseline_source"] = {
+            "kind": "historical_latency", "file": str(args.baseline_report),
+            "file_sha256": hashlib.sha256(args.baseline_report.read_bytes()).hexdigest(),
+            "source_commit": historical["source_commit"], "created_utc": historical["created_utc"],
+            "validation": historical["validation"],
+        }
+        report["validation"] = "Current: " + report["validation"] + "; baseline: historical RMSE-only, not current acceptance"
     if args.resume and output.exists():
         previous = json.loads(output.read_text())
         for key in ["heads", "lengths", "group_size", "gate_scale", "initial_state", "device",
                     "chunk_size", "head_dim", "seed", "warmups", "trials", "calls_per_trial", "library_sha256",
-                    "validation_sha256", "validation"]:
+                    "validation_sha256", "validation", "baseline_source", "current_kernel_commit"]:
             if previous.get(key) != report[key]:
                 parser.error(f"Cannot resume: {key} differs")
         report = previous
@@ -81,9 +134,11 @@ def main():
         for index, heads in enumerate(args.heads):
             if {row["length"] for row in report["records"] if row["heads"] == heads} == set(args.lengths):
                 continue
-            runs = {}
+            runs = ({"baseline": {n: historical_cells[heads, n] for n in args.lengths}}
+                    if historical else {})
             # Alternate order across head counts to avoid always measuring one variant first.
-            for variant in (["baseline", "current"] if index % 2 == 0 else ["current", "baseline"]):
+            variants = ["current"] if historical else (["baseline", "current"] if index % 2 == 0 else ["current", "baseline"])
+            for variant in variants:
                 path = runs_dir / f"{variant}_h{heads}.json"
                 command = [sys.executable, str(ROOT / "benchmarking/gdn_mega.py"),
                            "--heads", str(heads), "--key-heads", str(heads // args.group_size),
@@ -100,6 +155,8 @@ def main():
                     raise RuntimeError(f"Worker failed before completing: {variant}, H={heads}")
                 runs[variant] = {row["length"]: row for row in json.loads(path.read_text())}
                 report["environment"] = next(iter(runs[variant].values()))["environment"]
+                if historical and report["environment"] != historical["environment"]:
+                    raise RuntimeError("Current hardware/software environment differs from historical baseline")
                 if set(runs[variant]) != set(args.lengths):
                     raise RuntimeError(f"Incomplete run: {path}")
                 failures = any(row.get("status") == "failed" for row in runs[variant].values())
@@ -109,7 +166,7 @@ def main():
                     raise RuntimeError(f"Dynamic loader selected the wrong library: {variant}")
             for length in args.lengths:
                 before, after = runs["baseline"][length], runs["current"][length]
-                passed = all(row.get("status", "passed") == "passed" for row in (before, after))
+                passed = all(row.get("status") == "passed" for row in (before, after))
                 report["records"].append({
                     "heads": heads, "key_heads": heads // args.group_size, "length": length,
                     "status": "passed" if passed else "failed",

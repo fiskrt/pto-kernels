@@ -1,0 +1,1116 @@
+{
+  "created_utc": "2026-10-23T08:42:15.096258+00:00",
+  "heads": [
+    8,
+    12,
+    16,
+    24,
+    32,
+    48,
+    64
+  ],
+  "lengths": [
+    128,
+    256,
+    1024,
+    4096,
+    8192,
+    16384,
+    32768
+  ],
+  "group_size": 4,
+  "gate_scale": 1.0,
+  "initial_state": true,
+  "device": "npu:0",
+  "chunk_size": 128,
+  "head_dim": 128,
+  "seed": 0,
+  "warmups": 5,
+  "trials": 15,
+  "calls_per_trial": 20,
+  "timing": "Median device-event time per graph-replayed call, warm cache; allocation and checks excluded",
+  "environment": {
+    "device_name": "Ascend910B2",
+    "cube_cores": 24,
+    "vector_cores": 48,
+    "torch_version": "2.10.0+cpu",
+    "torch_npu_version": "2.10.0"
+  },
+  "kind": "historical_baseline",
+  "source_commit": "10748eb",
+  "measurement_commit": "1e9273766c7ec52fef2231b2b80cbba89e161427",
+  "library_sha256": "4bf4218a7473d3632369a542b45f7c58eb3286069d9e5750e40b01090e660aec",
+  "input_generator_ast_sha256": "8c2d6e0047a66ad8123151cb912414b89020973d3c9d90c5f9e9e8cc72816a78",
+  "validation": "Historical RMSE-only acceptance; fails current strict spot-checks. Timings are not evidence of current numerical acceptance.",
+  "initial_state_generator": "torch.randn(1, H, 128, 128, dtype=float16) * 0.1 after _make_inputs and head expansion",
+  "records": [
+    {
+      "length": 128,
+      "heads": 8,
+      "key_heads": 2,
+      "initial_state": true,
+      "gate_scale": 1.0,
+      "median_us": 218.31998825073242,
+      "min_us": 218.06299686431885,
+      "max_us": 223.93898963928223,
+      "output_error": {
+        "max_abs": 4.766881465911865e-05,
+        "relative_rmse": 0.0003817104152403772
+      },
+      "state_error": {
+        "max_abs": 0.00034314393997192383,
+        "relative_rmse": 0.0003037721908185631
+      },
+      "kernel_library_sha256": "4bf4218a7473d3632369a542b45f7c58eb3286069d9e5750e40b01090e660aec",
+      "status": "passed"
+    },
+    {
+      "length": 256,
+      "heads": 8,
+      "key_heads": 2,
+      "initial_state": true,
+      "gate_scale": 1.0,
+      "median_us": 253.79700660705566,
+      "min_us": 253.56199741363525,
+      "max_us": 254.64599132537842,
+      "output_error": {
+        "max_abs": 3.2709911465644836e-05,
+        "relative_rmse": 0.0003849394852295518
+      },
+      "state_error": {
+        "max_abs": 0.0003898143768310547,
+        "relative_rmse": 0.00031015658169053495
+      },
+      "kernel_library_sha256": "4bf4218a7473d3632369a542b45f7c58eb3286069d9e5750e40b01090e660aec",
+      "status": "passed"
+    },
+    {
+      "length": 1024,
+      "heads": 8,
+      "key_heads": 2,
+      "initial_state": true,
+      "gate_scale": 1.0,
+      "median_us": 379.3790102005005,
+      "min_us": 377.81100273132324,
+      "max_us": 384.4640016555786,
+      "output_error": {
+        "max_abs": 4.145503044128418e-05,
+        "relative_rmse": 0.000382248341338709
+      },
+      "state_error": {
+        "max_abs": 0.00035578012466430664,
+        "relative_rmse": 0.00032356547308154404
+      },
+      "kernel_library_sha256": "4bf4218a7473d3632369a542b45f7c58eb3286069d9e5750e40b01090e660aec",
+      "status": "passed"
+    },
+    {
+      "length": 4096,
+      "heads": 8,
+      "key_heads": 2,
+      "initial_state": true,
+      "gate_scale": 1.0,
+      "median_us": 983.2659721374512,
+      "min_us": 979.3000221252441,
+      "max_us": 988.7260437011719,
+      "output_error": {
+        "max_abs": 6.049126386642456e-05,
+        "relative_rmse": 0.0003818202530965209
+      },
+      "state_error": {
+        "max_abs": 0.00034171342849731445,
+        "relative_rmse": 0.00030510261422023177
+      },
+      "kernel_library_sha256": "4bf4218a7473d3632369a542b45f7c58eb3286069d9e5750e40b01090e660aec",
+      "status": "passed"
+    },
+    {
+      "length": 8192,
+      "heads": 8,
+      "key_heads": 2,
+      "initial_state": true,
+      "gate_scale": 1.0,
+      "median_us": 1733.9630126953125,
+      "min_us": 1728.8480758666992,
+      "max_us": 1745.2680587768555,
+      "output_error": {
+        "max_abs": 6.302446126937866e-05,
+        "relative_rmse": 0.0003824252635240555
+      },
+      "state_error": {
+        "max_abs": 0.00024273991584777832,
+        "relative_rmse": 0.00032194575760513544
+      },
+      "kernel_library_sha256": "4bf4218a7473d3632369a542b45f7c58eb3286069d9e5750e40b01090e660aec",
+      "status": "passed"
+    },
+    {
+      "length": 16384,
+      "heads": 8,
+      "key_heads": 2,
+      "initial_state": true,
+      "gate_scale": 1.0,
+      "median_us": 3442.6380157470703,
+      "min_us": 3424.687957763672,
+      "max_us": 3464.3421173095703,
+      "output_error": {
+        "max_abs": 6.681308150291443e-05,
+        "relative_rmse": 0.0003830742498394102
+      },
+      "state_error": {
+        "max_abs": 0.00044155120849609375,
+        "relative_rmse": 0.0003162358480039984
+      },
+      "kernel_library_sha256": "4bf4218a7473d3632369a542b45f7c58eb3286069d9e5750e40b01090e660aec",
+      "status": "passed"
+    },
+    {
+      "length": 32768,
+      "heads": 8,
+      "key_heads": 2,
+      "initial_state": true,
+      "gate_scale": 1.0,
+      "median_us": 6618.3258056640625,
+      "min_us": 6596.266174316406,
+      "max_us": 6652.667236328125,
+      "output_error": {
+        "max_abs": 7.215887308120728e-05,
+        "relative_rmse": 0.00038328341906890273
+      },
+      "state_error": {
+        "max_abs": 0.00040733814239501953,
+        "relative_rmse": 0.00032726617064327
+      },
+      "kernel_library_sha256": "4bf4218a7473d3632369a542b45f7c58eb3286069d9e5750e40b01090e660aec",
+      "status": "passed"
+    },
+    {
+      "length": 128,
+      "heads": 12,
+      "key_heads": 3,
+      "initial_state": true,
+      "gate_scale": 1.0,
+      "median_us": 271.84300422668457,
+      "min_us": 271.6320037841797,
+      "max_us": 277.9860019683838,
+      "output_error": {
+        "max_abs": 3.954395651817322e-05,
+        "relative_rmse": 0.0003795334487222135
+      },
+      "state_error": {
+        "max_abs": 0.00032788515090942383,
+        "relative_rmse": 0.00032395601738244295
+      },
+      "kernel_library_sha256": "4bf4218a7473d3632369a542b45f7c58eb3286069d9e5750e40b01090e660aec",
+      "status": "passed"
+    },
+    {
+      "length": 256,
+      "heads": 12,
+      "key_heads": 3,
+      "initial_state": true,
+      "gate_scale": 1.0,
+      "median_us": 328.2449960708618,
+      "min_us": 326.993989944458,
+      "max_us": 328.7489891052246,
+      "output_error": {
+        "max_abs": 3.541633486747742e-05,
+        "relative_rmse": 0.0003787264577113092
+      },
+      "state_error": {
+        "max_abs": 0.0004979968070983887,
+        "relative_rmse": 0.0003198049671482295
+      },
+      "kernel_library_sha256": "4bf4218a7473d3632369a542b45f7c58eb3286069d9e5750e40b01090e660aec",
+      "status": "passed"
+    },
+    {
+      "length": 1024,
+      "heads": 12,
+      "key_heads": 3,
+      "initial_state": true,
+      "gate_scale": 1.0,
+      "median_us": 470.2250003814697,
+      "min_us": 469.01397705078125,
+      "max_us": 476.73301696777344,
+      "output_error": {
+        "max_abs": 6.618350744247437e-05,
+        "relative_rmse": 0.00038253734237514436
+      },
+      "state_error": {
+        "max_abs": 0.0003281831741333008,
+        "relative_rmse": 0.0003072660183534026
+      },
+      "kernel_library_sha256": "4bf4218a7473d3632369a542b45f7c58eb3286069d9e5750e40b01090e660aec",
+      "status": "passed"
+    },
+    {
+      "length": 4096,
+      "heads": 12,
+      "key_heads": 3,
+      "initial_state": true,
+      "gate_scale": 1.0,
+      "median_us": 1239.6140098571777,
+      "min_us": 1231.919002532959,
+      "max_us": 1246.5929985046387,
+      "output_error": {
+        "max_abs": 6.727874279022217e-05,
+        "relative_rmse": 0.0003853161178994924
+      },
+      "state_error": {
+        "max_abs": 0.00044220685958862305,
+        "relative_rmse": 0.00031306565506383777
+      },
+      "kernel_library_sha256": "4bf4218a7473d3632369a542b45f7c58eb3286069d9e5750e40b01090e660aec",
+      "status": "passed"
+    },
+    {
+      "length": 8192,
+      "heads": 12,
+      "key_heads": 3,
+      "initial_state": true,
+      "gate_scale": 1.0,
+      "median_us": 2282.961082458496,
+      "min_us": 2263.344955444336,
+      "max_us": 2293.0519104003906,
+      "output_error": {
+        "max_abs": 8.143484592437744e-05,
+        "relative_rmse": 0.0003825478779617697
+      },
+      "state_error": {
+        "max_abs": 0.0004082918167114258,
+        "relative_rmse": 0.000315141340252012
+      },
+      "kernel_library_sha256": "4bf4218a7473d3632369a542b45f7c58eb3286069d9e5750e40b01090e660aec",
+      "status": "passed"
+    },
+    {
+      "length": 16384,
+      "heads": 12,
+      "key_heads": 3,
+      "initial_state": true,
+      "gate_scale": 1.0,
+      "median_us": 4435.2081298828125,
+      "min_us": 4397.758102416992,
+      "max_us": 4453.861999511719,
+      "output_error": {
+        "max_abs": 6.866455078125e-05,
+        "relative_rmse": 0.0003835161041934043
+      },
+      "state_error": {
+        "max_abs": 0.0003935098648071289,
+        "relative_rmse": 0.0003211779985576868
+      },
+      "kernel_library_sha256": "4bf4218a7473d3632369a542b45f7c58eb3286069d9e5750e40b01090e660aec",
+      "status": "passed"
+    },
+    {
+      "length": 32768,
+      "heads": 12,
+      "key_heads": 3,
+      "initial_state": true,
+      "gate_scale": 1.0,
+      "median_us": 8894.271850585938,
+      "min_us": 8849.407958984375,
+      "max_us": 8926.840209960938,
+      "output_error": {
+        "max_abs": 7.838010787963867e-05,
+        "relative_rmse": 0.00038324669003486633
+      },
+      "state_error": {
+        "max_abs": 0.0003558695316314697,
+        "relative_rmse": 0.0003046755155082792
+      },
+      "kernel_library_sha256": "4bf4218a7473d3632369a542b45f7c58eb3286069d9e5750e40b01090e660aec",
+      "status": "passed"
+    },
+    {
+      "length": 128,
+      "heads": 16,
+      "key_heads": 4,
+      "initial_state": true,
+      "gate_scale": 1.0,
+      "median_us": 105.90100288391113,
+      "min_us": 105.47499656677246,
+      "max_us": 111.43499612808228,
+      "output_error": {
+        "max_abs": 4.4193118810653687e-05,
+        "relative_rmse": 0.0003865827457047999
+      },
+      "state_error": {
+        "max_abs": 0.0004252791404724121,
+        "relative_rmse": 0.0003090843674726784
+      },
+      "kernel_library_sha256": "4bf4218a7473d3632369a542b45f7c58eb3286069d9e5750e40b01090e660aec",
+      "status": "passed"
+    },
+    {
+      "length": 256,
+      "heads": 16,
+      "key_heads": 4,
+      "initial_state": true,
+      "gate_scale": 1.0,
+      "median_us": 145.4319953918457,
+      "min_us": 145.25599479675293,
+      "max_us": 147.23299741744995,
+      "output_error": {
+        "max_abs": 5.729496479034424e-05,
+        "relative_rmse": 0.00038355911965481937
+      },
+      "state_error": {
+        "max_abs": 0.00048792362213134766,
+        "relative_rmse": 0.00032192724756896496
+      },
+      "kernel_library_sha256": "4bf4218a7473d3632369a542b45f7c58eb3286069d9e5750e40b01090e660aec",
+      "status": "passed"
+    },
+    {
+      "length": 1024,
+      "heads": 16,
+      "key_heads": 4,
+      "initial_state": true,
+      "gate_scale": 1.0,
+      "median_us": 313.5819911956787,
+      "min_us": 312.42098808288574,
+      "max_us": 318.1540012359619,
+      "output_error": {
+        "max_abs": 6.582960486412048e-05,
+        "relative_rmse": 0.000380729790776968
+      },
+      "state_error": {
+        "max_abs": 0.0004044175148010254,
+        "relative_rmse": 0.0003173704899381846
+      },
+      "kernel_library_sha256": "4bf4218a7473d3632369a542b45f7c58eb3286069d9e5750e40b01090e660aec",
+      "status": "passed"
+    },
+    {
+      "length": 4096,
+      "heads": 16,
+      "key_heads": 4,
+      "initial_state": true,
+      "gate_scale": 1.0,
+      "median_us": 882.7159881591797,
+      "min_us": 881.6120147705078,
+      "max_us": 883.745002746582,
+      "output_error": {
+        "max_abs": 6.70403242111206e-05,
+        "relative_rmse": 0.0003823543374892324
+      },
+      "state_error": {
+        "max_abs": 0.00034686923027038574,
+        "relative_rmse": 0.00032333386479876935
+      },
+      "kernel_library_sha256": "4bf4218a7473d3632369a542b45f7c58eb3286069d9e5750e40b01090e660aec",
+      "status": "passed"
+    },
+    {
+      "length": 8192,
+      "heads": 16,
+      "key_heads": 4,
+      "initial_state": true,
+      "gate_scale": 1.0,
+      "median_us": 1727.2079467773438,
+      "min_us": 1725.5849838256836,
+      "max_us": 1734.4169616699219,
+      "output_error": {
+        "max_abs": 6.393343210220337e-05,
+        "relative_rmse": 0.0003840666322503239
+      },
+      "state_error": {
+        "max_abs": 0.0005191564559936523,
+        "relative_rmse": 0.00031860594754107296
+      },
+      "kernel_library_sha256": "4bf4218a7473d3632369a542b45f7c58eb3286069d9e5750e40b01090e660aec",
+      "status": "passed"
+    },
+    {
+      "length": 16384,
+      "heads": 16,
+      "key_heads": 4,
+      "initial_state": true,
+      "gate_scale": 1.0,
+      "median_us": 3499.6810913085938,
+      "min_us": 3497.528839111328,
+      "max_us": 3501.2210845947266,
+      "output_error": {
+        "max_abs": 7.78399407863617e-05,
+        "relative_rmse": 0.0003836507967207581
+      },
+      "state_error": {
+        "max_abs": 0.00037661194801330566,
+        "relative_rmse": 0.0003223855746909976
+      },
+      "kernel_library_sha256": "4bf4218a7473d3632369a542b45f7c58eb3286069d9e5750e40b01090e660aec",
+      "status": "passed"
+    },
+    {
+      "length": 32768,
+      "heads": 16,
+      "key_heads": 4,
+      "initial_state": true,
+      "gate_scale": 1.0,
+      "median_us": 6925.273895263672,
+      "min_us": 6922.215270996094,
+      "max_us": 6931.083679199219,
+      "output_error": {
+        "max_abs": 8.670985698699951e-05,
+        "relative_rmse": 0.0003831160138361156
+      },
+      "state_error": {
+        "max_abs": 0.00039952993392944336,
+        "relative_rmse": 0.0003255293413531035
+      },
+      "kernel_library_sha256": "4bf4218a7473d3632369a542b45f7c58eb3286069d9e5750e40b01090e660aec",
+      "status": "passed"
+    },
+    {
+      "length": 128,
+      "heads": 24,
+      "key_heads": 6,
+      "initial_state": true,
+      "gate_scale": 1.0,
+      "median_us": 136.40700578689575,
+      "min_us": 135.86299419403076,
+      "max_us": 142.13600158691406,
+      "output_error": {
+        "max_abs": 4.0549784898757935e-05,
+        "relative_rmse": 0.00037967340904287994
+      },
+      "state_error": {
+        "max_abs": 0.00043594837188720703,
+        "relative_rmse": 0.0003090842510573566
+      },
+      "kernel_library_sha256": "4bf4218a7473d3632369a542b45f7c58eb3286069d9e5750e40b01090e660aec",
+      "status": "passed"
+    },
+    {
+      "length": 256,
+      "heads": 24,
+      "key_heads": 6,
+      "initial_state": true,
+      "gate_scale": 1.0,
+      "median_us": 174.14699792861938,
+      "min_us": 173.97700548171997,
+      "max_us": 177.35799551010132,
+      "output_error": {
+        "max_abs": 4.312396049499512e-05,
+        "relative_rmse": 0.000383402977604419
+      },
+      "state_error": {
+        "max_abs": 0.0003770589828491211,
+        "relative_rmse": 0.0003161562781315297
+      },
+      "kernel_library_sha256": "4bf4218a7473d3632369a542b45f7c58eb3286069d9e5750e40b01090e660aec",
+      "status": "passed"
+    },
+    {
+      "length": 1024,
+      "heads": 24,
+      "key_heads": 6,
+      "initial_state": true,
+      "gate_scale": 1.0,
+      "median_us": 360.72099208831787,
+      "min_us": 359.82398986816406,
+      "max_us": 365.13099670410156,
+      "output_error": {
+        "max_abs": 5.394592881202698e-05,
+        "relative_rmse": 0.00038537144428119063
+      },
+      "state_error": {
+        "max_abs": 0.00042301416397094727,
+        "relative_rmse": 0.0003132516285404563
+      },
+      "kernel_library_sha256": "4bf4218a7473d3632369a542b45f7c58eb3286069d9e5750e40b01090e660aec",
+      "status": "passed"
+    },
+    {
+      "length": 4096,
+      "heads": 24,
+      "key_heads": 6,
+      "initial_state": true,
+      "gate_scale": 1.0,
+      "median_us": 1152.4809837341309,
+      "min_us": 1150.1660346984863,
+      "max_us": 1157.4979782104492,
+      "output_error": {
+        "max_abs": 7.283687591552734e-05,
+        "relative_rmse": 0.00038253277307376266
+      },
+      "state_error": {
+        "max_abs": 0.0003210306167602539,
+        "relative_rmse": 0.0003159715561196208
+      },
+      "kernel_library_sha256": "4bf4218a7473d3632369a542b45f7c58eb3286069d9e5750e40b01090e660aec",
+      "status": "passed"
+    },
+    {
+      "length": 8192,
+      "heads": 24,
+      "key_heads": 6,
+      "initial_state": true,
+      "gate_scale": 1.0,
+      "median_us": 2274.338912963867,
+      "min_us": 2272.3339080810547,
+      "max_us": 2278.325080871582,
+      "output_error": {
+        "max_abs": 7.0132315158844e-05,
+        "relative_rmse": 0.00038360111648216844
+      },
+      "state_error": {
+        "max_abs": 0.0005350112915039062,
+        "relative_rmse": 0.0003168312250636518
+      },
+      "kernel_library_sha256": "4bf4218a7473d3632369a542b45f7c58eb3286069d9e5750e40b01090e660aec",
+      "status": "passed"
+    },
+    {
+      "length": 16384,
+      "heads": 24,
+      "key_heads": 6,
+      "initial_state": true,
+      "gate_scale": 1.0,
+      "median_us": 4741.973876953125,
+      "min_us": 4736.653900146484,
+      "max_us": 4745.738983154297,
+      "output_error": {
+        "max_abs": 7.108226418495178e-05,
+        "relative_rmse": 0.0003833814989775419
+      },
+      "state_error": {
+        "max_abs": 0.0003781318664550781,
+        "relative_rmse": 0.0003106076328549534
+      },
+      "kernel_library_sha256": "4bf4218a7473d3632369a542b45f7c58eb3286069d9e5750e40b01090e660aec",
+      "status": "passed"
+    },
+    {
+      "length": 32768,
+      "heads": 24,
+      "key_heads": 6,
+      "initial_state": true,
+      "gate_scale": 1.0,
+      "median_us": 9303.096771240234,
+      "min_us": 9298.670196533203,
+      "max_us": 9310.73226928711,
+      "output_error": {
+        "max_abs": 7.639825344085693e-05,
+        "relative_rmse": 0.0003835232346318662
+      },
+      "state_error": {
+        "max_abs": 0.00048542022705078125,
+        "relative_rmse": 0.0003131661214865744
+      },
+      "kernel_library_sha256": "4bf4218a7473d3632369a542b45f7c58eb3286069d9e5750e40b01090e660aec",
+      "status": "passed"
+    },
+    {
+      "length": 128,
+      "heads": 32,
+      "key_heads": 8,
+      "initial_state": true,
+      "gate_scale": 1.0,
+      "median_us": 154.79199886322021,
+      "min_us": 153.5290002822876,
+      "max_us": 160.95399856567383,
+      "output_error": {
+        "max_abs": 4.778429865837097e-05,
+        "relative_rmse": 0.0003802832798101008
+      },
+      "state_error": {
+        "max_abs": 0.0004878044128417969,
+        "relative_rmse": 0.0003115213185083121
+      },
+      "kernel_library_sha256": "4bf4218a7473d3632369a542b45f7c58eb3286069d9e5750e40b01090e660aec",
+      "status": "passed"
+    },
+    {
+      "length": 256,
+      "heads": 32,
+      "key_heads": 8,
+      "initial_state": true,
+      "gate_scale": 1.0,
+      "median_us": 210.41200160980225,
+      "min_us": 209.82799530029297,
+      "max_us": 211.3379955291748,
+      "output_error": {
+        "max_abs": 4.836916923522949e-05,
+        "relative_rmse": 0.0003800099657382816
+      },
+      "state_error": {
+        "max_abs": 0.0004584789276123047,
+        "relative_rmse": 0.00031546721584163606
+      },
+      "kernel_library_sha256": "4bf4218a7473d3632369a542b45f7c58eb3286069d9e5750e40b01090e660aec",
+      "status": "passed"
+    },
+    {
+      "length": 1024,
+      "heads": 32,
+      "key_heads": 8,
+      "initial_state": true,
+      "gate_scale": 1.0,
+      "median_us": 498.6849784851074,
+      "min_us": 498.2900142669678,
+      "max_us": 503.31201553344727,
+      "output_error": {
+        "max_abs": 5.9351325035095215e-05,
+        "relative_rmse": 0.0003828174958471209
+      },
+      "state_error": {
+        "max_abs": 0.0004813671112060547,
+        "relative_rmse": 0.00031531890272162855
+      },
+      "kernel_library_sha256": "4bf4218a7473d3632369a542b45f7c58eb3286069d9e5750e40b01090e660aec",
+      "status": "passed"
+    },
+    {
+      "length": 4096,
+      "heads": 32,
+      "key_heads": 8,
+      "initial_state": true,
+      "gate_scale": 1.0,
+      "median_us": 1696.718978881836,
+      "min_us": 1693.6460494995117,
+      "max_us": 1699.4590759277344,
+      "output_error": {
+        "max_abs": 6.365031003952026e-05,
+        "relative_rmse": 0.0003833385999314487
+      },
+      "state_error": {
+        "max_abs": 0.0003935694694519043,
+        "relative_rmse": 0.0003136529412586242
+      },
+      "kernel_library_sha256": "4bf4218a7473d3632369a542b45f7c58eb3286069d9e5750e40b01090e660aec",
+      "status": "passed"
+    },
+    {
+      "length": 8192,
+      "heads": 32,
+      "key_heads": 8,
+      "initial_state": true,
+      "gate_scale": 1.0,
+      "median_us": 3482.91015625,
+      "min_us": 3480.6060791015625,
+      "max_us": 3486.083984375,
+      "output_error": {
+        "max_abs": 7.142871618270874e-05,
+        "relative_rmse": 0.0003832787333521992
+      },
+      "state_error": {
+        "max_abs": 0.0004885196685791016,
+        "relative_rmse": 0.000315730256261304
+      },
+      "kernel_library_sha256": "4bf4218a7473d3632369a542b45f7c58eb3286069d9e5750e40b01090e660aec",
+      "status": "passed"
+    },
+    {
+      "length": 16384,
+      "heads": 32,
+      "key_heads": 8,
+      "initial_state": true,
+      "gate_scale": 1.0,
+      "median_us": 6935.146331787109,
+      "min_us": 6926.042938232422,
+      "max_us": 6941.203308105469,
+      "output_error": {
+        "max_abs": 7.39172101020813e-05,
+        "relative_rmse": 0.0003831682843156159
+      },
+      "state_error": {
+        "max_abs": 0.0004456639289855957,
+        "relative_rmse": 0.0003151317359879613
+      },
+      "kernel_library_sha256": "4bf4218a7473d3632369a542b45f7c58eb3286069d9e5750e40b01090e660aec",
+      "status": "passed"
+    },
+    {
+      "length": 32768,
+      "heads": 32,
+      "key_heads": 8,
+      "initial_state": true,
+      "gate_scale": 1.0,
+      "median_us": 13703.335571289062,
+      "min_us": 13686.575317382812,
+      "max_us": 13713.801574707031,
+      "output_error": {
+        "max_abs": 8.287280797958374e-05,
+        "relative_rmse": 0.0003830394125543535
+      },
+      "state_error": {
+        "max_abs": 0.00040906667709350586,
+        "relative_rmse": 0.0003205027023795992
+      },
+      "kernel_library_sha256": "4bf4218a7473d3632369a542b45f7c58eb3286069d9e5750e40b01090e660aec",
+      "status": "passed"
+    },
+    {
+      "length": 128,
+      "heads": 48,
+      "key_heads": 12,
+      "initial_state": true,
+      "gate_scale": 1.0,
+      "median_us": 157.34200477600098,
+      "min_us": 155.89200258255005,
+      "max_us": 163.0020022392273,
+      "output_error": {
+        "max_abs": 5.599111318588257e-05,
+        "relative_rmse": 0.0003794467484112829
+      },
+      "state_error": {
+        "max_abs": 0.0004900097846984863,
+        "relative_rmse": 0.00032000470673665404
+      },
+      "kernel_library_sha256": "4bf4218a7473d3632369a542b45f7c58eb3286069d9e5750e40b01090e660aec",
+      "environment": {
+        "device_name": "Ascend910B2",
+        "cube_cores": 24,
+        "vector_cores": 48,
+        "torch_version": "2.10.0+cpu",
+        "torch_npu_version": "2.10.0"
+      },
+      "status": "passed"
+    },
+    {
+      "length": 256,
+      "heads": 48,
+      "key_heads": 12,
+      "initial_state": true,
+      "gate_scale": 1.0,
+      "median_us": 225.83999633789062,
+      "min_us": 224.91400241851807,
+      "max_us": 226.3200044631958,
+      "output_error": {
+        "max_abs": 6.194412708282471e-05,
+        "relative_rmse": 0.00038394212606363
+      },
+      "state_error": {
+        "max_abs": 0.0003706216812133789,
+        "relative_rmse": 0.0003181530919391662
+      },
+      "kernel_library_sha256": "4bf4218a7473d3632369a542b45f7c58eb3286069d9e5750e40b01090e660aec",
+      "environment": {
+        "device_name": "Ascend910B2",
+        "cube_cores": 24,
+        "vector_cores": 48,
+        "torch_version": "2.10.0+cpu",
+        "torch_npu_version": "2.10.0"
+      },
+      "status": "passed"
+    },
+    {
+      "length": 1024,
+      "heads": 48,
+      "key_heads": 12,
+      "initial_state": true,
+      "gate_scale": 1.0,
+      "median_us": 591.372013092041,
+      "min_us": 590.0959968566895,
+      "max_us": 597.8129863739014,
+      "output_error": {
+        "max_abs": 7.724016904830933e-05,
+        "relative_rmse": 0.00038473299355246127
+      },
+      "state_error": {
+        "max_abs": 0.00040793418884277344,
+        "relative_rmse": 0.00031385867623612285
+      },
+      "kernel_library_sha256": "4bf4218a7473d3632369a542b45f7c58eb3286069d9e5750e40b01090e660aec",
+      "environment": {
+        "device_name": "Ascend910B2",
+        "cube_cores": 24,
+        "vector_cores": 48,
+        "torch_version": "2.10.0+cpu",
+        "torch_npu_version": "2.10.0"
+      },
+      "status": "passed"
+    },
+    {
+      "length": 4096,
+      "heads": 48,
+      "key_heads": 12,
+      "initial_state": true,
+      "gate_scale": 1.0,
+      "median_us": 2275.947952270508,
+      "min_us": 2274.087905883789,
+      "max_us": 2279.8389434814453,
+      "output_error": {
+        "max_abs": 7.870793342590332e-05,
+        "relative_rmse": 0.0003842271980829537
+      },
+      "state_error": {
+        "max_abs": 0.0004361271858215332,
+        "relative_rmse": 0.0003142263740301132
+      },
+      "kernel_library_sha256": "4bf4218a7473d3632369a542b45f7c58eb3286069d9e5750e40b01090e660aec",
+      "environment": {
+        "device_name": "Ascend910B2",
+        "cube_cores": 24,
+        "vector_cores": 48,
+        "torch_version": "2.10.0+cpu",
+        "torch_npu_version": "2.10.0"
+      },
+      "status": "passed"
+    },
+    {
+      "length": 8192,
+      "heads": 48,
+      "key_heads": 12,
+      "initial_state": true,
+      "gate_scale": 1.0,
+      "median_us": 4736.188125610352,
+      "min_us": 4732.849884033203,
+      "max_us": 4742.081069946289,
+      "output_error": {
+        "max_abs": 8.130073547363281e-05,
+        "relative_rmse": 0.0003833439259324223
+      },
+      "state_error": {
+        "max_abs": 0.00039947032928466797,
+        "relative_rmse": 0.00031341586145572364
+      },
+      "kernel_library_sha256": "4bf4218a7473d3632369a542b45f7c58eb3286069d9e5750e40b01090e660aec",
+      "environment": {
+        "device_name": "Ascend910B2",
+        "cube_cores": 24,
+        "vector_cores": 48,
+        "torch_version": "2.10.0+cpu",
+        "torch_npu_version": "2.10.0"
+      },
+      "status": "passed"
+    },
+    {
+      "length": 16384,
+      "heads": 48,
+      "key_heads": 12,
+      "initial_state": true,
+      "gate_scale": 1.0,
+      "median_us": 9337.447357177734,
+      "min_us": 9331.085205078125,
+      "max_us": 9344.983673095703,
+      "output_error": {
+        "max_abs": 8.296966552734375e-05,
+        "relative_rmse": 0.00038328501977957785
+      },
+      "state_error": {
+        "max_abs": 0.00043380260467529297,
+        "relative_rmse": 0.0003149725671391934
+      },
+      "kernel_library_sha256": "4bf4218a7473d3632369a542b45f7c58eb3286069d9e5750e40b01090e660aec",
+      "environment": {
+        "device_name": "Ascend910B2",
+        "cube_cores": 24,
+        "vector_cores": 48,
+        "torch_version": "2.10.0+cpu",
+        "torch_npu_version": "2.10.0"
+      },
+      "status": "passed"
+    },
+    {
+      "length": 32768,
+      "heads": 48,
+      "key_heads": 12,
+      "initial_state": true,
+      "gate_scale": 1.0,
+      "median_us": 18398.068237304688,
+      "min_us": 18387.884521484375,
+      "max_us": 18419.18487548828,
+      "output_error": {
+        "max_abs": 8.299946784973145e-05,
+        "relative_rmse": 0.000383636710466817
+      },
+      "state_error": {
+        "max_abs": 0.0004470944404602051,
+        "relative_rmse": 0.0003162971406709403
+      },
+      "kernel_library_sha256": "4bf4218a7473d3632369a542b45f7c58eb3286069d9e5750e40b01090e660aec",
+      "environment": {
+        "device_name": "Ascend910B2",
+        "cube_cores": 24,
+        "vector_cores": 48,
+        "torch_version": "2.10.0+cpu",
+        "torch_npu_version": "2.10.0"
+      },
+      "status": "passed"
+    },
+    {
+      "length": 128,
+      "heads": 64,
+      "key_heads": 16,
+      "initial_state": true,
+      "gate_scale": 1.0,
+      "median_us": 207.86499977111816,
+      "min_us": 207.2309970855713,
+      "max_us": 213.77899646759033,
+      "output_error": {
+        "max_abs": 4.385411739349365e-05,
+        "relative_rmse": 0.00038359721656888723
+      },
+      "state_error": {
+        "max_abs": 0.00042301416397094727,
+        "relative_rmse": 0.000318097387207672
+      },
+      "status": "passed",
+      "kernel_library_sha256": "4bf4218a7473d3632369a542b45f7c58eb3286069d9e5750e40b01090e660aec",
+      "environment": {
+        "device_name": "Ascend910B2",
+        "cube_cores": 24,
+        "vector_cores": 48,
+        "torch_version": "2.10.0+cpu",
+        "torch_npu_version": "2.10.0"
+      }
+    },
+    {
+      "length": 256,
+      "heads": 64,
+      "key_heads": 16,
+      "initial_state": true,
+      "gate_scale": 1.0,
+      "median_us": 313.45300674438477,
+      "min_us": 312.6240015029907,
+      "max_us": 316.91300868988037,
+      "output_error": {
+        "max_abs": 5.2288174629211426e-05,
+        "relative_rmse": 0.0003814925439655781
+      },
+      "state_error": {
+        "max_abs": 0.00043714046478271484,
+        "relative_rmse": 0.00031574975582771003
+      },
+      "status": "passed",
+      "kernel_library_sha256": "4bf4218a7473d3632369a542b45f7c58eb3286069d9e5750e40b01090e660aec",
+      "environment": {
+        "device_name": "Ascend910B2",
+        "cube_cores": 24,
+        "vector_cores": 48,
+        "torch_version": "2.10.0+cpu",
+        "torch_npu_version": "2.10.0"
+      }
+    },
+    {
+      "length": 1024,
+      "heads": 64,
+      "key_heads": 16,
+      "initial_state": true,
+      "gate_scale": 1.0,
+      "median_us": 817.4019813537598,
+      "min_us": 816.1379814147949,
+      "max_us": 822.5509643554688,
+      "output_error": {
+        "max_abs": 6.535649299621582e-05,
+        "relative_rmse": 0.0003827040200121701
+      },
+      "state_error": {
+        "max_abs": 0.000491797924041748,
+        "relative_rmse": 0.00031654152553528547
+      },
+      "status": "passed",
+      "kernel_library_sha256": "4bf4218a7473d3632369a542b45f7c58eb3286069d9e5750e40b01090e660aec",
+      "environment": {
+        "device_name": "Ascend910B2",
+        "cube_cores": 24,
+        "vector_cores": 48,
+        "torch_version": "2.10.0+cpu",
+        "torch_npu_version": "2.10.0"
+      }
+    },
+    {
+      "length": 4096,
+      "heads": 64,
+      "key_heads": 16,
+      "initial_state": true,
+      "gate_scale": 1.0,
+      "median_us": 3152.0139694213867,
+      "min_us": 3148.1990814208984,
+      "max_us": 3155.1990509033203,
+      "output_error": {
+        "max_abs": 8.157268166542053e-05,
+        "relative_rmse": 0.00038283219328150153
+      },
+      "state_error": {
+        "max_abs": 0.0004342198371887207,
+        "relative_rmse": 0.00030724270618520677
+      },
+      "status": "passed",
+      "kernel_library_sha256": "4bf4218a7473d3632369a542b45f7c58eb3286069d9e5750e40b01090e660aec",
+      "environment": {
+        "device_name": "Ascend910B2",
+        "cube_cores": 24,
+        "vector_cores": 48,
+        "torch_version": "2.10.0+cpu",
+        "torch_npu_version": "2.10.0"
+      }
+    },
+    {
+      "length": 8192,
+      "heads": 64,
+      "key_heads": 16,
+      "initial_state": true,
+      "gate_scale": 1.0,
+      "median_us": 6356.758117675781,
+      "min_us": 6347.787094116211,
+      "max_us": 6368.585968017578,
+      "output_error": {
+        "max_abs": 7.399171590805054e-05,
+        "relative_rmse": 0.0003828149347100407
+      },
+      "state_error": {
+        "max_abs": 0.00044715404510498047,
+        "relative_rmse": 0.000316706980811432
+      },
+      "status": "passed",
+      "kernel_library_sha256": "4bf4218a7473d3632369a542b45f7c58eb3286069d9e5750e40b01090e660aec",
+      "environment": {
+        "device_name": "Ascend910B2",
+        "cube_cores": 24,
+        "vector_cores": 48,
+        "torch_version": "2.10.0+cpu",
+        "torch_npu_version": "2.10.0"
+      }
+    },
+    {
+      "length": 16384,
+      "heads": 64,
+      "key_heads": 16,
+      "initial_state": true,
+      "gate_scale": 1.0,
+      "median_us": 12511.41128540039,
+      "min_us": 12507.595825195312,
+      "max_us": 12517.050170898438,
+      "output_error": {
+        "max_abs": 8.636340498924255e-05,
+        "relative_rmse": 0.00038327844231389463
+      },
+      "state_error": {
+        "max_abs": 0.00040978193283081055,
+        "relative_rmse": 0.0003129448741674423
+      },
+      "status": "passed",
+      "kernel_library_sha256": "4bf4218a7473d3632369a542b45f7c58eb3286069d9e5750e40b01090e660aec",
+      "environment": {
+        "device_name": "Ascend910B2",
+        "cube_cores": 24,
+        "vector_cores": 48,
+        "torch_version": "2.10.0+cpu",
+        "torch_npu_version": "2.10.0"
+      }
+    },
+    {
+      "length": 32768,
+      "heads": 64,
+      "key_heads": 16,
+      "initial_state": true,
+      "gate_scale": 1.0,
+      "status": "failed",
+      "error": "out: max_abs=0.044520 rmse_ratio=0.087424",
+      "kernel_library_sha256": "4bf4218a7473d3632369a542b45f7c58eb3286069d9e5750e40b01090e660aec",
+      "environment": {
+        "device_name": "Ascend910B2",
+        "cube_cores": 24,
+        "vector_cores": 48,
+        "torch_version": "2.10.0+cpu",
+        "torch_npu_version": "2.10.0"
+      }
+    }
+  ]
+}

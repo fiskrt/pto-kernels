@@ -28,14 +28,24 @@ class AccuracyFailure(AssertionError):
         super().__init__("Pointwise/RMSE acceptance failed; see numerical_errors")
 
 
-def check_outputs(launch, expected, expected_state):
-    raw = launch["out"].cpu().double()
-    metrics = {"raw_output": error_metrics(raw, expected.double() * 128**.5),
-               "scaled_output": error_metrics(raw * 128**-.5, expected),
-               "final_state": error_metrics(launch["final_state"].cpu().view_as(expected_state), expected_state)}
+def check_outputs(launch, expected, expected_state, previous=None):
+    """Validate against fixed oracle tensors; cache only within that benchmark case."""
+    # Keep independent snapshots: even CPU test inputs may be mutated in place.
+    raw = launch["out"].cpu().clone()
+    state = launch["final_state"].cpu().view_as(expected_state).clone()
+    if previous is not None and previous[3] is expected and previous[4] is expected_state and all(
+            a.shape == b.shape and a.dtype == b.dtype and torch.equal(a.view(torch.int16), b.view(torch.int16))
+            for a, b in zip((raw, state), previous[:2])):
+        # Every bit was checked. Recomputing exact percentiles for identical
+        # tensors adds minutes to large sweeps without changing acceptance.
+        return previous
+    raw_double = raw.double()
+    metrics = {"raw_output": error_metrics(raw_double, expected.double() * 128**.5),
+               "scaled_output": error_metrics(raw_double * 128**-.5, expected),
+               "final_state": error_metrics(state, expected_state)}
     if not all(value["passed"] for value in metrics.values()):
         raise AccuracyFailure(metrics)
-    return metrics
+    return raw, state, metrics, expected, expected_state
 
 
 def benchmark_case(args, length, audit_case=None):
@@ -55,10 +65,12 @@ def benchmark_case(args, length, audit_case=None):
         *(t.to(args.device) for t in inputs), cu.to(args.device),
         initial.to(args.device) if initial is not None else None,
     )
+    checked = None
     for _ in range(1 if args.profile_once else 5):
         pto_gdn_mega(**launch)
         torch.npu.synchronize()
-        metrics = check_outputs(launch, expected, expected_state)
+        checked = check_outputs(launch, expected, expected_state, checked)
+    metrics = checked[2]
     if args.profile_once:
         print(json.dumps(dict(length=length, numerical_errors=metrics, validation_policy=POLICY)), flush=True)
         return None
@@ -85,7 +97,8 @@ def benchmark_case(args, length, audit_case=None):
                       heads=audit_case["heads"], key_heads=audit_case["key_heads"],
                       initial_state=initial is not None, gate_scale=audit_case.get("gate_scale", 1.))
     # Verify the timed graph also leaves correct outputs, outside its timing.
-    record["after_replay_errors"] = check_outputs(launch, expected, expected_state)
+    record["after_replay_errors"] = check_outputs(launch, expected, expected_state, checked)[2]
+    record["validation_reuse"] = "Statistics reused only after byte equality of every output/state element"
     return record
 
 

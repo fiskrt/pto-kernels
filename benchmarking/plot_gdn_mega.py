@@ -21,11 +21,16 @@ def main():
     if len(cells) != len(data["records"]) or set(cells) != {(h, n) for h in heads for n in lengths}:
         raise ValueError("Heatmap requires one checked result for every requested cell")
     for row in cells.values():
+        if row.get("status") not in ("passed", "failed"):
+            raise ValueError("Every comparison must have an explicit validation status")
         if row.get("status") == "failed":
             if row["speedup"] is not None or not any(row[v].get("status") == "failed" for v in ["baseline", "current"]):
                 raise ValueError("Failed comparisons must identify a failed implementation and have no speedup")
         elif row["speedup"] is None or not np.isfinite(row["speedup"]) or row["speedup"] <= 0:
             raise ValueError("Passing speedups must be finite and positive")
+        elif (any(row[v].get("status") == "failed" for v in ["baseline", "current"])
+              or not np.isclose(row["speedup"], row["baseline_ms"] / row["current_ms"], rtol=1e-10)):
+            raise ValueError("Passing comparisons must match their latencies and contain no failed implementation")
     values = np.array([[np.nan if cells[h, n].get("status") == "failed" else cells[h, n]["speedup"]
                         for n in lengths] for h in heads], dtype=float)
     valid = values[~np.isnan(values)]
@@ -42,7 +47,10 @@ def main():
     ax.set_yticks(range(len(heads)), [f"{h} / {h // data['group_size']}" for h in heads])
     ax.set_xlabel("Sequence length (tokens)")
     ax.set_ylabel("Value heads H / key heads Hg")
-    ax.set_title("GDN mega kernel: original / optimized latency", fontsize=17, pad=16)
+    historical = data.get("baseline_source", {}).get("kind") == "historical_latency"
+    title = ("GDN: historical original / current stable latency" if historical else
+             "GDN mega kernel: original / current latency")
+    ax.set_title(title, fontsize=16, pad=16)
     for i, h in enumerate(heads):
         for j, n in enumerate(lengths):
             value = values[i, j]
@@ -59,16 +67,21 @@ def main():
     for spine in ax.spines.values():
         spine.set_visible(False)
     bar = fig.colorbar(mesh, ax=ax, label="Speedup (higher is faster)", shrink=0.8)
-    bar.set_ticks([norm.vmin, 1.0, *range(2, int(np.ceil(norm.vmax)))])
+    bar.set_ticks(sorted({norm.vmin, 1.0, norm.vmax, *range(2, int(np.ceil(norm.vmax)))}))
     state = "nonzero" if data["initial_state"] else "zero"
     hardware = data.get("environment", {}).get("device_name", data["device"])
     acceptance = ("Pointwise + RMSE acceptance" if data.get("validation_sha256") else
                   "Historical RMSE-only acceptance; no pointwise accuracy guarantee")
+    if historical:
+        acceptance = "Current: strict pointwise + RMSE; original: historical RMSE-only (fails strict spot-checks)"
+    current_commit = data.get("current_kernel_commit", data.get("source_commit", ""))[:7]
+    baseline_commit = data.get("baseline_source", {}).get("source_commit", "original")[:7]
     fig.supxlabel(
         f"{hardware} · D = chunk size = 128 · GQA group {data['group_size']} · {state} initial state · gate scale {data['gate_scale']:g}\n"
         f"5 checked warmups · median of 15 × 20 graph calls · allocation excluded · gray = correctness failure\n"
-        f"{acceptance}",
-        fontsize=10,
+        f"{acceptance}\n"
+        f"Original {baseline_commit} / current {current_commit} · 1× = equal latency; below 1× = current slower",
+        fontsize=9,
     )
     output = args.output or args.input.with_suffix("")
     output.parent.mkdir(parents=True, exist_ok=True)
