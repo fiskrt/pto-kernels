@@ -548,3 +548,13 @@ every inverse term. All80 strict tests pass. H16/Hg4/4K with initial state:
 the correct FP32 predecessor1.259212ms.3× target still unmet. ABI/allocation
 sizes unchanged. Raw records: docs/gdn_mega/shared_decay_benchmark.json and
 shared_decay_tests.txt. Batched-small-join variant was slower and was removed.
+
+2026-10-26 — `6fb5757` — refreshed the original/current stable heatmaps and
+removed the obsolete FP16 speedup summary. All 49 current shape measurements
+pass strict checks; 48 historical-original latency ratios range from 1.04× to
+3.85×, or 1.04× to 1.54× at 4K and longer. The original's failed H64/32K cell
+remains gray. Baseline timings are explicitly historical RMSE-only measurements,
+not relabeled strict passes. Tooling `f071140` adds guarded historical-baseline
+reuse and validated byte-equality statistics caching; six checker tests and
+plot/resume integrity checks pass. No production kernel or tolerance changed.
+Evidence: docs/gdn_mega/heatmap.md and heatmap_validation.txt.
