@@ -600,23 +600,3 @@ so fixing fallback decay alone may not finish numerical work. No kernel fix or
 relaxed tolerance applied. Full evidence and commands: docs/gdn_mega/README.md
 critical audit section and data/precision_audit.json/csv. Source commits0a1797e,
 810b731,f2019b9 retain the exact generators used for the successive audit batches.
-
-
-2026-10-26 — a365dad repairs the beta-[0,1] precision audit:
-- All 56 critical inputs now pass unchanged. Full audit 101/101 case entries,
-  five launches each; pytest 125/125. Four duplicate critical inputs are retained
-  as ordinary regressions, plus five independent changing-gate cases.
-- expm1+compensated decay fixes unit-scale long-memory drift. Chunk compensation
-  lives in existing wy_workspace_a1/a2 (FP32 row half per vector subblock).
-- Decay correction alone exposed residual/update rounding at amplitude 128.
-  Accurate dots alone were insufficient. FP32 operands split into 12-bit parts
-  multiply exactly with original 11-bit FP16 keys/beta; TwoSum retains reduction,
-  residual and rank-one update errors. This fixes the amplified near-zero errors.
-- Avoid a gratuitous decay renormalization for g=0 in the token path. A no-op
-  compensation step changed rounding and regressed one prior large-state case.
-- Cost: ordinary timing +8.8–9.8%; correlated fallback approximately 2.8x slower.
-  Optimize the accurate conservative arithmetic/pipeline next without dropping
-  low products or decay compensation. Do not infer numerical safety from RMSE.
-- Public API/allocation sizes unchanged. Heatmaps remain historical aac5a4d
-  measurements; README explicitly separates them from the repair's new timings.
-  Full preserved failures and new passing evidence: data/precision_audit.json/csv.

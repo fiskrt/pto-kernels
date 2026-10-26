@@ -113,7 +113,7 @@ bash scripts/gdn_mega_docker.sh bash scripts/build_gdn_mega.sh
 bash scripts/gdn_mega_docker.sh timeout 240 python -m pytest \
   tests/test_gdn_mega.py tests/test_gdn_mega_validation.py -q
 bash scripts/gdn_mega_docker.sh timeout 600 python benchmarking/audit_gdn_mega.py \
-  --suite all --output benchmark_data/gdn_mega/current_accuracy.json
+  --output benchmark_data/gdn_mega/current_accuracy.json
 bash scripts/gdn_mega_docker.sh timeout 600 python benchmarking/gdn_mega.py \
   --initial-state --lengths 128 4096 8192 16384 32768 \
   --output benchmark_data/gdn_mega/current_performance.json

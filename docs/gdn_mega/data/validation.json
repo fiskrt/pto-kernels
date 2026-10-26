@@ -1,18 +1,18 @@
 {
-  "implementation_commit": "a365dad530626390e72485cd95f6204c915e8f1d",
-  "production_library_sha256": "5237a58dd70502f037e6255e2ceffa90635bbd533fc1015448c72e99eae5c0a2",
+  "implementation_commit": "aac5a4d",
+  "production_library_sha256": "619b7df351e839f58d853d3ca639cafca44127a18e270626dfe2ddc79f5ed89d",
   "production_sources": {
     "csrc/kernel/gdn_mega/common.hpp": "a57c716bf72d22e6439acdb77c1303b8b05c1a7f6371d70881b3d5db28a84a36",
-    "csrc/kernel/gdn_mega/fused_pipeline.hpp": "7ba579b26867052f381d310612fa83555e16319940d3f190b8b89033a0ff7b4f",
+    "csrc/kernel/gdn_mega/fused_pipeline.hpp": "b813168ddb305cf7db84f55a85be494e07e200d1192477577e79d14995237c5b",
     "csrc/kernel/gdn_mega/gate_scan.hpp": "9ee4bd4dfda1ca6406bc078475ca7088f79fb4cffd734076633d0df9e0f91126",
     "csrc/kernel/gdn_mega/inverse.hpp": "48dc9208fd6fee3636ac36d7805c64e66cb1bf20f031369f4a1f3fea08c0318f",
-    "csrc/kernel/gdn_mega/kernel_gdn_mega.cpp": "d3bb688e48e2034c1670970857df0cdcfa73f23243e32c6a54d5cdaca239f92a",
+    "csrc/kernel/gdn_mega/kernel_gdn_mega.cpp": "8009f166499975cb1d8f4803c8a81f72d138da66c71645ece1c273e0a3166a7c",
     "csrc/kernel/gdn_mega/recurrence_pipeline.hpp": "67f80a7ad5d44ac2da7081ef7158f1b9b7b77d11babf5a775dd5f21be5b27f71",
     "csrc/kernel/gdn_mega/shared_grams.hpp": "0db69aeef4a2033346c5d81ae6f651ffc5f8b0f031cbfa65e2aa72158eebb166"
   },
   "validation_sources": {
     "tests/gdn_mega_validation.py": "beef7c843d41645b046d0f416ab15c4372627a0735788b47307536e4b8affb82",
-    "tests/test_gdn_mega_validation.py": "e50613c903a9b6d3317a7d3fa848f7b82cc4dfbb3f682e44e685e51580b2a306",
+    "tests/test_gdn_mega_validation.py": "bc13a610af1ab8b8bbf87614aeefe7892a70c14a81329a4a2468287bbd71ef31",
     "tests/test_gdn_mega_errors.py": "92f6bd0c36e6183681c0fc05e10e3648eec3e38161c95d1cd328c1d98b1f3926",
     "tests/test_gdn_mega.py": "a6cb101d3a17b0020a9fc18ae133625d9e3d8d3e29a3a2f210dc751c0d7ce138",
     "tests/test_gdn_mega_benchmark.py": "44e82aff2799a52144cdd2b55139d0d82067ae42e45b3ec1951f6bae74c789a0",
@@ -23,10 +23,10 @@
     "benchmarking/gdn_mega_sweep.py": "ae78084f1b360ac9e5f4a34304fcfc3646f51f3d95e65c211ff6c727de445bf8",
     "benchmarking/gdn_mega_errors.py": "316c15c9739bb9136299a488c8b4a798a429a3cab62848cf831ba02c7fa9d673",
     "benchmarking/gdn_mega.py": "78ce02812dc0010f8ed06f330b9bb507c518406fc1accd21a1ac4367f3679624",
-    "benchmarking/audit_gdn_mega.py": "4cfe08e6f9899cf539c2140da1b0532d308e3cabf06835b0f052bf2bc4e8935a",
+    "benchmarking/audit_gdn_mega.py": "57462932747ebc0ea1d4241f558334f003c2d8c0994d6c8338bf5eed6376cf5a",
     "scripts/report_gdn_mega.sh": "71f57ffff735ff5e9c5531712b39c5735dc17a90ca94c07b11ab9d75df5011a7"
   },
-  "test_log": "........................................................................ [ 57%]\n.....................................................                    [100%]\n125 passed in 93.71s (0:01:33)\n",
+  "test_log": "........................................................................ [ 62%]\n............................................                             [100%]\n116 passed in 63.11s (0:01:03)\n",
   "report_refresh": {
     "kernel_commit": "aac5a4d3a2d56d977d492eee174d14ddf3283c36",
     "latency_current_passed": 63,
@@ -70,7 +70,7 @@
     "baseline_source_commit": "4a45216",
     "current_source_commit": "e9714dd"
   },
-  "validation_sources_commit": "a365dad530626390e72485cd95f6204c915e8f1d",
+  "validation_sources_commit": "810b731",
   "display_refresh": {
     "description": "Asterisks are attached to failing implementation runtimes only; ratios are unmarked.",
     "source_sha256": {
@@ -87,18 +87,16 @@
   },
   "critical_precision_audit": {
     "report": "precision_audit.json",
-    "kernel_commit": "a365dad530626390e72485cd95f6204c915e8f1d",
-    "beta_range": [
+    "kernel_unchanged": true,
+    "supported_beta_range": [
       0,
       1
     ],
-    "critical_passed": 56,
-    "critical_failed": 0,
-    "complete_audit_case_entries": 101,
-    "launches": 505,
-    "pytest_passed": 125,
-    "policy_unchanged": true,
-    "status": "All recorded cases pass; see report for the measured scope."
-  },
-  "heatmap_scope": "report_refresh and display_refresh retain historical aac5a4d grid measurements; precision repair timings are in precision_audit.json."
+    "additional_cases": 56,
+    "passed": 33,
+    "failed": 23,
+    "ideal_fp16_rounding_passes_all": true,
+    "rmse_alone_passes_all": true,
+    "status": "Unresolved elementwise precision failures; existing pytest suite is not a precision signoff."
+  }
 }
