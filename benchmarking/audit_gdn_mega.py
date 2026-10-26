@@ -57,6 +57,21 @@ CRITICAL_CASES = [
 ]
 
 
+# Matched controls added after the initial critical sweep to isolate failures.
+CRITICAL_CASES += [
+    dict(name='control_nearly_correlated_no_decay', seed=3011, lengths=(1025,), heads=8, key_heads=2,
+         nearly_correlated=True, beta=1., constant_log_gate=0., state_scale=1.),
+    dict(name='control_zero_initial_no_decay', seed=3089, lengths=(4097,), heads=8, key_heads=2,
+         nearly_correlated=True, beta=1., constant_log_gate=0., initial=False),
+    dict(name='control_coordinate_zero_initial', seed=3007, lengths=(32768,), heads=8, key_heads=2,
+         correlated=True, beta=1., constant_log_gate=-1e-7, initial=False),
+    dict(name='control_coordinate_beta_zero', seed=3007, lengths=(32768,), heads=8, key_heads=2,
+         correlated=True, beta=0., constant_log_gate=-1e-7, state_scale=1.),
+    dict(name='control_coordinate_no_decay', seed=3007, lengths=(32768,), heads=8, key_heads=2,
+         correlated=True, beta=1., constant_log_gate=0., state_scale=1.),
+]
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, required=True)
