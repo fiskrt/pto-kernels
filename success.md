@@ -571,3 +571,13 @@ crosschecks: current2/2, original0/2. Twelve CPU checker tests and six plot
 integrity checks pass. Saved both shared-scale plots, all repeats/CSV, explanation
 and validation in docs/gdn_mega/error_heatmap*. No kernel, tolerance, interface,
 allocation, or performance change is claimed by this reporting improvement.
+
+2026-10-26 — saved fresh original/current hardware profiles and diagnostic
+phase measurements in docs/gdn_mega/profile_comparison.md. Production current
+strict checks pass, as do both current diagnostic accuracy checks and the T256
+simulator check. Production remains unchanged; this is a profiling result, not
+a new speedup. Original890.307us/current794.432us (1.121x); shared setup34.20us,
+persistent phase768.41us. Identified vector preparation, dependent FP32 inverse
+scratch round trips,129us state feedback waits and16/24 active persistent groups.
+Raw counters, clock samples, reproducible diagnostic patch and traceviz timeline
+are saved. No tolerance/ABI/allocation change.3x target remains unmet.

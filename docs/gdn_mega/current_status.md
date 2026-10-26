@@ -2,6 +2,7 @@
 
 Latest full head/sequence sweep: [updated heatmap, 2026-10-26](heatmap.md).
 Fresh matched accuracy sweep: [original/current maximum absolute error heatmaps](error_heatmap.md).
+Fresh hardware diagnosis: [why the stable kernel is only about 10% faster](profile_comparison.md).
 
 Production code: **bfc99e1** (preceded by shared-operand fusion **a329112**).
 All80 strict tests pass. The restored library hash matches the tested checkpoint;

@@ -1,0 +1,22 @@
+2026-10-26 GDN profiling validation
+
+Production hardware profile: original 10748eb, current bfc99e1.
+Shape: H16/Hg4, T4096, D128, ordinary gates, nonzero initial state.
+Current library SHA256: 92c7bfe1d266cf8a3fc5a17c632fb83e6cc03a10624b910e91423d8877dc92ef
+Original library SHA256: 4bf4218a7473d3632369a542b45f7c58eb3286069d9e5750e40b01090e660aec
+Current hardware profile: strict raw/scaled output and final-state checks PASS.
+Original hardware profile: strict output and final-state checks FAIL; retained as failures.
+Current diagnostic hardware runs: strict raw output/final state checks PASS before/after sampling.
+Original diagnostic hardware runs: strict checks FAIL as expected, not relabeled passes.
+Both diagnostics: 3 warmups + 15 device-clock samples, driver clock queried.
+Current: all active lanes count 32 chunks, zero strong-coupling fallbacks.
+
+PASS: saved instrumentation patch applies to exact source commits and reproduces all compiled diagnostic source hashes.
+PASS: production binary hash remains unchanged; production source untouched.
+No production tolerance or allocation changes. Full 80-test suite not rerun: this change only records profiling evidence.
+
+Current T256 simulator completed successfully; its raw/scaled output and final-state checks pass.
+Traceviz used through ../traceviz-mcp CLI; selected-core summary, FIXPIPE/CUBE overlap and timeline saved.
+PNG visually inspected. Simulator timing is explicitly separate from 4K hardware timing.
+Per-pipe hardware counters overlap; report never sums them as stage durations.
+Diagnostic phase times include instrumentation and differ from production latency.

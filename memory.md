@@ -510,3 +510,27 @@ Strong path latency remains a major limitation, not a target-speed result.
   six focused checker tests pass. No tolerance or production kernel changes.
 - Updated docs/gdn_mega/heatmap.{png,svg,json,csv,md}; validation checks in
   heatmap_validation.txt. Long-shape baseline provenance/known failure preserved.
+
+2026-10-26: fresh original/current hardware profiling, H16/Hg4/T4096/initial.
+Production durations original890.307us vs stable794.432us (1.121x). Current
+library92c7bfe... unchanged. All current profile/diagnostic strict checks pass;
+original fails, never relabeled. Docs: profile_comparison.md plus raw JSON.
+Current phases from isolated diagnostic copies: shared grams+gates34.20us,
+persistent768.41us. Cube active-group median arithmetic175.58us (22.1%),
+vector0 arithmetic316.97us vs original165.33us. Only16/24 groups persist.
+Current cube section medians: paired projections100.27us; inverse loads/joins
+223.60us; attention loads22.71us; RHS wait0.02us; residual solve/export97.94us;
+output/state products143.75us; state feedback wait129.00us; state reload19.05us.
+Vector prep435.53us: weighting/masks/checks214.04, diagonal solves162.49,
+export/Gamma56.21us. Cube/vector counters overlap; do not sum their totals.
+Each chunk's7 inverse joins do14 GM store/reload round trips (7168 overall).
+Current cube MTE2 instructions846 vs original377.5; direct L0C->L1 traffic0
+vs original9216KB median. GM->L1 traffic16544 vs11969KB. Cached GM traffic is
+not necessarily HBM traffic; diagnosis is dependencies/transfer latency.
+T256 simulator + traceviz shows FIXPIPE/CUBE serialization, but simulator
+startup timing is not a hardware critical-path estimate. Diagnostics source
+patch and exact measurement script saved; production has no profiling code.
+Next promising structural targets: keep stable inverse intermediates closer to
+compute; take independent prep off late state feedback with bounded buffers
+and idle core groups. Prior global-precompute design was slower: do not simply
+repeat it. Native FP32 projection ablation only addresses~100us, not entire gap.
