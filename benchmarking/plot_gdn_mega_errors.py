@@ -118,8 +118,8 @@ def plot(data, heads, lengths, cells, metric, output):
            if metric == 'max_abs' else 'Green: worst ratio ≤ 1; red: worst ratio > 1. RMSE and final state are checked separately.'),
         fontsize=10)
     output.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(output.with_suffix('.png'), dpi=180)
-    fig.savefig(output.with_suffix('.svg'))
+    fig.savefig(output.with_suffix('.png'), dpi=180, bbox_inches='tight')
+    fig.savefig(output.with_suffix('.svg'), bbox_inches='tight')
     svg = output.with_suffix('.svg')
     svg.write_text('\n'.join(line.rstrip() for line in svg.read_text().splitlines())+'\n')
     plt.close(fig)

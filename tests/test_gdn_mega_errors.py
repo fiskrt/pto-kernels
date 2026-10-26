@@ -94,3 +94,17 @@ def test_shared_golden_requires_matching_inputs_source_and_contents(monkeypatch,
     torch.save(saved, path)
     with pytest.raises(RuntimeError, match='mismatch'):
         shared_reference(path, identity, compute)
+
+
+@pytest.mark.parametrize('baseline,current,additional,expected', [
+    ('passed', 'passed', {}, (False, False)),
+    ('failed', 'passed', {}, (True, False)),
+    ('passed', 'failed', {}, (False, True)),
+    ('passed', 'passed', {'baseline_accuracy_status': 'failed'}, (True, False)),
+    ('failed', 'passed', {'baseline_accuracy_status': 'passed'}, (True, False)),
+])
+def test_numerical_asterisk_is_per_cell_and_implementation(monkeypatch, baseline, current, additional, expected):
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[1] / 'benchmarking'))
+    from gdn_mega_report_text import numerical_failure
+    row = {'baseline': {'status': baseline}, 'current': {'status': current}, **additional}
+    assert tuple(numerical_failure(row, v) for v in ('baseline', 'current')) == expected

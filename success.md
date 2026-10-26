@@ -625,3 +625,34 @@ reports and replaced the solver-screening script with a focused input-range
 script. Historical experiments remain available in Git at a83187b. Complete-grid,
 source/library fingerprint, repeat/bounds and local-link checks pass; figures
 were visually inspected. Evidence is consolidated in data/validation.json.
+
+2026-10-26 — `e9714dd`: faster exhaustive validation and independent FP64 grid
+references. At T4096/H16/Hg4, median first-check CPU wall time falls from
+1.379s to0.222s (6.22x), by making percentile sorting optional and checking raw
+output directly instead of duplicating scaled statistics. Every element,
+finiteness, maximum absolute error and final-state bound remain checked; policy
+unchanged. FP64 scratch reuse gives3.182->2.995s on the same case, with identical
+output/state. Changed outputs, changed or mutated references, NaNs, and altered
+shared-golden cache contents are covered by regression tests. The85 kernel/oracle
+checks and24 checker/report checks pass across the complete and targeted runs.
+Explicit24/8 and48/16 rows are supported; every heatmap cell displays current
+median total microseconds beneath its speedup/failure. All63 current latency
+cells pass FP64 elementwise checks through32K. This improves validation speed,
+not production kernel speed; kernel aac5a4d and its ABI are unchanged.
+
+2026-10-26 — follow-up to `e9714dd`: refreshed the full63-cell latency/error
+reports with FP64 goldens, including24/8 and48/16 through32K. Current63/63 pass;
+original0/63 pass the elementwise policy, with every element and3 launches per
+error cell retained. Timed the15 previously missing original cells despite
+numerical failure, preserving their failed statuses. All63 runtime ratios are
+now available; stars are decided per cell and implementation, and current
+median total microseconds appear beneath each ratio. Passing entries are never
+starred just because another entry fails. Runtime tables retain failing baseline
+timings; these comparisons are explicitly not accuracy equivalent. The final
+suite passes115 tests in58.79s, including mixed pass/fail annotation cases and
+protection against reusing a permissive failed result as a strict pass. The
+single-cell sweep integration check confirms failed baseline timing and a
+passing current result. Verified all63 displayed current medians, input/oracle/
+library/source fingerprints, complete grids, zero current violations, local
+links and plots. Removed redundant selected-shape FP64 reports; maintained docs
+remain four Markdown pages. Kernel code and numerical tolerances are unchanged.

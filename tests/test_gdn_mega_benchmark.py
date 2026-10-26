@@ -65,3 +65,15 @@ def test_benchmark_golden_is_in_raw_output_units():
     assert checked[2]['raw_output']['max_abs'] == 0
     with pytest.raises(benchmark.AccuracyFailure):
         benchmark.check_outputs(launch, expected * 128**-.5, state)
+
+
+def test_timing_failed_outputs_does_not_turn_them_into_a_pass():
+    launch, expected, state = inputs()
+    launch['out'].flatten()[-1] = .01
+    checked = benchmark.check_outputs(launch, expected, state, allow_failed=True)
+    assert not checked[2]['raw_output']['passed']
+    assert checked[2]['raw_output']['pointwise_violations'] == 1
+    assert benchmark.check_outputs(launch, expected, state, checked, allow_failed=True) is checked
+    # A permissive timing result cannot leak into a subsequent strict check.
+    with pytest.raises(benchmark.AccuracyFailure):
+        benchmark.check_outputs(launch, expected, state, checked)

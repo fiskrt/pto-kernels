@@ -29,7 +29,7 @@ class AccuracyFailure(AssertionError):
         super().__init__("Pointwise/RMSE acceptance failed; see numerical_errors")
 
 
-def check_outputs(launch, expected, expected_state, previous=None):
+def check_outputs(launch, expected, expected_state, previous=None, *, allow_failed=False):
     """Check raw output against FP64 raw goldens; reuse only unchanged results."""
     # Keep independent snapshots: even CPU test inputs may be mutated in place.
     raw = launch["out"].cpu().clone()
@@ -40,10 +40,12 @@ def check_outputs(launch, expected, expected_state, previous=None):
             for a, b in zip((raw, state), previous[:2])):
         # Every output/state bit was checked; unchanged tensors have the same
         # elementwise bounds and maximum error against this fixed oracle.
+        if not allow_failed and not all(m['passed'] for m in previous[2].values()):
+            raise AccuracyFailure(previous[2])
         return previous
     metrics = {"raw_output": error_metrics(raw, expected),
                "final_state": error_metrics(state, expected_state)}
-    if not all(value["passed"] for value in metrics.values()):
+    if not allow_failed and not all(value["passed"] for value in metrics.values()):
         raise AccuracyFailure(metrics)
     return raw, state, metrics, expected, expected_state, expected._version, expected_state._version
 
@@ -67,11 +69,13 @@ def benchmark_case(args, length, audit_case=None):
         initial.to(args.device) if initial is not None else None,
     )
     checked = None
+    warmup_errors = []
     for _ in range(1 if args.profile_once else 5):
         pto_gdn_mega(**launch)
         torch.npu.synchronize()
         check_start = time.perf_counter()
-        checked = check_outputs(launch, expected, expected_state, checked)
+        checked = check_outputs(launch, expected, expected_state, checked, allow_failed=args.time_failed)
+        warmup_errors.append(checked[2])
         check_seconds += time.perf_counter() - check_start
     metrics = checked[2]
     if args.profile_once:
@@ -101,7 +105,13 @@ def benchmark_case(args, length, audit_case=None):
                       initial_state=initial is not None, gate_scale=audit_case.get("gate_scale", 1.))
     # Verify the timed graph also leaves correct outputs, outside its timing.
     check_start = time.perf_counter()
-    record["after_replay_errors"] = check_outputs(launch, expected, expected_state, checked)[2]
+    record["after_replay_errors"] = check_outputs(
+        launch, expected, expected_state, checked, allow_failed=args.time_failed)[2]
+    passed = all(m['passed'] for phase in [*warmup_errors, record['after_replay_errors']] for m in phase.values())
+    record['status'] = 'passed' if passed else 'failed'
+    if not passed:
+        record['warmup_errors'] = warmup_errors
+        record['timing_warning'] = 'Runtime measured despite numerical failure; not an accuracy-equivalent result'
     check_seconds += time.perf_counter() - check_start
     record["validation_seconds"] = dict(inputs_and_fp64_reference=reference_seconds, all_output_checks=check_seconds)
     record["validation_reuse"] = "Statistics reused only after byte equality of every output/state element"
@@ -122,6 +132,8 @@ def main():
     parser.add_argument("--inner", type=int, default=20)
     parser.add_argument("--output", type=Path)
     parser.add_argument("--profile-once", action="store_true", help="One checked launch, without a timing graph")
+    parser.add_argument("--time-failed", action="store_true",
+                        help="Also time numerically failing kernels; preserve failed status and all checks")
     args = parser.parse_args()
     torch.set_num_threads(4)
     torch.npu.set_device(args.device)
@@ -142,9 +154,9 @@ def main():
         try:
             record = benchmark_case(args, length, audit_case)
             if record is not None:
-                record["status"] = "passed"
+                record.setdefault("status", "passed")
         except AssertionError as error:
-            # Preserve numerical failures, never assign them a timing/speedup.
+            # Strict mode stops on numerical failure; execution errors are never timed.
             record = dict(length=length, heads=args.heads, key_heads=args.key_heads,
                           initial_state=args.initial_state, gate_scale=args.gate_scale,
                           status="failed", error=str(error))
@@ -160,6 +172,9 @@ def main():
                               heads=audit_case["heads"], key_heads=audit_case["key_heads"],
                               initial_state=audit_case.get("initial", True), gate_scale=audit_case.get("gate_scale", 1.))
             record["reference"] = "CPU FP64 token recurrence"
+            record["validation_sha256"] = hashlib.sha256(b"".join(
+                (Path(__file__).resolve().parents[1] / name).read_bytes() for name in
+                ("tests/gdn_mega_validation.py", "tests/test_gdn_mega.py", "benchmarking/gdn_mega.py"))).hexdigest()
             record["environment"] = environment
             records.append(record)
             print(json.dumps(record), flush=True)

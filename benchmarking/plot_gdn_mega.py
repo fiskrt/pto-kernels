@@ -8,7 +8,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
 from matplotlib.colors import TwoSlopeNorm  # noqa: E402
 import numpy as np  # noqa: E402
-from gdn_mega_report_text import write_latency  # noqa: E402
+from gdn_mega_report_text import numerical_failure, write_latency  # noqa: E402
 
 from gdn_mega_sweep import head_configs
 
@@ -18,24 +18,36 @@ def main():
     parser.add_argument("input", type=Path)
     parser.add_argument("--output", type=Path, help="Filename stem; writes PNG and SVG beside input by default")
     parser.add_argument("--markdown", type=Path, help="Generated Markdown report; defaults beside the plots")
+    parser.add_argument("--errors", type=Path, help="Matched error report used to mark numerical failures")
     args = parser.parse_args()
     data = json.loads(args.input.read_text())
     heads, lengths = sorted(head_configs(data)), sorted(data["lengths"])
     cells = {((r["heads"], r["key_heads"]), r["length"]): r for r in data["records"]}
     if len(cells) != len(data["records"]) or set(cells) != {(h, n) for h in heads for n in lengths}:
         raise ValueError("Heatmap requires one checked result for every requested cell")
+    if args.errors:
+        errors = json.loads(args.errors.read_text())
+        for key in ('library_sha256', 'seed', 'head_dim', 'chunk_size', 'gate_scale', 'initial_state', 'device'):
+            if errors[key] != data[key]:
+                raise ValueError(f'Accuracy report mismatch: {key}')
+        checked = {((r['heads'], r['key_heads']), r['length']): r for r in errors['records']}
+        if set(checked) != set(cells) or len(checked) != len(errors['records']):
+            raise ValueError('Accuracy report must cover the same complete shape grid')
+        for key, row in cells.items():
+            for variant in ('baseline', 'current'):
+                row[f'{variant}_accuracy_status'] = checked[key][variant]['status']
+        data['accuracy_report'] = str(args.errors)
     for row in cells.values():
         if row.get("status") not in ("passed", "failed"):
             raise ValueError("Every comparison must have an explicit validation status")
-        if row.get("status") == "failed":
-            if row["speedup"] is not None or not any(row[v].get("status") == "failed" for v in ["baseline", "current"]):
-                raise ValueError("Failed comparisons must identify a failed implementation and have no speedup")
-        elif row["speedup"] is None or not np.isfinite(row["speedup"]) or row["speedup"] <= 0:
-            raise ValueError("Passing speedups must be finite and positive")
-        elif (any(row[v].get("status") == "failed" for v in ["baseline", "current"])
-              or not np.isclose(row["speedup"], row["baseline_ms"] / row["current_ms"], rtol=1e-10)):
-            raise ValueError("Passing comparisons must match their latencies and contain no failed implementation")
-    values = np.array([[np.nan if cells[h, n].get("status") == "failed" else cells[h, n]["speedup"]
+        if row['speedup'] is not None:
+            if (not np.isfinite(row['speedup']) or row['speedup'] <= 0
+                    or row['baseline_ms'] is None or row['current_ms'] is None
+                    or not np.isclose(row['speedup'], row['baseline_ms'] / row['current_ms'], rtol=1e-10)):
+                raise ValueError('Runtime ratios must be positive and match measured latencies')
+        elif row['baseline_ms'] is not None and row['current_ms'] is not None:
+            raise ValueError('Measured timings require a runtime ratio, even when accuracy fails')
+    values = np.array([[np.nan if cells[h, n]['speedup'] is None else cells[h, n]['speedup']
                         for n in lengths] for h in heads], dtype=float)
     valid = values[~np.isnan(values)]
     if not valid.size:
@@ -63,12 +75,15 @@ def main():
                 label = (failed[0] if len(failed) == 1 else "both") + " FAIL"
                 color = "#374151"
             else:
-                label = f"{value:.2f}×"
+                failed = any(numerical_failure(cells[h, n], v) for v in ('baseline', 'current'))
+                label = f"{value:.2f}×" + ('*' if failed else '')
                 color = "white" if norm(value) > 0.8 or norm(value) < 0.15 else "#17202a"
             ax.text(j, i - .12, label, ha="center", va="center", fontsize=10 if np.isnan(value) else 12,
                     weight="bold", color=color)
             current_ms = cells[h, n]["current_ms"]
             latency = f"{current_ms * 1000:,.1f} µs" if current_ms is not None else "no current timing"
+            if current_ms is not None and numerical_failure(cells[h, n], 'current'):
+                latency += '*'
             ax.text(j, i + .21, latency, ha="center", va="center", fontsize=9, color=color)
     ax.set_xticks(np.arange(-0.5, len(lengths)), minor=True)
     ax.set_yticks(np.arange(-0.5, len(heads)), minor=True)
@@ -84,14 +99,17 @@ def main():
     hardware = data.get("environment", {}).get("device_name", data["device"])
     acceptance = ("Pointwise + RMSE acceptance" if data.get("validation_sha256") else
                   "Historical RMSE-only acceptance; no pointwise accuracy guarantee")
-    if historical:
-        acceptance = "Current: strict pointwise + RMSE; original: historical RMSE-only (fails strict spot-checks)"
+    if args.errors:
+        acceptance = "Current: strict FP64 elementwise checks; original numerical failures marked *"
+    elif historical:
+        acceptance = "Current: strict pointwise + RMSE; original: historical RMSE-only validation"
     current_commit = data.get("current_kernel_commit", data.get("source_commit", ""))[:7]
     baseline_commit = data.get("baseline_source", {}).get("source_commit", "original")[:7]
     fig.supxlabel(
         f"{hardware} · D = chunk size = 128 · explicit H/Hg rows · {state} initial state · gate scale {data['gate_scale']:g}\n"
-        f"5 checked warmups · median of 15 × 20 graph calls · allocation excluded · gray = correctness failure\n"
-        "Each cell: speedup above; current kernel median total µs per call below\n"
+        f"5 checked warmups · median of 15 × 20 graph calls · allocation excluded · gray = missing timing\n"
+        "Each cell: runtime ratio above; current kernel median total µs per call below\n"
+        "* Numerical failure: runtime comparison only; see error heatmaps for accuracy\n"
         f"{acceptance}\n"
         f"Original {baseline_commit} / current {current_commit} · 1× = equal latency; below 1× = current slower",
         fontsize=9,

@@ -149,7 +149,8 @@ def main():
                 if row.get("status") not in ("passed", "failed") or (row["status"] == "passed" and not row.get("median_us", 0) > 0):
                     parser.error("Historical baseline has an invalid validation/timing record")
         libraries["baseline"] = ROOT / "benchmark_data/gdn_mega/baseline_lib"
-        if any((h, hg, n) not in historical_cells for h, hg in configs for n in args.lengths):
+        if any(not historical_cells.get((h, hg, n), {}).get("median_us", 0) > 0
+               for h, hg in configs for n in args.lengths):
             if hashlib.sha256((libraries["baseline"] / "libno_workspace_kernel.so").read_bytes()).hexdigest() != fingerprints["baseline"]:
                 parser.error("Missing-cell baseline binary differs from historical original")
         report["baseline_source"] = {
@@ -173,17 +174,22 @@ def main():
         for index, (heads, key_heads) in enumerate(configs):
             if {row["length"] for row in report["records"] if (row["heads"], row["key_heads"]) == (heads, key_heads)} == set(args.lengths):
                 continue
-            saved_baseline = historical and all((heads, key_heads, n) in historical_cells for n in args.lengths)
-            runs = ({"baseline": {n: historical_cells[heads, key_heads, n] for n in args.lengths}}
-                    if saved_baseline else {})
-            # Alternate order across head counts to avoid always measuring one variant first.
-            variants = ["current"] if saved_baseline else (["baseline", "current"] if index % 2 == 0 else ["current", "baseline"])
+            saved_baseline = ({n: historical_cells[heads, key_heads, n] for n in args.lengths
+                               if historical_cells.get((heads, key_heads, n), {}).get('median_us', 0) > 0}
+                              if historical else {})
+            runs = {'baseline': saved_baseline} if historical else {}
+            # Reuse available historical timings; measure only missing baseline cells.
+            variants = (['current'] if len(saved_baseline) == len(args.lengths) else
+                        ['baseline', 'current'] if index % 2 == 0 else ['current', 'baseline'])
             for variant in variants:
                 path = runs_dir / f"{variant}_h{heads}_hg{key_heads}.json"
+                run_lengths = [n for n in args.lengths if n not in saved_baseline] if variant == "baseline" else args.lengths
                 command = [sys.executable, str(ROOT / "benchmarking/gdn_mega.py"),
                            "--heads", str(heads), "--key-heads", str(key_heads),
-                           "--lengths", *map(str, args.lengths), "--gate-scale", str(args.gate_scale),
+                           "--lengths", *map(str, run_lengths), "--gate-scale", str(args.gate_scale),
                            "--device", args.device, "--output", str(path)]
+                if variant == "baseline":
+                    command.append("--time-failed")
                 if args.initial_state:
                     command.append("--initial-state")
                 env = dict(os.environ)
@@ -193,13 +199,16 @@ def main():
                 process = subprocess.run(command, cwd=ROOT, env=env, timeout=900)
                 if process.returncode not in (0, 1) or not path.exists():
                     raise RuntimeError(f"Worker failed before completing: {variant}, H={heads}")
-                runs[variant] = {row["length"]: row for row in json.loads(path.read_text())}
+                measured = {row["length"]: row for row in json.loads(path.read_text())}
+                if set(measured) != set(run_lengths):
+                    raise RuntimeError(f"Incomplete worker output: {path}")
+                runs.setdefault(variant, {}).update(measured)
                 report["environment"] = next(iter(runs[variant].values()))["environment"]
                 if historical and report["environment"] != historical["environment"]:
                     raise RuntimeError("Current hardware/software environment differs from historical baseline")
                 if set(runs[variant]) != set(args.lengths):
                     raise RuntimeError(f"Incomplete run: {path}")
-                failures = any(row.get("status") == "failed" for row in runs[variant].values())
+                failures = any(row.get("status") == "failed" for row in measured.values())
                 if process.returncode != int(failures):
                     raise RuntimeError(f"Unexpected worker failure: {variant}, H={heads}")
                 if any(row["kernel_library_sha256"] != fingerprints[variant] for row in runs[variant].values()):
@@ -212,7 +221,8 @@ def main():
                     "status": "passed" if passed else "failed",
                     "baseline_ms": before["median_us"] / 1000 if "median_us" in before else None,
                     "current_ms": after["median_us"] / 1000 if "median_us" in after else None,
-                    "speedup": before["median_us"] / after["median_us"] if passed else None,
+                    "speedup": (before["median_us"] / after["median_us"]
+                                if before.get("median_us", 0) > 0 and after.get("median_us", 0) > 0 else None),
                     "baseline": before, "current": after,
                 })
             save_report(report, output)

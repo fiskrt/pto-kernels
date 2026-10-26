@@ -12,6 +12,11 @@ def number(value, spec='.3e'):
     return format(value, spec) if value is not None else 'NaN/Inf'
 
 
+def numerical_failure(row, variant):
+    """Mark this implementation/cell only when a check actually failed."""
+    return row[variant]['status'] == 'failed' or row.get(f'{variant}_accuracy_status') == 'failed'
+
+
 def write_latency(data, source, stem, markdown):
     rows = data['records']
     ratios = [r['speedup'] for r in rows if r['speedup'] is not None]
@@ -21,22 +26,23 @@ def write_latency(data, source, stem, markdown):
     baseline = data.get('baseline_source', {}).get('source_commit', 'original')[:7]
     historical = data.get('baseline_source', {}).get('kind') == 'historical_latency'
     configs = head_configs(data)
-    heads, key_heads = (16, 4) if (16, 4) in configs else configs[0]
-    table = '\n'.join(f"| {r['length']} | {number(r['baseline_ms'], '.3f')} | "
-                      f"{number(r['current_ms'], '.3f')} | {number(r['speedup'], '.2f')} |"
-                      for r in rows if (r['heads'], r['key_heads']) == (heads, key_heads))
     lengths = sorted(data['lengths'])
     cells = {(r['heads'], r['key_heads'], r['length']): r for r in rows}
-    current_table = '| H/Hg | ' + ' | '.join(map(str, lengths)) + ' |\n'
-    current_table += '|---|' + '---:|' * len(lengths) + '\n'
-    current_table += '\n'.join(
-        f'| {h}/{hg} | ' + ' | '.join(number(cells[h, hg, n]['current_ms'], '.3f')
-                                     for n in lengths) + ' |' for h, hg in configs)
-    warning = ('Original timings are historical RMSE-only measurements. The original fails the\n'
-               'current elementwise policy; this is **not an accuracy-equivalent comparison**.\n'
-               'New head pairs without historical timings run the original under strict checks;\n'
-               'failed original cells show no ratio. Their current latencies are saved in the CSV.\n'
-               if historical else 'Both libraries were measured under the current acceptance policy.\n')
+    def latency_table(variant):
+        table = '| H/Hg | ' + ' | '.join(map(str, lengths)) + ' |\n'
+        table += '|---|' + '---:|' * len(lengths) + '\n'
+        table += '\n'.join(
+            f'| {h}/{hg} | ' + ' | '.join(
+                (number(cells[h, hg, n][f'{variant}_ms'], '.3f')
+                 + ('*' if numerical_failure(cells[h, hg, n], variant) else ''))
+                for n in lengths) + ' |' for h, hg in configs)
+        return table
+    current_table, baseline_table = latency_table('current'), latency_table('baseline')
+    failures = sum(numerical_failure(r, 'baseline') for r in rows)
+    warning = ('Original timings combine frozen historical measurements with fresh timings\n'
+               'for previously missing cells. ' if historical else '')
+    warning += (f'Original fails strict numerical checks on **{failures}/{len(rows)} cells**.\n'
+                'Starred timings and ratios are **runtime comparisons, not accuracy-equivalent speedups**.\n')
     text = f'''# GDN speedup heatmap
 
 Generated from measurements dated {data['created_utc'][:10]}.
@@ -44,24 +50,26 @@ Original **{baseline}**, current **{current}**. [Overview](README.md).
 
 ![Original/current latency]({link(stem.with_suffix('.png'), markdown)})
 
-Each cell shows the speedup (or failure) above our kernel's **median total time
+Each cell shows the runtime ratio above our kernel's **median total time
 in µs per call**, including cells where the original fails. This covers the full
 kernel, not an individual stage; allocation and validation are excluded.
+`*` marks a numerical failure; its runtime is retained and its failed accuracy
+status is unchanged. See the [matched error report](error_heatmap.md).
 
 {warning}
-Current passes **{passed}/{len(rows)} shapes**. There are {len(ratios)} valid latency
+Current passes **{passed}/{len(rows)} shapes**. There are {len(ratios)} measured runtime
 ratios{f", ranging from **{min(ratios):.2f}× to {max(ratios):.2f}×**" if ratios else ""}.
 '''
     if long:
         text += f'For 4K and longer, the range is **{min(long):.2f}× to {max(long):.2f}×**.\n'
-    text += f'''There are {sum(x < 1 for x in ratios)} ratios below 1×. Gray cells identify
-an explicitly failed implementation; no speedup is inferred for them.
+    text += f'''There are {sum(x < 1 for x in ratios)} ratios below 1×. Gray cells mean
+that a timing is unavailable, not merely that numerical validation failed.
 
-## H{heads}/Hg{key_heads}
+## Original latency, milliseconds
 
-| Tokens | Original ms | Current ms | Speedup × |
-|---:|---:|---:|---:|
-{table}
+Columns are token counts. `*` identifies a numerical failure.
+
+{baseline_table}
 
 ## Current latency, milliseconds
 
@@ -80,9 +88,11 @@ all FLA distributions or characterize the slower strong-coupling fallback.
 {data['calls_per_trial']} graph calls. Allocation and CPU reference work are outside timing.
 The loaded library hash is checked for every worker.
 
-Every raw-output and final-state element must satisfy
+The numerical pass criterion for every raw-output and final-state element is
 `abs(error) <= 1e-5 + 1e-3*abs(reference)`, plus finiteness and relative RMSE < 0.005,
-before and after timing. Cached statistics are reused only after byte equality
+before and after timing. The baseline is timed even when it fails, with its
+failures retained. Current-kernel failures still fail the report command.
+Cached statistics are reused only after byte equality
 of every output/state element. The current grid uses the independent CPU FP64
 token recurrence, computed from the actual rounded inputs. No inverse, decay
 threshold or kernel intermediate participates in the oracle. Reference/check
