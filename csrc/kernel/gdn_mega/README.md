@@ -6,11 +6,15 @@ One launch and two global phases, with a fixed compiled schedule on Ascend 910B2
    computes FP32 KKᵀ and QKᵀ, shared by grouped value heads. A global barrier
    joins these independent producers.
 2. Each active cube/vector group retains one head across its chunks. Vector
-   prepares the next chunk's inverse and attention while cube processes the
-   current chunk. The recurrent state stays in vector-local FP32 storage.
+   weights the next chunk before waiting for current projections, retains its
+   coefficients through RHS preparation, then finishes its inverse while cube
+   processes the current chunk. The recurrent state stays in vector-local FP32 storage.
 
 The inverse uses stable 16×16 FP32 triangular substitution followed by
-block-triangular joins. It never forms the large powers of A that caused the
+block-triangular joins. The vector solve gathers coefficients directly without
+transposing or expanding solved rows. Independent cube joins are queued by
+level, with six synchronized export/reload phases rather than fourteen serial
+product round trips. The number of mathematical products is unchanged. It never forms the large powers of A that caused the
 previous FP16 overflow. Inverse joins, RHS solves and attention products use
 native FP32 operands. A stacked K/Q product shares two FP16 components of
 state and accumulates in FP32. Preparation computes Gamma = exp(G_last-G_i)*K
@@ -74,8 +78,8 @@ Only `out` and `final_state` are primary outputs. The existing caller applies
 | Supplied scratch | Current role |
 |---|---|
 | `g_t`, `g_sum`, `beta_t` | Head-major high/low gate prefixes and beta |
-| `A`, `w` | Two column halves of native FP32 decay-weighted keys Gamma |
-| `A_inv`, `u` | Two column halves of native FP32 attention |
+| `A`, `w` | Whole FP32 Gamma tiles: first/second halves of heads, head-major |
+| `A_inv`, `u` | Whole FP32 attention tiles: first/second halves of heads, head-major |
 | `A_inv_f32` | FP32 QKᵀ shared by grouped heads |
 | `v_new`, `s` | Two column halves of FP32 KKᵀ |
 | `wy_workspace_a1/a2` | Reserved compatibility storage |
@@ -83,6 +87,10 @@ Only `out` and `final_state` are primary outputs. The existing caller applies
 | `h_workspace` | FP32 projection/residual/state exchange, saved FP32 RHS and paired state |
 | `o_workspace_qk` | Native FP32 inverse join scratch (first 16 KiB/core), coupling markers (second half) |
 | `o_workspace_qs/gated` | Two row halves of prepared native FP32 inverse |
+
+For attention and Gamma, each existing half allocation holds `H/2` complete
+FP32 head streams. All supported head counts are even, so this exactly fills
+the existing allocations. No columns are split across buffers.
 
 Scratch contents are not a post-call intermediate-results API. Continue allocating
 existing shapes, as demonstrated by `_prepare_gdn_mega` in

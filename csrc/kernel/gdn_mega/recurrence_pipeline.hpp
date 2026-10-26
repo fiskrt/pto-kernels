@@ -34,22 +34,61 @@ template<int R,int C>
 using MegaFloat = Tile<TileType::Mat,float,R,C,BLayout::ColMajor,R,C,SLayout::RowMajor,512>;
 #endif
 
+// Join all independent diagonal block pairs at one level together. Products
+// retain separate accumulators. Export/reload phases are synchronized once
+// per level, with independent DMA and matrix operations queued together.
 template<int B,int C,typename Mat>
-AICORE inline void mega_float_join(Mat& inverse,int offset,__gm__ float* scratch)
+AICORE inline void mega_float_join_level(Mat& inverse,__gm__ float* scratch)
 {
 #if defined(__DAV_CUBE__)
-    MegaFloat<B,B> temporary;TASSIGN(temporary,128*1024);
-    TileLeft<float,B,B> left;TileRight<float,B,B> right;TileAcc<float,B,B> acc;
-    TASSIGN(left,0);TASSIGN(right,0);TASSIGN(acc,0);
-    TEXTRACT(left,inverse,offset+B,offset+B);TEXTRACT(right,inverse,offset+B,offset);pipe_barrier(PIPE_ALL);
-    TMATMUL(acc,left,right);pipe_barrier(PIPE_ALL);
-    GlobalTensor<float,Shape<1,1,1,B,B>,pto::Stride<1,1,1,B,1>> gm(scratch);
-    TSTORE(gm,acc);pipe_barrier(PIPE_ALL);TLOAD(temporary,gm);pipe_barrier(PIPE_ALL);
-    TMOV(left,temporary);TEXTRACT(right,inverse,offset,offset);pipe_barrier(PIPE_ALL);
-    TMATMUL(acc,left,right);pipe_barrier(PIPE_ALL);TSTORE(gm,acc);pipe_barrier(PIPE_ALL);
-    Tile<TileType::Mat,float,C,C,BLayout::ColMajor,B,B,SLayout::RowMajor,512> destination;
-    TASSIGN(destination,(uint64_t)inverse.data()+(offset*C+(offset+B)*8)*sizeof(float));
-    TLOAD(destination,gm);pipe_barrier(PIPE_ALL);
+    constexpr int Groups=C/(2*B),Rows=Groups*B;
+    MegaFloat<Rows,B> temporary;TASSIGN(temporary,128*1024);
+    TileLeft<float,B,B> left;TileRight<float,B,B> right;
+    TileAcc<float,B,B> acc;
+    TASSIGN(left,0);TASSIGN(right,0);
+    for(int group=0;group<Groups;++group){
+        int offset=group*2*B;
+        TASSIGN(left,group*B*B*sizeof(float));TASSIGN(right,group*B*B*sizeof(float));
+        TEXTRACT(left,inverse,offset+B,offset+B);TEXTRACT(right,inverse,offset+B,offset);
+    }
+    pipe_barrier(PIPE_ALL);
+    for(int group=0;group<Groups;++group){
+        TASSIGN(left,group*B*B*sizeof(float));TASSIGN(right,group*B*B*sizeof(float));
+        TASSIGN(acc,group*B*B*sizeof(float));TMATMUL(acc,left,right);
+    }
+    pipe_barrier(PIPE_ALL);
+    GlobalTensor<float,Shape<1,1,1,Rows,B>,pto::Stride<1,1,1,B,1>> gm(scratch);
+    for(int group=0;group<Groups;++group){
+        TASSIGN(acc,group*B*B*sizeof(float));
+        GlobalTensor<float,Shape<1,1,1,B,B>,pto::Stride<1,1,1,B,1>> out(scratch+group*B*B);
+        TSTORE(out,acc);
+    }
+    pipe_barrier(PIPE_ALL);TLOAD(temporary,gm);pipe_barrier(PIPE_ALL);
+    for(int group=0;group<Groups;++group){
+        int offset=group*2*B;
+        TASSIGN(left,group*B*B*sizeof(float));TASSIGN(right,group*B*B*sizeof(float));
+        TEXTRACT(left,temporary,group*B,0);TEXTRACT(right,inverse,offset,offset);
+    }
+    pipe_barrier(PIPE_ALL);
+    for(int group=0;group<Groups;++group){
+        TASSIGN(left,group*B*B*sizeof(float));TASSIGN(right,group*B*B*sizeof(float));
+        TASSIGN(acc,group*B*B*sizeof(float));TMATMUL(acc,left,right);
+    }
+    pipe_barrier(PIPE_ALL);
+    for(int group=0;group<Groups;++group){
+        TASSIGN(acc,group*B*B*sizeof(float));
+        GlobalTensor<float,Shape<1,1,1,B,B>,pto::Stride<1,1,1,B,1>> out(scratch+group*B*B);
+        TSTORE(out,acc);
+    }
+    pipe_barrier(PIPE_ALL);
+    for(int group=0;group<Groups;++group){
+        int offset=group*2*B;
+        Tile<TileType::Mat,float,C,C,BLayout::ColMajor,B,B,SLayout::RowMajor,512> destination;
+        TASSIGN(destination,(uint64_t)inverse.data()+(offset*C+(offset+B)*8)*sizeof(float));
+        GlobalTensor<float,Shape<1,1,1,B,B>,pto::Stride<1,1,1,B,1>> block(scratch+group*B*B);
+        TLOAD(destination,block);
+    }
+    pipe_barrier(PIPE_ALL);
 #endif
 }
 
@@ -57,9 +96,9 @@ template<int C,typename Mat>
 AICORE inline void mega_float_inverse(Mat& inverse,__gm__ float* scratch)
 {
 #if defined(__DAV_CUBE__)
-    for(int off=0;off<C;off+=32)mega_float_join<16,C>(inverse,off,scratch);
-    for(int off=0;off<C;off+=64)mega_float_join<32,C>(inverse,off,scratch);
-    mega_float_join<64,C>(inverse,0,scratch);
+    mega_float_join_level<16,C>(inverse,scratch);
+    mega_float_join_level<32,C>(inverse,scratch);
+    mega_float_join_level<64,C>(inverse,scratch);
 #endif
 }
 
