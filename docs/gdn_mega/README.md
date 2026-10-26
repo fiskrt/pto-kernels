@@ -13,18 +13,17 @@ of the maintained report set.
 
 ## Current implementation and correctness
 
-**Known precision failures remain in kernel `aac5a4d`, even with beta in [0,1].**
-The additional critical audit passes 33/56 cases and fails 23/56; see
-[the critical precision audit below](#critical-precision-audit-beta-in-01).
-
-The existing regression suite passes **116 tests**.
-The full FP64 grid passes **63/63 current shapes**, with zero elementwise violations;
-the original fails all63 shapes under this stricter policy.
+Kernel **`a365dad` fixes the precision failures found within beta in [0,1]**.
+All **56 critical cases pass**, compared with 23 failures before the repair.
+The full audit passes 101 case entries across 505 launches, and the regression
+suite passes **125 tests**. Four critical cases are also retained in the ordinary
+regression suite; five additional cases exercise changing decay and numerical
+formula boundaries. See [the precision audit](#critical-precision-audit-beta-in-01).
 [Validation log, source hashes and library fingerprint](data/validation.json).
-Kernel sources and numerical tolerances have not changed during this audit.
-A green ordinary-input suite is not a precision signoff for slow decay.
-The tests include an independent FP64 token oracle, supplied initial state,
-ragged/empty sequences, FLA-derived stress cases and poisoned/repeated workspace.
+
+The saved heatmap pages still describe measurements of **`aac5a4d`**, which passed
+its 63 ordinary-input shapes but failed the later critical audit. They are not
+new measurements of this repair. Fresh repair timings appear below.
 
 Every raw-output and final-state element must meet
 `abs(error) <= 1e-5 + 1e-3*abs(reference)`, plus finiteness and relative RMSE < 0.005.
@@ -37,7 +36,7 @@ whole attention/Gamma tiles. It retains FP32 state and stable block solves.
 The requested 3× speed target remains unmet.
 
 There is **one launch, two global phases and seven production source files**
-(1302 physical lines at `aac5a4d`, versus 5241 originally). Arguments, tensor dtypes,
+(1390 physical lines at `a365dad`, versus 5241 originally). Arguments, tensor dtypes,
 output scaling and caller allocation sizes are unchanged. Internal scratch
 layouts and the execution model are documented in the
 [kernel README](../../csrc/kernel/gdn_mega/README.md).
@@ -48,7 +47,7 @@ From the repository root, using the prepared CANN container:
 
 ```bash
 bash scripts/gdn_mega_docker.sh bash scripts/build_gdn_mega.sh
-bash scripts/gdn_mega_docker.sh python -m pytest tests/test_gdn_mega.py tests/test_gdn_mega_validation.py -q
+bash scripts/gdn_mega_docker.sh python -m pytest tests/test_gdn_mega.py tests/test_gdn_mega_validation.py tests/test_gdn_mega_errors.py tests/test_gdn_mega_benchmark.py -q
 bash scripts/report_gdn_mega.sh all
 ```
 
@@ -166,70 +165,121 @@ an unchanged golden are preferable for frequent optimization iterations.
 
 ## Critical precision audit: beta in [0,1]
 
-**Outcome: 33 passed, 23 failed out of 56 additional cases**, with five launches
-per case against the independent CPU FP64 recurrence. The original 36-case audit
-also passes; its doubled-beta case is outside the requested beta range and is
-excluded from conclusions about production inputs. The separate 116-test pytest
-suite passes but does not include the new critical suite. These results expose
-coverage gaps rather than establish that the kernel is precision-clean.
+**Repair `a365dad`: 56/56 critical cases pass; previously 33 passed and 23 failed.**
+The complete audit passes 101 case entries (45 standard/regression cases plus
+56 critical cases), each launched five times. Four critical inputs also appear
+under regression names in the standard suite. The separate pytest suite passes
+125 tests, including the newly retained failures and five gate-transition cases.
 
-The additional cases test beta endpoints, interior rates 0.25/0.5/0.6/0.9, random
-beta in [0,1), keys around the coupling threshold, exact/nearly correlated and
-positive keys, log gates 0/-1e-8/-1e-7/-1e-6/-80, lengths through 32768, supplied
-and zero initial state, packed tails, and 24/8, 48/16, 64/16 head configurations.
-All 56 cases have beta in [0,1] and nonpositive log gates. All kernel outputs are
-finite. All input/guard checks and scratch-independence checks pass. The ideal
-FP16-rounded reference passes every case, so the failures are avoidable internal
-arithmetic errors, not an insufficient output range. **Every failing case would
-pass the RMSE-only threshold.**
+Every launch checks every raw-output and final-state element against the
+independent CPU FP64 token recurrence. All outputs are finite, all input/guard
+checks pass, and all scratch-poison repeats are bitwise identical. The policy
+remains `abs(error) <= 1e-5 + 1e-3*abs(reference)`, plus RMSE < 0.005.
+The worst error/allowance ratio across the complete audit is **0.6043 for output**
+and **0.4878 for final state**; ratios above one fail. These are measured bounds
+on these cases, not a proof for every possible FP16 input.
 
-Selected raw-output results (unit-scale values/state unless noted):
+The original 56 case definitions, measured input ranges, and FP16-rounded FP64
+reference metrics match before and after the repair. Beta remains in [0,1] for
+all critical cases. The standard suite also retains one FLA beta>1 stress case,
+which passes but is outside the requested production range. No tolerances,
+outlier filters, clipping, xfail markers or reference-dependent paths were added.
 
-| Case | Tokens | beta | Log gate | Max abs error | Worst error/allowance | Violating elements |
-|---|---:|---:|---:|---:|---:|---:|
-| Exact correlated keys | 4097 | 0.6 nominal | -1e-7 | 2.147e-3 | 29.20 | 99,251 |
-| Exact correlated keys | 4097 | uniform[0,1) | -1e-7 | 2.122e-3 | 29.82 | 99,480 |
-| Exact correlated keys | 32768 | 1 | -1e-7 | 5.482e-3 | 265.81 | 7,764,502 |
-| Nearly correlated keys, seed 3011 | 1025 | 1 | -1e-6 | 1.951e-3 | 1.56 | 4 |
-| Nearly correlated keys, zero initial state | 4097 | 1 | -1e-6 | 1.058e-3 | 4.05 | 3,670 |
-| No updates, supplied initial state | 32768 | 0 | -1e-7 | 1.965e-3 | 1.40 | 28 |
+### Which inputs are numerically difficult?
 
-The stored FP16 beta for nominal 0.6 is 0.60009765625. The failures above do not
-require the larger amplitude 32/128 stress cases. For the 32K beta=1 example,
-inputs satisfy exactly unit key norm, with max|V|=3.9043 and max|initial|=3.8945.
-At one output element the FP64 golden is -0.000680124823 and the kernel returns
--0.00351905823: error 2.83893e-3 against an allowance of 1.06801e-5.
+Here **alpha = exp(g)** is state decay, **g** is the log gate, and **beta** is
+update strength. They have different roles.
 
-### Confirmed mechanism and limits of the diagnosis
+| Quantity | Difficult inputs in the audit | Reason |
+|---|---|---|
+| Alpha / log gate | g = -1e-8, -1e-7, -1e-6, hence alpha almost one | Errors persist over long sequences; FP32 exp(-1e-8) rounds to exactly one |
+| Beta | 0.6, 0.9, 1, and random beta in [0,1) | Strong updates make cancellation and residual/update rounding consequential |
+| Keys | Identical or nearly parallel, including exactly unit-norm k=e0 | Similar update directions expose chunk-solve sensitivity; other directions retain long-lived state |
+| Sequence length | Up to 32768 tokens | Repeated decay rounding accumulates |
+| Values / initial state | Unit-scale failures existed; amplitudes 32 and 128 exposed additional errors | Large intermediates can cancel to small results where absolute error dominates |
 
-For exact keys k=e0 and beta=1, the state has an independent analytic solution:
-row 0 is the current value vector, while all other rows are their initial values
-multiplied by exp((t+1)*g). Direct FP64 evaluation agrees with the token oracle
-to at most 1.11e-12 on the six selected output witnesses.
+Beta=0 also exposed a smaller chunked-path failure: repeated decay alone was
+inaccurate. Beta=0.25 and 0.5 passed the original interior-rate samples, but that
+is not a universal safe-beta threshold. More negative gates usually shorten
+error persistence; strongly decaying and zero-decay cases remain in the tests.
 
-The correlated-key fallback rounds exp(g) to FP32 and repeatedly multiplies the
-FP32 state by it. Its compensation covers the additive update, not the lost
-precision of decay multiplication. At g=-1e-8 the rounded factor is exactly 1.
-For g=-1e-7, an initial state element 3.013671875 should become 3.00381283675 after
-32768 steps; the kernel returns 2.998046875. A scalar FP32 repeated-multiplication
-emulation reproduces this value exactly, and matches all six selected final-state
-witnesses. Removing decay makes the matched correlated-key controls pass.
+For a fixed unit key, the homogeneous state transition has eigenvalue alpha
+perpendicular to the key, and alpha*(1-beta) along it. Thus alpha near one
+preserves the orthogonal state even when beta is one. With beta in [0,1] and
+alpha <= 1 these exact unit-key cases are mathematically stable: the observed
+failures were arithmetic errors, not an intrinsically exploding recurrence.
+If keys are not normalized, the parallel factor is alpha*(1-beta*||k||²), so
+key norm matters in addition to correlation.
 
-The beta=0 case also reveals a smaller failure in the normal chunked path;
-that path needs further investigation. No production fix has been applied,
-and no tolerance has been relaxed. The ordinary heatmap's 63/63 current passes
-remain valid for its stated input distribution; they do not cover these cases.
+### What changed
 
-[All cases, five repeats, source/binary hashes and analytic witnesses](data/precision_audit.json) ·
-[Per-case CSV](data/precision_audit.csv).
+1. Small decay uses **S + S*expm1(g)** with compensated addition. A degree-seven
+   polynomial evaluates expm1 on |g| <= 1/8, avoiding subtraction from a rounded
+   exponential. The same method applies to each chunk's accumulated gate.
+2. The chunked state now carries FP32 addition compensation across chunks in
+   the existing `wy_workspace_a1/a2` buffers. This fixes the beta=0 long-sequence
+   drift without new caller allocations.
+3. The conservative token path retains low-order bits through dot products,
+   residuals and rank-one updates. Splitting FP32 operands into two 12-bit
+   components gives exact FP32 products with the original FP16 inputs;
+   error-free TwoSum reductions and additions retain their rounding errors.
+   The components keep the full FP32 exponent range.
 
-Reproduce the supported-range audit (currently exits 1 because of numerical failures):
+Public arguments, input/output dtypes, shapes, scaling and allocation sizes are
+unchanged. There is still one launch, two global phases and seven production
+source files. The existing strong-coupling dispatch rule is unchanged.
+
+Selected before/after **worst output error/allowance ratios**:
+
+| Case | Tokens | Before | Repaired |
+|---|---:|---:|---:|
+| Exact correlated keys, beta=1, g=-1e-7 | 32768 | 265.815 | 0.486 |
+| Exact correlated keys, beta=0.6, g=-1e-7 | 4097 | 29.202 | 0.484 |
+| Nearly correlated keys, beta=1, amplitude 128, seed 3019 | 1025 | 58.528 | 0.488 |
+| Beta=0, supplied state, g=-1e-7 | 32768 | 1.404 | 0.485 |
+
+The original decay diagnosis also has an independent analytic check: for k=e0
+and beta=1, state row zero is the current value, while other rows equal their
+initial value times exp((t+1)*g). Six selected analytic output witnesses agree
+with the FP64 recurrence within 1.11e-12. For example, initial state 3.013671875
+with g=-1.000000011686e-7 should become 3.00381283675 after 32768 steps; the old
+kernel returned 2.998046875. Repeated FP32 multiplication reproduces that old
+error exactly. The saved report retains these original witnesses and failures.
+
+Fresh median total kernel times, H/Hg=16/4, nonzero initial state, ordinary input
+distribution, 15 trials of 20 graph-captured launches:
+
+| Tokens | Before (µs) | Repaired (µs) | Increase |
+|---|---:|---:|---:|
+| 256 | 84.812 | 92.251 | 8.8% |
+| 4096 | 693.686 | 761.910 | 9.8% |
+| 32768 | 5561.383 | 6091.685 | 9.5% |
+
+Both implementations pass these ordinary timing inputs. This is a correctness
+repair with measured overhead, not a speedup. The requested 3× target remains
+unmet. Timings and loaded-library hashes are saved with the audit evidence.
+
+Two conservative-path cases were also timed with 7 trials of 3 graph-captured
+launches. The old runtimes remain visible despite failing accuracy:
+
+| Input | Before (µs) | Repaired (µs) | Runtime ratio |
+|---|---:|---:|---:|
+| Correlated keys, beta=0.6, 4097 tokens | 14643.33* | 40878.86 | 2.79× |
+| Nearly correlated keys, beta=1, 1025 tokens | 3695.31* | 10269.09 | 2.78× |
+
+`*` Only the pre-fix timings fail elementwise acceptance. Both repaired rows
+pass before and after timed graph replay. The more accurate conservative path
+has a substantial performance cost; this repair does not claim FP16 speed there.
+
+[Before/after audit, five repeats, hashes and analytic witnesses](data/precision_audit.json) ·
+[All 56 critical cases, before/after CSV](data/precision_audit.csv).
+
+Reproduce:
 
 ```bash
 bash scripts/gdn_mega_docker.sh python benchmarking/audit_gdn_mega.py \
-  --suite critical --output benchmark_data/gdn_mega/critical_precision.json
-# Smaller failing case, beta strictly inside [0,1]:
-bash scripts/gdn_mega_docker.sh python benchmarking/audit_gdn_mega.py \
-  --suite critical --cases interior_beta_0.6_correlated \
-  --output benchmark_data/gdn_mega/precision_repro.json
+  --suite all --output benchmark_data/gdn_mega/precision_audit.json
+bash scripts/gdn_mega_docker.sh python benchmarking/gdn_mega.py \
+  --initial-state --lengths 256 4096 32768 \
+  --output benchmark_data/gdn_mega/precision_performance.json
 ```

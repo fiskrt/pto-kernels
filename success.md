@@ -674,3 +674,27 @@ beta[0,1], all missed by RMSE-only acceptance. Production kernel unchanged.
 Results and reproducible failing cases are saved in docs/gdn_mega/README.md and
 data/precision_audit.json/csv; the failures are retained without xfail markers,
 filtered outliers or relaxed tolerances. The critical audit exits nonzero.
+
+
+2026-10-26 — correctness repair **a365dad** fixes all 23 supported-beta failures.
+All 56 original critical cases now pass; the complete audit passes 101 case
+entries / 505 poisoned-scratch launches with zero raw-output or final-state
+elementwise violations. The full pytest suite passes 125/125 in 93.71s, including
+four retained failing inputs and five new gate-transition cases. Original inputs,
+FP64 golden rounding metrics and tolerances are unchanged. The largest measured
+error/allowance ratios are 0.604209 (output) and 0.487734 (state).
+
+The kernel evaluates small decay with expm1 and compensated addition, retains
+chunk-state compensation in existing WY scratch, and carries low-order bits
+through conservative-path dot products, residuals and rank-one updates using
+12-bit FP32 splitting and TwoSum. No public signature, dtype, allocation size,
+launch count or phase count changes. Production library SHA256:
+5237a58dd70502f037e6255e2ceffa90635bbd533fc1015448c72e99eae5c0a2.
+
+This is a correctness improvement, not a speedup: ordinary H16/Hg4 times at
+T256/4096/32768 are 92.251/761.910/6091.685 us, versus
+84.812/693.686/5561.383 us before (8.8–9.8% overhead). Two formerly failing
+correlated cases take about 2.8x longer on the more accurate conservative path.
+The 3x optimization target remains unmet. Complete before/after evidence,
+per-case CSV, timings, hashes and reproduction commands are in
+`docs/gdn_mega/README.md` and `docs/gdn_mega/data/precision_audit.json`.
