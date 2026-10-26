@@ -83,6 +83,8 @@ def make_audit_inputs(case):
             bias = torch.randn(case["heads"])
             g.copy_(-a_log.exp() * torch.nn.functional.softplus(torch.randn_like(g) + bias))
     g.mul_(case.get("gate_scale", 1.))
+    if 'constant_log_gate' in case:
+        g.fill_(case['constant_log_gate'])
     amplitude = case.get("amplitude", 1.)
     v.mul_(amplitude)
     if case.get("correlated"):
@@ -99,6 +101,9 @@ def make_audit_inputs(case):
     k.mul_(case.get("key_scale", 1.))
     if "beta" in case:
         beta.fill_(case["beta"])
+    if case.get('alternating_beta'):
+        beta[:, ::2] = 0.
+        beta[:, 1::2] = 1.
     if case.get("zero_query"):
         q.zero_()
     if case.get("mixed"):
@@ -153,6 +158,14 @@ def run_audit_case(case, device):
         metrics.append({**numerical,
                         "inputs_and_guards_intact": integrity, "scratch_independent": independent})
     return {"case": case, "policy": POLICY, "repeats": metrics,
+            "input_ranges": {
+                "beta": [inputs[4].min().item(), inputs[4].max().item()],
+                "log_gate": [inputs[3].min().item(), inputs[3].max().item()],
+                "key_norm_squared": [inputs[1].double().square().sum(-1).min().item(),
+                                     inputs[1].double().square().sum(-1).max().item()],
+                "value_abs_max": inputs[2].abs().max().item(),
+                "initial_state_abs_max": initial.abs().max().item() if initial is not None else 0.,
+            },
             "fp16_output_rounding_floor": error_metrics(expected.half(), expected),
             "fp16_state_rounding_floor": error_metrics(expected_state.half(), expected_state),
             "passed": all(m["raw_output"]["passed"] and m["final_state"]["passed"] and

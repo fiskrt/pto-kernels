@@ -61,6 +61,8 @@ def error_metrics(actual, expected, *, include_percentiles=False):
     relative_rmse = (diff.square().mean() / expected.square().mean().clamp_min(1e-16)).sqrt().item()
     violations = int((diff > allowed).sum())
     max_index = int(diff.flatten().argmax())
+    tolerance_ratio = diff / allowed
+    worst_index = int(tolerance_ratio.flatten().argmax())
     # Exact nearest-rank percentiles. torch.quantile rejects tensors above 2**24
     # elements (already exceeded by T=32768, H=8); never subsample outliers.
     percentiles = ({name: diff.flatten().kthvalue(max(1, math.ceil(p * diff.numel()))).values.item()
@@ -73,7 +75,12 @@ def error_metrics(actual, expected, *, include_percentiles=False):
         "finite": True, "elements": diff.numel(), "max_abs": diff.max().item(),
         "mean_abs": diff.mean().item(), **percentiles,
         "relative_rmse": relative_rmse, "r_squared": r_squared,
-        "pointwise_violations": violations, "max_tolerance_ratio": (diff / allowed).max().item(),
+        "pointwise_violations": violations, "max_tolerance_ratio": tolerance_ratio.flatten()[worst_index].item(),
+        "worst_tolerance_flat_index": worst_index,
+        "actual_at_worst_tolerance": actual.flatten()[worst_index].item(),
+        "reference_at_worst_tolerance": expected.flatten()[worst_index].item(),
+        "abs_error_at_worst_tolerance": diff.flatten()[worst_index].item(),
+        "allowed_at_worst_tolerance": allowed.flatten()[worst_index].item(),
         "reference_abs_max": expected.abs().max().item(), "max_error_flat_index": max_index,
         "actual_at_max_error": actual.flatten()[max_index].item(),
         "reference_at_max_error": expected.flatten()[max_index].item(),

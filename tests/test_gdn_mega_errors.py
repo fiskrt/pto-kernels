@@ -108,3 +108,17 @@ def test_numerical_asterisk_is_per_cell_and_implementation(monkeypatch, baseline
     from gdn_mega_report_text import numerical_failure
     row = {'baseline': {'status': baseline}, 'current': {'status': current}, **additional}
     assert tuple(numerical_failure(row, v) for v in ('baseline', 'current')) == expected
+
+
+def test_worst_tolerance_witness_is_distinct_from_maximum_absolute_error():
+    expected = torch.tensor([0., .5, 1.], dtype=torch.float64)
+    actual = torch.tensor([2e-5, .5004, 1.0009], dtype=torch.float64)
+    m = error_metrics(actual, expected)
+    assert not m['passed'] and m['pointwise_violations'] == 1
+    assert m['max_error_flat_index'] == 2
+    assert m['worst_tolerance_flat_index'] == 0
+    assert m['actual_at_worst_tolerance'] == 2e-5
+    assert m['reference_at_worst_tolerance'] == 0.
+    assert m['abs_error_at_worst_tolerance'] == 2e-5
+    assert m['allowed_at_worst_tolerance'] == 1e-5
+    assert m['max_tolerance_ratio'] == 2.
