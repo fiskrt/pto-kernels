@@ -32,12 +32,6 @@ The residual is formed before applying the inverse:
 This avoids separately multiplying the inverse by both WY operands. Original
 FP16 K and Q remain exact inputs to their products with paired state.
 Output accumulation and state updates remain FP32, with final FP16 stores.
-The chunked state carries an FP32 compensation term between updates. Both
-chunked and token recurrence evaluate small decay as
-`S + S*expm1(g)` with compensated addition, preserving decay that would be
-lost by rounding `exp(g)` to one. A degree-seven polynomial evaluates `expm1`
-for `|g| <= 1/8`; larger gates use the existing exponential. This is a numerical
-evaluation choice, not a restriction on accepted gates or an omitted update.
 Invalid rows and future columns are masked before exponentiation, preventing
 `0*inf` from padded prefixes. Gate differences retain `G_i-G_j`; there is no inverse-power truncation based
 on decay and no division by a potentially underflowed gate exponential.
@@ -45,10 +39,7 @@ on decay and no division by a potentially underflowed gate exponential.
 Strong coupling can amplify small chunk-solve errors. When any strict-lower
 coefficient `abs(beta_i * exp(G_i-G_j) * dot(k_i,k_j))` exceeds 0.5, the head
 is recomputed from its supplied initial state using compensated FP32 token
-recurrence. It splits FP32 operands into two 12-bit components whose products
-with the original FP16 inputs are exact in FP32. Error-free TwoSum reductions
-and updates retain low-order bits through dot products, residuals and the
-rank-one state update. This also corrects a previously computed
+recurrence and balanced dot reductions. This also corrects a previously computed
 prefix when coupling appears later. Selection depends on input arithmetic, not
 seeds, test identifiers, or reference outputs. This conservative path is slower;
 latency consequently depends on the values as well as the shape.
@@ -91,7 +82,7 @@ Only `out` and `final_state` are primary outputs. The existing caller applies
 | `A_inv`, `u` | Whole FP32 attention tiles: first/second halves of heads, head-major |
 | `A_inv_f32` | FP32 QKᵀ shared by grouped heads |
 | `v_new`, `s` | Two column halves of FP32 KKᵀ |
-| `wy_workspace_a1/a2` | FP32 chunk-state compensation, one row half per vector subblock |
+| `wy_workspace_a1/a2` | Reserved compatibility storage |
 | `kkt_workspace` | FP32 output-product exchange |
 | `h_workspace` | FP32 projection/residual/state exchange, saved FP32 RHS and paired state |
 | `o_workspace_qk` | Native FP32 inverse join scratch (first 16 KiB/core), coupling markers (second half) |
