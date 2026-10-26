@@ -14,6 +14,8 @@ import subprocess
 import sys
 import tempfile
 
+from gdn_mega_sweep import add_shape_arguments, resolve_head_configs
+
 ROOT = Path(__file__).resolve().parents[1]
 HEADS = [8, 12, 16, 24, 32, 48, 64]
 LENGTHS = [128, 256, 1024, 4096, 8192, 16384, 32768]
@@ -26,6 +28,24 @@ def tensor_hash(tensors):
             digest.update(str((tuple(tensor.shape), str(tensor.dtype))).encode())
             digest.update(memoryview(tensor.contiguous().numpy()).cast("B"))
     return digest.hexdigest()
+
+
+def shared_reference(path, identity, compute):
+    """Share one fresh CPU golden between isolated library workers in this run.
+
+    The runner owns a temporary directory. Exact inputs and oracle identity must
+    match, and every loaded golden byte is hashed; device outputs are never cached.
+    """
+    import torch
+    if path is not None and path.exists():
+        saved = torch.load(path, map_location='cpu', weights_only=True)
+        if saved['identity'] != identity or tensor_hash(saved['tensors']) != saved['sha256']:
+            raise RuntimeError('Reference cache identity or content mismatch')
+        return tuple(saved['tensors'])
+    result = compute()
+    if path is not None:
+        torch.save(dict(identity=identity, tensors=result, sha256=tensor_hash(result)), path)
+    return result
 
 
 def summarize(repeats, name):
@@ -63,29 +83,27 @@ def worker(args):
     environment = dict(device_name=props.name, cube_cores=props.cube_core_num,
                        vector_cores=props.vector_core_num, torch_version=torch.__version__,
                        torch_npu_version=torch_npu.__version__)
-    heads = args.heads[0]
+    heads, key_heads = args.head_configs[0]
     rows = []
 
     def measure(length):
-        inputs = _make_inputs(length, heads, heads // args.group_size)
+        inputs = _make_inputs(length, heads, key_heads)
         inputs[3].mul_(args.gate_scale)
-        q, k = _expand_kv_heads(inputs[0], inputs[1], heads)
         initial = (torch.randn(1, heads, 128, 128, dtype=torch.float16) * .1
                    if args.initial_state else None)
         input_hash = tensor_hash([*inputs, initial])
-        expected_scaled, expected_state32 = _reference(q, k, *inputs[2:], initial_state=initial)
-        expected32 = expected_scaled.double() * 128**.5
-        del q, k, expected_scaled
-        crosscheck = None
-        if args.reference == 'recurrent-fp64':
-            expected, expected_state = recurrent_reference(*inputs, initial)
-            crosscheck = {
-                'raw_output_max_abs': (expected - expected32).abs().max().item(),
-                'final_state_max_abs': (expected_state - expected_state32.double()).abs().max().item(),
-            }
-            del expected32, expected_state32
-        else:
-            expected, expected_state = expected32, expected_state32
+        def compute_reference():
+            if args.reference == 'recurrent-fp64':
+                return recurrent_reference(*inputs, initial)
+            q, k = _expand_kv_heads(inputs[0], inputs[1], heads)
+            expected_scaled, expected_state = _reference(q, k, *inputs[2:], initial_state=initial)
+            return expected_scaled.double() * 128**.5, expected_state
+
+        cache = args.reference_cache / f'{length}.pt' if args.reference_cache else None
+        identity = dict(inputs=input_hash, reference=args.reference,
+                        oracle_sha256=hashlib.sha256(b''.join((ROOT/p).read_bytes() for p in
+                            ('tests/gdn_mega_validation.py', 'tests/test_gdn_mega.py'))).hexdigest())
+        expected, expected_state = shared_reference(cache, identity, compute_reference)
         reference_hash = tensor_hash([expected, expected_state])
         # Nearest FP16 rounding gives the smallest possible error at each element
         # for this fixed oracle; it does not measure internal kernel precision.
@@ -124,11 +142,11 @@ def worker(args):
             unchanged &= torch.equal(launch['initial_state'].cpu(), initial)
         summary = {name: summarize(repeats, name) for name in ('raw_output', 'final_state')}
         passed = unchanged and all(m['passed'] for m in summary.values())
-        return dict(length=length, heads=heads, key_heads=heads // args.group_size,
+        return dict(length=length, heads=heads, key_heads=key_heads,
                     status='passed' if passed else 'failed', inputs_unchanged=unchanged,
                     repeats=repeats, summary=summary, fp16_output_rounding_floor=rounding_floor,
                     input_sha256=input_hash, reference_sha256=reference_hash,
-                    fp32_reference_vs_fp64=crosscheck)
+                    reference=args.reference)
 
     for length in args.lengths:
         row = measure(length)
@@ -165,26 +183,26 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--baseline-lib', type=Path, default=ROOT/'benchmark_data/gdn_mega/baseline_lib')
     parser.add_argument('--current-lib', type=Path, default=ROOT/'build/lib')
-    parser.add_argument('--heads', type=int, nargs='+', default=HEADS)
+    add_shape_arguments(parser)
     parser.add_argument('--lengths', type=int, nargs='+', default=LENGTHS)
-    parser.add_argument('--group-size', type=int, default=4)
     parser.add_argument('--gate-scale', type=float, default=1.)
     parser.add_argument('--initial-state', action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument('--repeats', type=int, default=3)
-    parser.add_argument('--reference', choices=['chunked-fp32', 'recurrent-fp64'], default='chunked-fp32')
+    parser.add_argument('--reference', choices=['chunked-fp32', 'recurrent-fp64'], default='recurrent-fp64')
     parser.add_argument('--device', default=os.environ.get('NPU_DEVICE', 'npu:0'))
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--resume', action='store_true')
     parser.add_argument('--worker', action='store_true', help=argparse.SUPPRESS)
+    parser.add_argument('--reference-cache', type=Path, help=argparse.SUPPRESS)
     args = parser.parse_args()
-    if (args.group_size <= 0 or args.repeats < 1 or any(h not in HEADS or h % args.group_size for h in args.heads)
-            or any(n <= 0 for n in args.lengths) or len(set(args.heads)) != len(args.heads)
+    configs = resolve_head_configs(args, parser)
+    if (args.repeats < 1 or any(n <= 0 for n in args.lengths)
             or len(set(args.lengths)) != len(args.lengths)):
-        parser.error('Use distinct supported shapes, valid grouping, and positive repeats')
+        parser.error('Use distinct positive lengths and positive repeats')
     args.output = args.output.resolve()
     args.output.parent.mkdir(parents=True, exist_ok=True)
     if args.worker:
-        if len(args.heads) != 1:
+        if len(configs) != 1:
             parser.error('A worker handles one head count')
         return worker(args)
     libraries = {'baseline': args.baseline_lib.resolve(), 'current': args.current_lib.resolve()}
@@ -198,8 +216,8 @@ def main():
         'current': (known.get('current_kernel_commit')
                     if hashes['current'] == known.get('library_sha256', {}).get('current') else None),
     }
-    sources = ['benchmarking/gdn_mega_errors.py', 'tests/gdn_mega_validation.py', 'tests/test_gdn_mega.py']
-    report = dict(created_utc=datetime.now(timezone.utc).isoformat(), heads=args.heads, lengths=args.lengths,
+    sources = ['benchmarking/gdn_mega_errors.py', 'benchmarking/gdn_mega_sweep.py', 'tests/gdn_mega_validation.py', 'tests/test_gdn_mega.py']
+    report = dict(created_utc=datetime.now(timezone.utc).isoformat(), heads=args.heads, head_configs=configs, lengths=args.lengths,
                   group_size=args.group_size, gate_scale=args.gate_scale, initial_state=args.initial_state,
                   repeats=args.repeats, reference=args.reference, seed=0, head_dim=128, chunk_size=128,
                   device=args.device, output_units='raw unscaled kernel output', library_sha256=hashes,
@@ -207,30 +225,34 @@ def main():
                   source_sha256={p: hashlib.sha256((ROOT/p).read_bytes()).hexdigest() for p in sources},
                   primary_outputs_initialized='NaN before every repeat; caller scratch initialization preserved',
                   aggregation='Maximum over every element and every repeat; no subsampling or excluded failures',
+                  reference_reuse='One fresh CPU golden per cell, shared only within this run after input/source/content hash checks',
                   records=[])
     if args.resume and args.output.exists():
         previous = json.loads(args.output.read_text())
         for key in report:
-            if key not in ('created_utc', 'records') and previous.get(key) != report[key]:
+            if key not in ('created_utc', 'records') and previous.get(key) != json.loads(json.dumps(report[key])):
                 parser.error(f'Cannot resume: {key} differs')
         report = previous
     save(report, args.output)
     with tempfile.TemporaryDirectory(prefix='gdn_errors_') as temporary:
-        for i, heads in enumerate(args.heads):
-            if {r['length'] for r in report['records'] if r['heads'] == heads} == set(args.lengths):
+        for i, (heads, key_heads) in enumerate(configs):
+            if {r['length'] for r in report['records'] if (r['heads'], r['key_heads']) == (heads, key_heads)} == set(args.lengths):
                 continue
             runs = {}
+            cache = Path(temporary) / "reference"
+            cache.mkdir(exist_ok=True)
             for variant in (('baseline', 'current') if i % 2 == 0 else ('current', 'baseline')):
-                path = Path(temporary)/f'{variant}_{heads}.json'
-                command = [sys.executable, str(Path(__file__).resolve()), '--worker', '--heads', str(heads),
-                           '--lengths', *map(str, args.lengths), '--group-size', str(args.group_size),
+                path = Path(temporary)/f'{variant}_{heads}_{key_heads}.json'
+                command = [sys.executable, str(Path(__file__).resolve()), '--worker', '--head-configs', f'{heads}/{key_heads}',
+                           '--lengths', *map(str, args.lengths),
                            '--gate-scale', str(args.gate_scale), '--repeats', str(args.repeats),
-                           '--reference', args.reference, '--device', args.device, '--output', str(path),
+                           '--reference', args.reference, '--reference-cache', str(cache),
+                           '--device', args.device, '--output', str(path),
                            '--initial-state' if args.initial_state else '--no-initial-state']
                 env = dict(os.environ)
                 env['LD_LIBRARY_PATH'] = str(libraries[variant]) + os.pathsep + env.get('LD_LIBRARY_PATH', '')
                 env['PYTHONPATH'] = str(ROOT/'python') + os.pathsep + env.get('PYTHONPATH', '')
-                print(f'{variant}: H={heads}', flush=True)
+                print(f'{variant}: H={heads}, Hg={key_heads}', flush=True)
                 result = subprocess.run(command, env=env, cwd=ROOT, timeout=1800)
                 if result.returncode or not path.exists():
                     raise RuntimeError(f'Incomplete worker: {variant}, H={heads}')
@@ -240,12 +262,14 @@ def main():
                 if any(r['kernel_library_sha256'] != hashes[variant] for r in rows):
                     raise RuntimeError(f'Wrong library loaded: {variant}')
                 runs[variant] = {r['length']: r for r in rows}
+            for cached in cache.iterdir():
+                cached.unlink()
             for length in args.lengths:
                 before, after = runs['baseline'][length], runs['current'][length]
                 for key in ('input_sha256', 'reference_sha256', 'environment', 'policy'):
                     if before[key] != after[key]:
                         raise RuntimeError(f'Comparison mismatch: H={heads}, T={length}, {key}')
-                report['records'].append(dict(heads=heads, key_heads=heads//args.group_size, length=length,
+                report['records'].append(dict(heads=heads, key_heads=key_heads, length=length,
                                               baseline=before, current=after))
             save(report, args.output)
     print(f'Saved {len(report["records"])} matched comparisons to {args.output}', flush=True)

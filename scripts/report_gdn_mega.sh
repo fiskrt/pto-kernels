@@ -11,8 +11,7 @@ latency_plot() {
 }
 error_plot() {
     run python benchmarking/plot_gdn_mega_errors.py "$report_dir/data/error_heatmap.json" \
-        --output "$report_dir/figures/error_heatmap" --markdown "$report_dir/error_heatmap.md" \
-        --fp64-report "$report_dir/data/error_heatmap_fp64_checks.json"
+        --output "$report_dir/figures/error_heatmap" --markdown "$report_dir/error_heatmap.md"
 }
 latency() {
     local status=0
@@ -31,10 +30,8 @@ PY
 }
 errors() {
     run python benchmarking/gdn_mega_errors.py --output "$report_dir/data/error_heatmap.json"
-    run python benchmarking/gdn_mega_errors.py --heads 16 --lengths 128 4096 \
-        --reference recurrent-fp64 --output "$report_dir/data/error_heatmap_fp64_checks.json"
     error_plot
-    python - "$report_dir/data/error_heatmap.json" "$report_dir/data/error_heatmap_fp64_checks.json" <<'PY'
+    python - "$report_dir/data/error_heatmap.json" <<'PY'
 import json, sys
 rows = [row for path in sys.argv[1:] for row in json.load(open(path))['records']]
 raise SystemExit(any(r['current']['status'] != 'passed' for r in rows))

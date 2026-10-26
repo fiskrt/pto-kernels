@@ -23,21 +23,27 @@ def recurrent_reference(q, k, v, g, beta, initial_state=None, cu_seqlens=None):
     q, k = q.repeat_interleave(group, 2), k.repeat_interleave(group, 2)
     boundaries = [0, tokens] if cu_seqlens is None else cu_seqlens.cpu().tolist()
     output = torch.empty_like(v)
+    decay = g.exp()
     states = []
     for seq, (start, end) in enumerate(zip(boundaries, boundaries[1:])):
         state = (torch.zeros(heads, dim, dim, dtype=torch.float64) if initial_state is None
                  else initial_state[seq].detach().cpu().double().clone())
+        # Reuse one state-sized scratch tensor; keep the same FP64 reduction
+        # and update order as the literal token recurrence.
+        scratch = torch.empty_like(state)
         for token in range(start, end):
-            state = state * g[0, token].exp()[:, None, None]
-            prediction = (k[0, token, :, :, None] * state).sum(dim=1)
-            delta = beta[0, token, :, None] * (v[0, token] - prediction)
-            state = state + k[0, token, :, :, None] * delta[:, None, :]
-            output[0, token] = (q[0, token, :, :, None] * state).sum(dim=1)
+            state.mul_(decay[0, token, :, None, None])
+            torch.mul(k[0, token, :, :, None], state, out=scratch)
+            delta = beta[0, token, :, None] * (v[0, token] - scratch.sum(dim=1))
+            torch.mul(k[0, token, :, :, None], delta[:, None, :], out=scratch)
+            state.add_(scratch)
+            torch.mul(q[0, token, :, :, None], state, out=scratch)
+            torch.sum(scratch, dim=1, out=output[0, token])
         states.append(state)
     return output, torch.stack(states)
 
 
-def error_metrics(actual, expected, *, include_percentiles=True):
+def error_metrics(actual, expected, *, include_percentiles=False):
     """No broadcasting, rescaling, fitting, or outlier removal is allowed."""
     assert actual.shape == expected.shape, f"shape mismatch: {actual.shape} != {expected.shape}"
     actual, expected = actual.detach().cpu().double(), expected.detach().cpu().double()

@@ -10,6 +10,8 @@ from matplotlib.colors import TwoSlopeNorm  # noqa: E402
 import numpy as np  # noqa: E402
 from gdn_mega_report_text import write_latency  # noqa: E402
 
+from gdn_mega_sweep import head_configs
+
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
@@ -18,8 +20,8 @@ def main():
     parser.add_argument("--markdown", type=Path, help="Generated Markdown report; defaults beside the plots")
     args = parser.parse_args()
     data = json.loads(args.input.read_text())
-    heads, lengths = sorted(data["heads"]), sorted(data["lengths"])
-    cells = {(r["heads"], r["length"]): r for r in data["records"]}
+    heads, lengths = sorted(head_configs(data)), sorted(data["lengths"])
+    cells = {((r["heads"], r["key_heads"]), r["length"]): r for r in data["records"]}
     if len(cells) != len(data["records"]) or set(cells) != {(h, n) for h in heads for n in lengths}:
         raise ValueError("Heatmap requires one checked result for every requested cell")
     for row in cells.values():
@@ -37,7 +39,7 @@ def main():
                         for n in lengths] for h in heads], dtype=float)
     valid = values[~np.isnan(values)]
     if not valid.size:
-        raise ValueError("No passing comparisons to plot")
+        valid = np.array([1.0])
     # A fixed 1x neutral point makes regressions visibly different from wins.
     norm = TwoSlopeNorm(vmin=min(0.5, float(valid.min())), vcenter=1.0,
                         vmax=max(1.5, float(valid.max())))
@@ -46,7 +48,7 @@ def main():
     cmap.set_bad("#d9dde3")
     mesh = ax.imshow(np.ma.masked_invalid(values), cmap=cmap, norm=norm, aspect="auto")
     ax.set_xticks(range(len(lengths)), [f"{n // 1024}K" if n >= 1024 and n % 1024 == 0 else str(n) for n in lengths])
-    ax.set_yticks(range(len(heads)), [f"{h} / {h // data['group_size']}" for h in heads])
+    ax.set_yticks(range(len(heads)), [f"{h} / {hg}" for h, hg in heads])
     ax.set_xlabel("Sequence length (tokens)")
     ax.set_ylabel("Value heads H / key heads Hg")
     historical = data.get("baseline_source", {}).get("kind") == "historical_latency"
@@ -58,10 +60,16 @@ def main():
             value = values[i, j]
             if np.isnan(value):
                 failed = [name for name in ["baseline", "current"] if cells[h, n][name].get("status") == "failed"]
-                ax.text(j, i, "/".join(failed) + "\nFAIL", ha="center", va="center", fontsize=10, color="#374151")
-                continue
-            color = "white" if norm(value) > 0.8 or norm(value) < 0.15 else "#17202a"
-            ax.text(j, i, f"{value:.2f}×", ha="center", va="center", fontsize=12, weight="bold", color=color)
+                label = (failed[0] if len(failed) == 1 else "both") + " FAIL"
+                color = "#374151"
+            else:
+                label = f"{value:.2f}×"
+                color = "white" if norm(value) > 0.8 or norm(value) < 0.15 else "#17202a"
+            ax.text(j, i - .12, label, ha="center", va="center", fontsize=10 if np.isnan(value) else 12,
+                    weight="bold", color=color)
+            current_ms = cells[h, n]["current_ms"]
+            latency = f"{current_ms * 1000:,.1f} µs" if current_ms is not None else "no current timing"
+            ax.text(j, i + .21, latency, ha="center", va="center", fontsize=9, color=color)
     ax.set_xticks(np.arange(-0.5, len(lengths)), minor=True)
     ax.set_yticks(np.arange(-0.5, len(heads)), minor=True)
     ax.grid(which="minor", color="white", linewidth=2)
@@ -81,8 +89,9 @@ def main():
     current_commit = data.get("current_kernel_commit", data.get("source_commit", ""))[:7]
     baseline_commit = data.get("baseline_source", {}).get("source_commit", "original")[:7]
     fig.supxlabel(
-        f"{hardware} · D = chunk size = 128 · GQA group {data['group_size']} · {state} initial state · gate scale {data['gate_scale']:g}\n"
+        f"{hardware} · D = chunk size = 128 · explicit H/Hg rows · {state} initial state · gate scale {data['gate_scale']:g}\n"
         f"5 checked warmups · median of 15 × 20 graph calls · allocation excluded · gray = correctness failure\n"
+        "Each cell: speedup above; current kernel median total µs per call below\n"
         f"{acceptance}\n"
         f"Original {baseline_commit} / current {current_commit} · 1× = equal latency; below 1× = current slower",
         fontsize=9,

@@ -46,3 +46,22 @@ def test_a_different_reference_invalidates_cached_metrics():
     expected.flatten()[-1] = 0.01
     with pytest.raises(benchmark.AccuracyFailure):
         benchmark.check_outputs(launch, expected, state, previous)
+
+
+@pytest.mark.parametrize('mutated', ['output_reference', 'state_reference'])
+def test_inplace_reference_change_invalidates_cached_pass(mutated):
+    launch, expected, state = inputs()
+    previous = benchmark.check_outputs(launch, expected, state)
+    (expected if mutated == 'output_reference' else state).flatten()[-1] = .01
+    with pytest.raises(benchmark.AccuracyFailure):
+        benchmark.check_outputs(launch, expected, state, previous)
+
+
+def test_benchmark_golden_is_in_raw_output_units():
+    launch, expected, state = inputs()
+    launch['out'].fill_(.5)
+    expected.fill_(.5)
+    checked = benchmark.check_outputs(launch, expected, state)
+    assert checked[2]['raw_output']['max_abs'] == 0
+    with pytest.raises(benchmark.AccuracyFailure):
+        benchmark.check_outputs(launch, expected * 128**-.5, state)

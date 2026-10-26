@@ -267,3 +267,35 @@ def test_changed_inputs_on_reused_workspace(npu_device):
     torch.npu.synchronize()
     for name in reused:
         assert torch.equal(reused[name], fresh[name]), name
+
+
+@pytest.mark.parametrize('gate,beta_value,initial_supplied', [(1., .9, True), (0., 1., True),
+    (.01, 1.999, True), (0., 1.999, False), (-.01, .5, True)])
+def test_reused_scratch_oracle_against_literal_fp64(gate, beta_value, initial_supplied):
+    """The faster golden must preserve the independent literal recurrence."""
+    inputs = list(_make_inputs(129, 8, 2, seed=185))
+    inputs[3].mul_(gate)
+    inputs[4].fill_(beta_value)
+    initial = torch.randn(3, 8, D, D).half() if initial_supplied else None
+    cu = torch.tensor([0, 63, 63, 129], dtype=torch.int32)
+    snapshots = [x.clone() for x in inputs]
+    initial_snapshot = initial.clone() if initial is not None else None
+    q, k, v, g, beta = [x.double() for x in inputs]
+    q, k = _expand_kv_heads(q, k, 8)
+    expected = torch.empty_like(v)
+    states = []
+    for i, (start, end) in enumerate(zip(cu.tolist(), cu.tolist()[1:])):
+        state = initial[i].double().clone() if initial is not None else torch.zeros(8, D, D, dtype=torch.float64)
+        for t in range(start, end):
+            state = state * g[0, t].exp()[:, None, None]
+            prediction = (k[0, t, :, :, None] * state).sum(1)
+            residual = beta[0, t, :, None] * (v[0, t] - prediction)
+            state = state + k[0, t, :, :, None] * residual[:, None, :]
+            expected[0, t] = (q[0, t, :, :, None] * state).sum(1)
+        states.append(state)
+    actual, final = recurrent_reference(*inputs, initial, cu)
+    torch.testing.assert_close(actual, expected, atol=1e-14, rtol=1e-14)
+    torch.testing.assert_close(final, torch.stack(states), atol=1e-14, rtol=1e-14)
+    assert all(torch.equal(a, b) for a, b in zip(inputs, snapshots))
+    if initial is not None:
+        assert torch.equal(initial, initial_snapshot)

@@ -9,13 +9,14 @@ import os
 from pathlib import Path
 import statistics
 import sys
+import time
 
 import torch
 import torch_npu  # noqa: F401
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tests"))
 from test_gdn_mega import (  # noqa: E402
-    _expand_kv_heads, _make_inputs, _prepare_gdn_mega, _reference,
+    _make_inputs, _prepare_gdn_mega,
 )
 from gdn_mega_validation import POLICY, error_metrics, recurrent_reference
 from test_gdn_mega_validation import AUDIT_CASES, make_audit_inputs  # noqa: E402
@@ -29,38 +30,38 @@ class AccuracyFailure(AssertionError):
 
 
 def check_outputs(launch, expected, expected_state, previous=None):
-    """Validate against fixed oracle tensors; cache only within that benchmark case."""
+    """Check raw output against FP64 raw goldens; reuse only unchanged results."""
     # Keep independent snapshots: even CPU test inputs may be mutated in place.
     raw = launch["out"].cpu().clone()
     state = launch["final_state"].cpu().view_as(expected_state).clone()
-    if previous is not None and previous[3] is expected and previous[4] is expected_state and all(
+    if previous is not None and previous[3] is expected and previous[4] is expected_state and \
+            previous[5:] == (expected._version, expected_state._version) and all(
             a.shape == b.shape and a.dtype == b.dtype and torch.equal(a.view(torch.int16), b.view(torch.int16))
             for a, b in zip((raw, state), previous[:2])):
-        # Every bit was checked. Recomputing exact percentiles for identical
-        # tensors adds minutes to large sweeps without changing acceptance.
+        # Every output/state bit was checked; unchanged tensors have the same
+        # elementwise bounds and maximum error against this fixed oracle.
         return previous
-    raw_double = raw.double()
-    metrics = {"raw_output": error_metrics(raw_double, expected.double() * 128**.5),
-               "scaled_output": error_metrics(raw_double * 128**-.5, expected),
+    metrics = {"raw_output": error_metrics(raw, expected),
                "final_state": error_metrics(state, expected_state)}
     if not all(value["passed"] for value in metrics.values()):
         raise AccuracyFailure(metrics)
-    return raw, state, metrics, expected, expected_state
+    return raw, state, metrics, expected, expected_state, expected._version, expected_state._version
 
 
 def benchmark_case(args, length, audit_case=None):
     """Check and time one shape; release its graph/tensors on return."""
+    reference_start = time.perf_counter()
     if audit_case is None:
         inputs = _make_inputs(length, args.heads, args.key_heads)
         inputs[3].mul_(args.gate_scale)
-        q, k = _expand_kv_heads(inputs[0], inputs[1], args.heads)
         initial = torch.randn(1, args.heads, 128, 128, dtype=torch.float16) * 0.1 if args.initial_state else None
-        expected, expected_state = _reference(q, k, *inputs[2:], initial_state=initial)
+        expected, expected_state = recurrent_reference(*inputs, initial)
         cu = torch.tensor([0, length], dtype=torch.int32)
     else:
         inputs, initial, cu = make_audit_inputs(audit_case)
         expected, expected_state = recurrent_reference(*inputs, initial, cu)
-        expected = expected * 128**-.5
+    reference_seconds = time.perf_counter() - reference_start
+    check_seconds = 0.0
     launch = _prepare_gdn_mega(
         *(t.to(args.device) for t in inputs), cu.to(args.device),
         initial.to(args.device) if initial is not None else None,
@@ -69,7 +70,9 @@ def benchmark_case(args, length, audit_case=None):
     for _ in range(1 if args.profile_once else 5):
         pto_gdn_mega(**launch)
         torch.npu.synchronize()
+        check_start = time.perf_counter()
         checked = check_outputs(launch, expected, expected_state, checked)
+        check_seconds += time.perf_counter() - check_start
     metrics = checked[2]
     if args.profile_once:
         print(json.dumps(dict(length=length, numerical_errors=metrics, validation_policy=POLICY)), flush=True)
@@ -97,7 +100,10 @@ def benchmark_case(args, length, audit_case=None):
                       heads=audit_case["heads"], key_heads=audit_case["key_heads"],
                       initial_state=initial is not None, gate_scale=audit_case.get("gate_scale", 1.))
     # Verify the timed graph also leaves correct outputs, outside its timing.
+    check_start = time.perf_counter()
     record["after_replay_errors"] = check_outputs(launch, expected, expected_state, checked)[2]
+    check_seconds += time.perf_counter() - check_start
+    record["validation_seconds"] = dict(inputs_and_fp64_reference=reference_seconds, all_output_checks=check_seconds)
     record["validation_reuse"] = "Statistics reused only after byte equality of every output/state element"
     return record
 
@@ -153,7 +159,7 @@ def main():
                 record.update(audit_case=audit_case["name"], input_distribution=audit_case,
                               heads=audit_case["heads"], key_heads=audit_case["key_heads"],
                               initial_state=audit_case.get("initial", True), gate_scale=audit_case.get("gate_scale", 1.))
-            record["reference"] = "CPU FP64 token recurrence" if audit_case else "CPU FP32 chunked; independent FP64 audit in audit_gdn_mega.py"
+            record["reference"] = "CPU FP64 token recurrence"
             record["environment"] = environment
             records.append(record)
             print(json.dumps(record), flush=True)

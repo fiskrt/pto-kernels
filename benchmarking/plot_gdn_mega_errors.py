@@ -13,10 +13,12 @@ from gdn_mega_report_text import write_errors
 
 VARIANTS = ('baseline', 'current')
 
+from gdn_mega_sweep import head_configs
+
 
 def validate(data):
-    heads, lengths = sorted(data['heads']), sorted(data['lengths'])
-    cells = {(r['heads'], r['length']): r for r in data['records']}
+    heads, lengths = sorted(head_configs(data)), sorted(data['lengths'])
+    cells = {((r['heads'], r['key_heads']), r['length']): r for r in data['records']}
     if len(cells) != len(data['records']) or set(cells) != {(h, n) for h in heads for n in lengths}:
         raise ValueError('Error heatmap requires exactly one matched comparison per requested cell')
     for cell in cells.values():
@@ -76,7 +78,7 @@ def plot(data, heads, lengths, cells, metric, output):
         version = commit[:7] if commit else data['library_sha256'][variant][:10]
         axis.set_title(f'{"Original" if variant == "baseline" else "Current"} {version}', fontsize=14, pad=10)
         axis.set_xticks(range(len(lengths)), [f'{n//1024}K' if n >= 1024 and n % 1024 == 0 else str(n) for n in lengths])
-        axis.set_yticks(range(len(heads)), [f'{h}/{h//data["group_size"]}' for h in heads])
+        axis.set_yticks(range(len(heads)), [f'{h}/{hg}' for h, hg in heads])
         axis.set_xlabel('Sequence length (tokens)')
         if index == 0:
             axis.set_ylabel('Value heads H / key heads Hg')
@@ -109,7 +111,7 @@ def plot(data, heads, lengths, cells, metric, output):
     hardware = data['records'][0]['current']['environment']['device_name']
     state = 'nonzero' if data['initial_state'] else 'zero'
     fig.supxlabel(
-        f'{hardware} · identical seeded inputs and reference · D = 128 · GQA group {data["group_size"]} · {state} initial state\n'
+        f'{hardware} · identical seeded inputs and reference · D = 128 · explicit H/Hg rows · {state} initial state\n'
         f'{oracle} · maximum over ALL output elements and {data["repeats"]} fresh launches · lower is better\n'
         'Outputs filled with NaN before each launch · finite failures remain visible · gray means a nonfinite output\n'
         + ('Absolute maximum alone does not determine pointwise acceptance; see the tolerance-ratio figure.'
@@ -129,14 +131,13 @@ def main():
     parser.add_argument('input', type=Path)
     parser.add_argument('--output', type=Path, help='Output filename stem; produces max-abs and tolerance-ratio PNG/SVG pairs')
     parser.add_argument('--markdown', type=Path, help='Generated Markdown report; defaults beside the plots')
-    parser.add_argument('--fp64-report', type=Path, help='Optional matched independent-oracle crosschecks')
     args = parser.parse_args()
     data = json.loads(args.input.read_text())
     heads, lengths, cells = validate(data)
     stem = args.output or args.input.with_suffix('')
     plot(data, heads, lengths, cells, 'max_abs', stem.with_name(stem.name+'_max_abs'))
     plot(data, heads, lengths, cells, 'max_tolerance_ratio', stem.with_name(stem.name+'_tolerance'))
-    write_errors(data, args.input, stem, args.markdown or stem.with_suffix('.md'), args.fp64_report)
+    write_errors(data, args.input, stem, args.markdown or stem.with_suffix('.md'))
 
 
 if __name__ == '__main__':

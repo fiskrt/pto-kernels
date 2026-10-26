@@ -19,6 +19,42 @@ import tempfile
 ROOT = Path(__file__).resolve().parents[1]
 SUPPORTED_HEADS = [8, 12, 16, 24, 32, 48, 64]
 
+DEFAULT_HEAD_CONFIGS = [(8, 2), (12, 3), (16, 4), (24, 6), (24, 8), (32, 8), (48, 12), (48, 16), (64, 16)]
+
+
+def head_configs(data):
+    """Read explicit pairs, including two rows with the same value-head count."""
+    return [tuple(pair) for pair in data['head_configs']] if 'head_configs' in data else [
+        (h, h // data['group_size']) for h in data['heads']]
+
+
+def add_shape_arguments(parser):
+    shapes = parser.add_mutually_exclusive_group()
+    shapes.add_argument('--heads', type=int, nargs='+', help='Value heads, combined with --group-size')
+    shapes.add_argument('--head-configs', nargs='+', metavar='H/Hg', help='Explicit pairs, e.g. 24/8 48/16')
+    parser.add_argument('--group-size', type=int, default=4, help='Grouping for --heads (default: 4)')
+
+
+def resolve_head_configs(args, parser):
+    try:
+        pairs = ([tuple(map(int, pair.split('/'))) for pair in args.head_configs] if args.head_configs else
+                 [(h, h // args.group_size) for h in args.heads] if args.heads else DEFAULT_HEAD_CONFIGS)
+        if args.group_size <= 0 or any(len(p) != 2 for p in pairs):
+            raise ValueError()
+        if any(h not in SUPPORTED_HEADS or hg <= 0 or h % hg for h, hg in pairs):
+            raise ValueError()
+        if args.heads and any(h % args.group_size for h in args.heads):
+            raise ValueError()
+        if len(set(pairs)) != len(pairs):
+            raise ValueError()
+    except (ValueError, ZeroDivisionError):
+        parser.error('Use distinct H/Hg pairs with supported H and positive Hg dividing H')
+    args.head_configs = pairs
+    args.heads = list(dict.fromkeys(h for h, _ in pairs))
+    groups = {h // hg for h, hg in pairs}
+    args.group_size = groups.pop() if len(groups) == 1 else None
+    return pairs
+
 
 def input_generator_hash():
     tree = ast.parse((ROOT / "tests/test_gdn_mega.py").read_text())
@@ -51,19 +87,17 @@ def main():
     baseline.add_argument("--baseline-report", type=Path,
                           help="Frozen historical-baseline timings; preserves their original validation limitations")
     parser.add_argument("--current-lib", type=Path, default=ROOT / "build/lib")
-    parser.add_argument("--heads", type=int, nargs="+", default=SUPPORTED_HEADS)
+    add_shape_arguments(parser)
     parser.add_argument("--lengths", type=int, nargs="+", default=[128, 256, 1024, 4096, 8192, 16384, 32768])
-    parser.add_argument("--group-size", type=int, default=4, help="Value heads per key head; Hg = H / group_size")
     parser.add_argument("--gate-scale", type=float, default=1.0)
     parser.add_argument("--initial-state", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--device", default=os.environ.get("NPU_DEVICE", "npu:0"))
     parser.add_argument("--output", type=Path, default=ROOT / "benchmark_data/gdn_mega/sweep.json")
     parser.add_argument("--resume", action="store_true", help="Reuse completed head rows with identical settings and library hashes")
     args = parser.parse_args()
-    if (args.group_size <= 0 or any(h not in SUPPORTED_HEADS or h % args.group_size for h in args.heads)
-            or any(n <= 0 for n in args.lengths) or len(set(args.heads)) != len(args.heads)
-            or len(set(args.lengths)) != len(args.lengths)):
-        parser.error("Use distinct supported heads divisible by group-size and distinct positive lengths")
+    configs = resolve_head_configs(args, parser)
+    if any(n <= 0 for n in args.lengths) or len(set(args.lengths)) != len(args.lengths):
+        parser.error('Use distinct positive lengths')
     libraries = {"current": args.current_lib.resolve()}
     if args.baseline_lib:
         libraries["baseline"] = args.baseline_lib.resolve()
@@ -79,7 +113,7 @@ def main():
     report = {
         "created_utc": datetime.now(timezone.utc).isoformat(),
         "source_commit": subprocess.check_output(["git", "-c", f"safe.directory={ROOT}", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip(),
-        "heads": args.heads, "lengths": args.lengths, "group_size": args.group_size,
+        "heads": args.heads, "head_configs": configs, "lengths": args.lengths, "group_size": args.group_size,
         "gate_scale": args.gate_scale, "initial_state": args.initial_state, "device": args.device,
         "chunk_size": 128, "head_dim": 128, "seed": 0, "warmups": 5, "trials": 15, "calls_per_trial": 20,
         "timing": "Median device-event time per graph-replayed call, warm cache; allocation and checks excluded",
@@ -96,24 +130,28 @@ def main():
     }
     historical_cells = {}
     if historical:
-        for key in ["group_size", "gate_scale", "initial_state", "device", "chunk_size", "head_dim",
+        for key in ["gate_scale", "initial_state", "device", "chunk_size", "head_dim",
                     "seed", "warmups", "trials", "calls_per_trial"]:
             if historical.get(key) != report[key]:
                 parser.error(f"Historical baseline mismatch: {key}")
         if historical.get("input_generator_ast_sha256") != input_generator_hash():
             parser.error("Historical baseline input generator differs")
-        historical_cells = {(row["heads"], row["length"]): row for row in historical["records"]}
+        historical_cells = {(row["heads"], row["key_heads"], row["length"]): row for row in historical["records"]}
         if len(historical_cells) != len(historical["records"]):
             parser.error("Historical baseline has duplicate cells")
-        for h in args.heads:
+        for h, hg in configs:
             for n in args.lengths:
-                row = historical_cells.get((h, n))
-                if row is None or row.get("key_heads") != h // args.group_size:
-                    parser.error(f"Historical baseline missing or mismatched cell: H={h}, T={n}")
+                row = historical_cells.get((h, hg, n))
+                if row is None:
+                    continue  # New pairs are measured against the original under strict acceptance.
                 if row.get("kernel_library_sha256") != fingerprints["baseline"]:
                     parser.error("Historical baseline contains a different library hash")
                 if row.get("status") not in ("passed", "failed") or (row["status"] == "passed" and not row.get("median_us", 0) > 0):
                     parser.error("Historical baseline has an invalid validation/timing record")
+        libraries["baseline"] = ROOT / "benchmark_data/gdn_mega/baseline_lib"
+        if any((h, hg, n) not in historical_cells for h, hg in configs for n in args.lengths):
+            if hashlib.sha256((libraries["baseline"] / "libno_workspace_kernel.so").read_bytes()).hexdigest() != fingerprints["baseline"]:
+                parser.error("Missing-cell baseline binary differs from historical original")
         report["baseline_source"] = {
             "kind": "historical_latency", "file": str(args.baseline_report),
             "file_sha256": hashlib.sha256(args.baseline_report.read_bytes()).hexdigest(),
@@ -123,26 +161,27 @@ def main():
         report["validation"] = "Current: " + report["validation"] + "; baseline: historical RMSE-only, not current acceptance"
     if args.resume and output.exists():
         previous = json.loads(output.read_text())
-        for key in ["heads", "lengths", "group_size", "gate_scale", "initial_state", "device",
+        for key in ["heads", "head_configs", "lengths", "group_size", "gate_scale", "initial_state", "device",
                     "chunk_size", "head_dim", "seed", "warmups", "trials", "calls_per_trial", "library_sha256",
                     "validation_sha256", "validation", "baseline_source", "current_kernel_commit"]:
-            if previous.get(key) != report[key]:
+            if previous.get(key) != json.loads(json.dumps(report.get(key))):
                 parser.error(f"Cannot resume: {key} differs")
         report = previous
     save_report(report, output)
     with tempfile.TemporaryDirectory(prefix="gdn_mega_sweep_") as temporary:
         runs_dir = Path(temporary)
-        for index, heads in enumerate(args.heads):
-            if {row["length"] for row in report["records"] if row["heads"] == heads} == set(args.lengths):
+        for index, (heads, key_heads) in enumerate(configs):
+            if {row["length"] for row in report["records"] if (row["heads"], row["key_heads"]) == (heads, key_heads)} == set(args.lengths):
                 continue
-            runs = ({"baseline": {n: historical_cells[heads, n] for n in args.lengths}}
-                    if historical else {})
+            saved_baseline = historical and all((heads, key_heads, n) in historical_cells for n in args.lengths)
+            runs = ({"baseline": {n: historical_cells[heads, key_heads, n] for n in args.lengths}}
+                    if saved_baseline else {})
             # Alternate order across head counts to avoid always measuring one variant first.
-            variants = ["current"] if historical else (["baseline", "current"] if index % 2 == 0 else ["current", "baseline"])
+            variants = ["current"] if saved_baseline else (["baseline", "current"] if index % 2 == 0 else ["current", "baseline"])
             for variant in variants:
-                path = runs_dir / f"{variant}_h{heads}.json"
+                path = runs_dir / f"{variant}_h{heads}_hg{key_heads}.json"
                 command = [sys.executable, str(ROOT / "benchmarking/gdn_mega.py"),
-                           "--heads", str(heads), "--key-heads", str(heads // args.group_size),
+                           "--heads", str(heads), "--key-heads", str(key_heads),
                            "--lengths", *map(str, args.lengths), "--gate-scale", str(args.gate_scale),
                            "--device", args.device, "--output", str(path)]
                 if args.initial_state:
@@ -150,7 +189,7 @@ def main():
                 env = dict(os.environ)
                 env["LD_LIBRARY_PATH"] = str(libraries[variant]) + os.pathsep + env.get("LD_LIBRARY_PATH", "")
                 env["PYTHONPATH"] = str(ROOT / "python") + os.pathsep + env.get("PYTHONPATH", "")
-                print(f"\n{variant}: H={heads}, Hg={heads // args.group_size}", flush=True)
+                print(f"\n{variant}: H={heads}, Hg={key_heads}", flush=True)
                 process = subprocess.run(command, cwd=ROOT, env=env, timeout=900)
                 if process.returncode not in (0, 1) or not path.exists():
                     raise RuntimeError(f"Worker failed before completing: {variant}, H={heads}")
@@ -169,7 +208,7 @@ def main():
                 before, after = runs["baseline"][length], runs["current"][length]
                 passed = all(row.get("status") == "passed" for row in (before, after))
                 report["records"].append({
-                    "heads": heads, "key_heads": heads // args.group_size, "length": length,
+                    "heads": heads, "key_heads": key_heads, "length": length,
                     "status": "passed" if passed else "failed",
                     "baseline_ms": before["median_us"] / 1000 if "median_us" in before else None,
                     "current_ms": after["median_us"] / 1000 if "median_us" in after else None,
