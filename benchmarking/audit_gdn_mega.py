@@ -99,6 +99,11 @@ CORRELATION_CASES = [
     dict(name=f"correlation_large_rho{rho}_g{gate}", seed=3827, lengths=(4096,),
          heads=8, key_heads=2, key_correlation=rho, beta=1., constant_log_gate=gate,
          amplitude=32., state_scale=.1)
+    for rho in (0., .25, .5, .75, .95, 1.) for gate in (0., -.001)
+] + [
+    dict(name=f"correlation_initial_rho{rho}_g{gate}", seed=3827, lengths=(4096,),
+         heads=8, key_heads=2, key_correlation=rho, beta=1., constant_log_gate=gate,
+         state_scale=1.)
     for rho in (.75, .95, 1.) for gate in (0., -.001)
 ]
 

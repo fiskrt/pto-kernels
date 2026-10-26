@@ -600,3 +600,27 @@ so fixing fallback decay alone may not finish numerical work. No kernel fix or
 relaxed tolerance applied. Full evidence and commands: docs/gdn_mega/README.md
 critical audit section and data/precision_audit.json/csv. Source commits0a1797e,
 810b731,f2019b9 retain the exact generators used for the successive audit batches.
+
+2026-10-26 — matched correlation study after user-requested repair revert:
+- Production remains source checkpoint1a4244d, kernel aac5a4d, library619b7df.
+  Isolated parallel-only diagnostic disables only the fallback dispatch;
+  library3fa652f. Never confuse that binary with the deployed library.
+- Generator/tooling f89c376 preserves all non-key inputs across correlation
+  changes and records fingerprints, actual cosine statistics and exit flags.
+  Exit flags count executed fallback heads only for production, not ablation.
+- 71 cases x2 binaries x5 repeats=710 launches. All56 unit-amplitude cases pass
+  both, including32K and h0std1. These are NOT the old56 tiny-g critical cases,
+  whose23 failures remain. Gates here0,-.001,-.1,-1; mostly one seed.
+- At amplitude32,beta1,g0,T4K, parallel output violations at rho0/.95 are41/333
+  of4,194,304; worst-allowance witnesses2.17e-5/4.76e-5. Global maxabs is often
+  FP16 rounding, not these near-zero cancellation errors. Identical keys can
+  be easier than nearly correlated; no monotonic correlation-error rule.
+- Production60/71 passes vs parallel58/71. Fallback not uniformly safer:
+  rho.95,g-.001,amp32 has6506 production output violations vs231 parallel.
+  Existing nearly_correlated_beta1 loses one element by6% over bound without
+  fallback. All finite, guards intact, scratch repeats identical, FP16 ideal
+  floors pass. All failures pass RMSE-only, so keep strict policy.
+- Production triggers all8 heads at rho.25,beta1,g0 (worst pair, not mean).
+  Verified63 saved heatmap inputs never trigger: conservative max bound.3751.
+- Evidence: docs/gdn_mega/data/correlation_risk.json/csv and README section.
+  Regression117 pass62.49s; tooling49 pass2.38s. No kernel fix or timing claim.

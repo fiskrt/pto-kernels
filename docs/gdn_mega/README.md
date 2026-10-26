@@ -17,7 +17,9 @@ of the maintained report set.
 The additional critical audit passes 33/56 cases and fails 23/56; see
 [the critical precision audit below](#critical-precision-audit-beta-in-01).
 
-The existing regression suite passes **116 tests**.
+The existing regression suite now passes **117 tests**; the latest log is in
+[the correlation study](data/correlation_risk.json). The earlier 116-test run
+remains recorded in `data/validation.json`.
 The full FP64 grid passes **63/63 current shapes**, with zero elementwise violations;
 the original fails all63 shapes under this stricter policy.
 [Validation log, source hashes and library fingerprint](data/validation.json).
@@ -233,3 +235,85 @@ bash scripts/gdn_mega_docker.sh python benchmarking/audit_gdn_mega.py \
   --suite critical --cases interior_beta_0.6_correlated \
   --output benchmark_data/gdn_mega/precision_repro.json
 ```
+
+## How much does key correlation affect precision?
+
+We compared the unchanged production kernel with an isolated build that disables
+only its sequential fallback. Both builds consumed identical input tensors and
+were checked against the independent CPU FP64 token recurrence, using the same
+elementwise bounds for output and final state. There were **71 matched cases,
+five launches per case per build (710 launches)**. The production library and
+source were not modified. [Full evidence and build patch](data/correlation_risk.json)
+and [per-case results](data/correlation_risk.csv) retain failures and fingerprints.
+
+The controlled sweep uses normalized keys with a shared direction and independent
+orthogonal noise. Target average cosine similarity ranges from 0 to 1; changing
+correlation preserves Q, V, beta, gates and initial state exactly. Most cases use
+4096 tokens and 8 value / 2 key heads, beta 0.5 or 1, and constant log gates
+0, -0.001, -0.1 or -1. Two cases extend to 32768 tokens. The zero-correlation
+control uses noise in a 127-dimensional subspace, so it is not exactly the
+heatmap's independent 128-dimensional Gaussian distribution.
+
+**All 56 unit-amplitude cases pass on both builds**, including the 32K cases
+and six supplied-initial-state controls with state standard deviation 1.
+At unit scale, the worst absolute output error is about 0.002, predominantly
+the unavoidable final FP16 rounding. This new set of 56 cases is distinct from
+the earlier 56 critical cases above: tiny log gates (-1e-8 to -1e-6) still have
+known failures and are not certified by this sweep.
+
+Larger values expose cancellation errors. The following matched controls use
+4096 tokens, beta=1, no decay, V standard deviation 32 and initial-state standard
+deviation 3.2. Each row checks 4,194,304 raw-output elements.
+
+| Mean key cosine target | Production output violations | Parallel-only output violations | Parallel-only worst error / allowance | Parallel-only state violations |
+|---|---:|---:|---:|---:|
+| 0 | 41 | 41 | 1.84 | 6 |
+| 0.25 | 1 | 70 | 2.51 | 3 |
+| 0.50 | 0 | 212 | 3.05 | 9 |
+| 0.75 | 3 | 431 | 3.69 | 21 |
+| 0.95 | 11 | 333 | 4.58 | 15 |
+| 1.00 | 227 | 1 | 1.03 | 0 |
+
+For the parallel path, increasing mean correlation from 0 to 0.95 raises the
+error at the worst tolerance violation from **2.17e-5 to 4.76e-5**. Violating
+outputs rise from 0.00098% to 0.00794%. The latter witness is reference
+0.0004119455 versus output 0.0003643036, with allowance 1.04e-5. These witness
+errors are not the global maximum absolute error: at correlation 0.95 the global
+maximum is 0.05975, equal to the maximum error from simply rounding the FP64
+golden to FP16. All ideal FP16-rounded goldens pass the elementwise policy.
+
+Correlation does not monotonically worsen precision: exactly identical keys
+can be easier than nearly correlated keys. Nor is the fallback uniformly safer.
+With correlation 0.95 and log gate -0.001 at amplitude 32, production has
+**6,506 output violations versus 231 on the parallel path**. Its worst witness
+has absolute error 2.11e-4 and exceeds its allowance by 20.71 times, versus a
+worst ratio of 2.41 for the parallel path. In contrast, the existing
+`nearly_correlated_beta1` regression passes production but fails without fallback
+at just one of 526,336 outputs: error 1.324e-5 versus allowance 1.249e-5 (6% over).
+
+Across all 71 cases, production passes 60 and the parallel-only build passes 58.
+All outputs are finite, inputs and guards remain intact, and repeated launches
+are bitwise identical. **Every failure would pass RMSE-only acceptance.** No
+overflow or explosive error appeared in this study, but the strict failures
+remain real. This is a controlled synthetic sensitivity study, mostly one seed,
+not a measured distribution of model activations or a guarantee for all inputs.
+
+The production fallback is activated for all eight heads even at target cosine
+0.25 with beta=1 and no decay: it checks the worst pair, not the average cosine.
+All 63 saved performance-heatmap inputs avoid fallback; a conservative bound on
+their coupling coefficients is at most 0.3751, below the 0.5 trigger. That grid
+therefore does not establish correlated-key performance. The verified input
+hashes and bounds are included in the full evidence.
+
+Reproduce the 68 controlled cases on the current production library (exits 1
+because the strict failures are retained):
+
+```bash
+bash scripts/gdn_mega_docker.sh python benchmarking/audit_gdn_mega.py \
+  --suite correlation --output benchmark_data/gdn_mega/correlation.json
+```
+
+The three additional existing regressions, isolated diagnostic patch, compiler
+command, library selection and exact case lists are recorded in the JSON. The
+ordinary regression suite passes 117 tests; this does not override the separate
+stress-audit failures. No production fallback was removed in this study.

@@ -674,3 +674,14 @@ beta[0,1], all missed by RMSE-only acceptance. Production kernel unchanged.
 Results and reproducible failing cases are saved in docs/gdn_mega/README.md and
 data/precision_audit.json/csv; the failures are retained without xfail markers,
 filtered outliers or relaxed tolerances. The critical audit exits nonzero.
+
+2026-10-26 — correlation audit tooling (`f89c376`, expanded in the accompanying
+report commit): controlled key-correlation sweeps preserve all non-key inputs,
+record exact input/library fingerprints, and compare unchanged production with
+an isolated parallel-only diagnostic. The117 regression tests pass (62.49s),
+and49 focused tooling tests pass (2.38s). Saved710 device launches across71
+matched cases in docs/gdn_mega/data/correlation_risk.json/csv. This is a testing
+improvement, NOT a kernel speed or universal precision success: production
+passes60/71 stress cases, parallel-only58/71; all56 unit-amplitude cases in this
+new study pass both. Earlier tiny-decay failures remain unresolved. No production
+kernel, tolerance, interface or allocation changes; failures remain visible.
