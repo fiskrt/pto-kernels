@@ -72,6 +72,17 @@ CRITICAL_CASES += [
 ]
 
 
+# Interior rates distinguish endpoint behavior from the supported interval.
+CRITICAL_CASES += [
+    dict(name=f'interior_beta_{rate}_{kind}', seed=3163, lengths=(4097,), heads=8, key_heads=2,
+         **{kind: True}, beta=rate, constant_log_gate=-1e-7, state_scale=1.)
+    for rate in (.25, .5, .6, .9) for kind in ('correlated', 'nearly_correlated')
+] + [
+    dict(name='interior_random_beta_correlated', seed=3163, lengths=(4097,), heads=8, key_heads=2,
+         correlated=True, constant_log_gate=-1e-7, state_scale=1.)
+]
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, required=True)
