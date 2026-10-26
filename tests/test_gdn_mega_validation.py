@@ -1,4 +1,5 @@
 """Adversarial correctness checks independent of the chunked GDN algorithm."""
+import hashlib
 import pytest
 import torch
 
@@ -98,6 +99,17 @@ def make_audit_inputs(case):
             keys /= keys.norm(dim=-1, keepdim=True)
         after = case.get("correlated_after", 0)
         k[:, after:].copy_(keys[:, after:].half())
+    if "key_correlation" in case:
+        # A shared unit direction plus independent orthogonal noise gives
+        # expected inter-token cosine rho. A private RNG keeps Q/V/g/beta and
+        # the initial state identical across the matched correlation sweep.
+        rho = case["key_correlation"]
+        assert 0. <= rho <= 1.
+        generator = torch.Generator().manual_seed(case["seed"] + 17011)
+        common = torch.nn.functional.normalize(torch.randn(1, 1, k.shape[2], D, generator=generator), dim=-1)
+        noise = k.float() - (k.float() * common).sum(-1, keepdim=True) * common
+        noise = torch.nn.functional.normalize(noise, dim=-1)
+        k.copy_((rho**.5 * common + (1-rho)**.5 * noise).half())
     k.mul_(case.get("key_scale", 1.))
     if "beta" in case:
         beta.fill_(case["beta"])
@@ -118,6 +130,11 @@ def make_audit_inputs(case):
 
 def run_audit_case(case, device):
     inputs, initial, cu = make_audit_inputs(case)
+    digest = hashlib.sha256()
+    for tensor in [*inputs, initial, cu]:
+        if tensor is not None:
+            digest.update(str((tuple(tensor.shape), str(tensor.dtype))).encode())
+            digest.update(memoryview(tensor.contiguous().numpy()).cast("B"))
     # Reference stays on the CPU and is never passed to the device/launch helper.
     expected, expected_state = recurrent_reference(*inputs, initial, cu)
     launch = _prepare_gdn_mega(*(x.to(device) for x in inputs), cu.to(device),
@@ -155,10 +172,27 @@ def run_audit_case(case, device):
                      {"raw_output": error_metrics(actual, expected),
                       "scaled_output": error_metrics(actual.double() * D**-.5, expected * D**-.5),
                       "final_state": error_metrics(state, expected_state)})
-        metrics.append({**numerical,
+        diagnostic = {}
+        if "key_correlation" in case:
+            # Source-specific observation, never an acceptance criterion.
+            # With one head per hardware group, production retains a true
+            # marker when it exits to the whole-head recurrence. A diagnostic
+            # binary disabling dispatch must NOT call these fallback counts.
+            assert len(case["lengths"]) == 1 and case["heads"] <= launch["block_dim"]
+            control = launch["o_workspace_qk"].cpu().view(launch["block_dim"], -1)
+            flags = control[:case["heads"], [128*128//2+15, 128*128//2+31]]
+            diagnostic["control_flags_at_exit"] = (flags != 0).any(-1).tolist()
+        metrics.append({**numerical, **diagnostic,
                         "inputs_and_guards_intact": integrity, "scratch_independent": independent})
-    return {"case": case, "policy": POLICY, "repeats": metrics,
+    correlation = {}
+    if "key_correlation" in case:
+        cosine = torch.nn.functional.cosine_similarity(inputs[1][:, 1:].double(), inputs[1][:, :-1].double(), dim=-1)
+        correlation = {"adjacent_key_cosine_mean": cosine.mean().item(),
+                       "adjacent_key_cosine_min": cosine.min().item(),
+                       "adjacent_key_cosine_max": cosine.max().item()}
+    return {"case": case, "policy": POLICY, "repeats": metrics, "input_sha256": digest.hexdigest(),
             "input_ranges": {
+                **correlation,
                 "beta": [inputs[4].min().item(), inputs[4].max().item()],
                 "log_gate": [inputs[3].min().item(), inputs[3].max().item()],
                 "key_norm_squared": [inputs[1].double().square().sum(-1).min().item(),
@@ -176,6 +210,20 @@ def run_audit_case(case, device):
 def test_independent_recurrence_and_memory(case, npu_device):
     result = run_audit_case(case, npu_device)
     assert result["passed"], result
+
+
+def test_correlation_sweep_preserves_non_key_inputs():
+    base = dict(seed=3827, lengths=(1024,), heads=8, key_heads=2,
+                beta=1., constant_log_gate=-.001, state_scale=.1)
+    ordinary, initial, cu = make_audit_inputs(base)
+    for rho in (0., .75, 1.):
+        inputs, state, lengths = make_audit_inputs(dict(base, key_correlation=rho))
+        assert all(torch.equal(inputs[i], ordinary[i]) for i in (0, 2, 3, 4))
+        assert torch.equal(state, initial) and torch.equal(lengths, cu)
+        norm = inputs[1].double().norm(dim=-1)
+        torch.testing.assert_close(norm, torch.ones_like(norm), rtol=0, atol=5e-4)
+        cosine = torch.nn.functional.cosine_similarity(inputs[1][:, 1:].double(), inputs[1][:, :-1].double(), dim=-1)
+        assert abs(cosine.mean().item()-rho) < .02
 
 
 def test_reference_analytic_two_tokens():

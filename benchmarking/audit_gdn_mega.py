@@ -83,17 +83,39 @@ CRITICAL_CASES += [
 ]
 
 
+# Matched unit-scale sweep: correlation is varied without changing Q/V/h0.
+# These are synthetic sensitivity measurements, not measured model inputs.
+CORRELATION_CASES = [
+    dict(name=f"correlation_rho{rho}_beta{rate}_g{gate}", seed=3827,
+         lengths=(4096,), heads=8, key_heads=2, key_correlation=rho,
+         beta=rate, constant_log_gate=gate, state_scale=.1)
+    for rho in (0., .25, .5, .75, .95, 1.)
+    for rate in (.5, 1.) for gate in (0., -.001, -.1, -1.)
+] + [
+    dict(name=f"correlation_long_rho{rho}", seed=3827, lengths=(32768,),
+         heads=8, key_heads=2, key_correlation=rho, beta=1., constant_log_gate=0., state_scale=.1)
+    for rho in (.95, 1.)
+] + [
+    dict(name=f"correlation_large_rho{rho}_g{gate}", seed=3827, lengths=(4096,),
+         heads=8, key_heads=2, key_correlation=rho, beta=1., constant_log_gate=gate,
+         amplitude=32., state_scale=.1)
+    for rho in (.75, .95, 1.) for gate in (0., -.001)
+]
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--device", default=os.environ.get("NPU_DEVICE", "npu:0"))
-    parser.add_argument("--suite", choices=["standard", "critical", "all"], default="standard")
-    parser.add_argument("--cases", nargs="+", choices=[c["name"] for c in AUDIT_CASES + CRITICAL_CASES],
+    parser.add_argument("--suite", choices=["standard", "critical", "correlation", "all"], default="standard")
+    all_cases = AUDIT_CASES + CRITICAL_CASES + CORRELATION_CASES
+    parser.add_argument("--cases", nargs="+", choices=[c["name"] for c in all_cases],
                         help="Explicit subset for reproducing failures; default runs every case")
     args = parser.parse_args()
-    cases = AUDIT_CASES if args.suite == "standard" else CRITICAL_CASES if args.suite == "critical" else AUDIT_CASES + CRITICAL_CASES
+    cases = {"standard": AUDIT_CASES, "critical": CRITICAL_CASES,
+             "correlation": CORRELATION_CASES, "all": all_cases}[args.suite]
     if args.cases:
-        cases = [c for c in AUDIT_CASES + CRITICAL_CASES if c["name"] in args.cases]
+        cases = [c for c in all_cases if c["name"] in args.cases]
     torch.set_num_threads(4)
     torch.npu.set_device(args.device)
     torch.npu.config.allow_internal_format = False
