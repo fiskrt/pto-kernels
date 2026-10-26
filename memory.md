@@ -582,3 +582,21 @@ repeat it. Native FP32 projection ablation only addresses~100us, not entire gap.
   CPU tests passed. New data/validation.json records report integrity checks.
 - Source-version lookup excludes README-only commits, so report cleanup cannot
   relabel the kernel version. Heatmap render uses current actual library hashes.
+
+2026-10-26: Critical precision audit of unchanged aac5a4d / library619b7df:
+standard116-test suite passes, but56 additional beta[0,1] cases yield33 pass,
+23 fail. All finite, ideal FP16 rounding passes, poisoned-workspace/guards intact;
+all failures would pass RMSE-only. Failures include beta0.6000977,0.8999023,
+random beta[0,1), and beta1: not merely beta>1 or an endpoint. Tiny negative
+log gates accumulate decay error in compensated recurrence: state and its
+compensation are separately multiplied by rounded FP32 exp(g), without retaining
+multiplication error. k=e0,beta1 gives an analytic witness: initial3.013671875,
+g=-1.000000011686e-7,T32768 => exact3.00381283675, kernel2.998046875. Scalar
+FP32 repeated multiply then FP16 matches exactly. Six independent analytic
+output checks agree with the FP64 oracle within1.11e-12. No-decay matched controls
+pass; nearly correlated zero-initial-state case still fails with tiny decay.
+Normal chunked beta0/T32768 also has28 near-zero output violations (worst1.40x),
+so fixing fallback decay alone may not finish numerical work. No kernel fix or
+relaxed tolerance applied. Full evidence and commands: docs/gdn_mega/README.md
+critical audit section and data/precision_audit.json/csv. Source commits0a1797e,
+810b731,f2019b9 retain the exact generators used for the successive audit batches.

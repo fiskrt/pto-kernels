@@ -665,3 +665,12 @@ marked failing baseline times against saved measurements. The5 mixed pass/fail
 annotation tests pass; PNG visually inspected. Numerical data and kernel are
 unchanged. Full-suite evidence remains tied to e7c916d; display checks are saved
 separately in data/validation.json.
+
+2026-10-26 — audit tooling commits0a1797e,810b731,f2019b9 add beta-bounded stress
+cases, matched controls and exact worst-tolerance witnesses. The checker tests
+pass31/31 and the existing regression suite passes116/116. This is NOT a kernel
+precision success: the additional56 cases uncover23 unresolved failures within
+beta[0,1], all missed by RMSE-only acceptance. Production kernel unchanged.
+Results and reproducible failing cases are saved in docs/gdn_mega/README.md and
+data/precision_audit.json/csv; the failures are retained without xfail markers,
+filtered outliers or relaxed tolerances. The critical audit exits nonzero.

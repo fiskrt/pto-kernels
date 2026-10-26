@@ -11,22 +11,22 @@
     "csrc/kernel/gdn_mega/shared_grams.hpp": "0db69aeef4a2033346c5d81ae6f651ffc5f8b0f031cbfa65e2aa72158eebb166"
   },
   "validation_sources": {
-    "tests/gdn_mega_validation.py": "5f2fac8352ff5db3e06cba4f1c4420541e051b8b462744d9219f11b95e0b5396",
-    "tests/test_gdn_mega_validation.py": "c91049853c86becc10f898ed23bbe495c766518f2e1a6e84e20edfe34315b286",
-    "tests/test_gdn_mega_errors.py": "32ab2164e915e5723d8733af09f7390726b6c2b1cd0e3d2b40d5a0bea1aebbf8",
+    "tests/gdn_mega_validation.py": "beef7c843d41645b046d0f416ab15c4372627a0735788b47307536e4b8affb82",
+    "tests/test_gdn_mega_validation.py": "bc13a610af1ab8b8bbf87614aeefe7892a70c14a81329a4a2468287bbd71ef31",
+    "tests/test_gdn_mega_errors.py": "92f6bd0c36e6183681c0fc05e10e3648eec3e38161c95d1cd328c1d98b1f3926",
     "tests/test_gdn_mega.py": "a6cb101d3a17b0020a9fc18ae133625d9e3d8d3e29a3a2f210dc751c0d7ce138",
     "tests/test_gdn_mega_benchmark.py": "44e82aff2799a52144cdd2b55139d0d82067ae42e45b3ec1951f6bae74c789a0",
     "benchmarking/gdn_mega_ranges.py": "2399260fdef666025d27a34c3912074b369d0b03caddfda68d0cd707473aef06",
     "benchmarking/plot_gdn_mega_errors.py": "a398b09fb6553d2bad67a690e571acd0f1f514c87c4987ab18e82c68df7f1758",
-    "benchmarking/plot_gdn_mega.py": "11b12d7256509a75f3519b5f2e7210cfc5ddd5328136723d46210803fb645857",
-    "benchmarking/gdn_mega_report_text.py": "879068c160e0a04ddf93986133b902943060df64059ca15676dcf46e4584597b",
+    "benchmarking/plot_gdn_mega.py": "7c3b7fa38edaaeb739743eabb751ee22ac527956e2cc2dbc6d4b876c98454aa6",
+    "benchmarking/gdn_mega_report_text.py": "6ee537e3736b77b0dd39808fd4505131a7883afb93ec068c732d849e42907d23",
     "benchmarking/gdn_mega_sweep.py": "ae78084f1b360ac9e5f4a34304fcfc3646f51f3d95e65c211ff6c727de445bf8",
     "benchmarking/gdn_mega_errors.py": "316c15c9739bb9136299a488c8b4a798a429a3cab62848cf831ba02c7fa9d673",
     "benchmarking/gdn_mega.py": "78ce02812dc0010f8ed06f330b9bb507c518406fc1accd21a1ac4367f3679624",
-    "benchmarking/audit_gdn_mega.py": "e65529bbd3ef863478c4dd66c4fa1addf49181f5325ce93109847b14d4efd385",
+    "benchmarking/audit_gdn_mega.py": "57462932747ebc0ea1d4241f558334f003c2d8c0994d6c8338bf5eed6376cf5a",
     "scripts/report_gdn_mega.sh": "71f57ffff735ff5e9c5531712b39c5735dc17a90ca94c07b11ab9d75df5011a7"
   },
-  "test_log": "........................................................................ [ 62%]\n...........................................                              [100%]\n115 passed in 58.79s\n",
+  "test_log": "........................................................................ [ 62%]\n............................................                             [100%]\n116 passed in 63.11s (0:01:03)\n",
   "report_refresh": {
     "kernel_commit": "aac5a4d3a2d56d977d492eee174d14ddf3283c36",
     "latency_current_passed": 63,
@@ -70,7 +70,7 @@
     "baseline_source_commit": "4a45216",
     "current_source_commit": "e9714dd"
   },
-  "validation_sources_commit": "e7c916d",
+  "validation_sources_commit": "810b731",
   "display_refresh": {
     "description": "Asterisks are attached to failing implementation runtimes only; ratios are unmarked.",
     "source_sha256": {
@@ -84,5 +84,19 @@
       "marked_failing_baseline_runtimes": 63
     },
     "visual_inspection": "PNG inspected; all cells show ratio, our median total microseconds and baseline median total microseconds."
+  },
+  "critical_precision_audit": {
+    "report": "precision_audit.json",
+    "kernel_unchanged": true,
+    "supported_beta_range": [
+      0,
+      1
+    ],
+    "additional_cases": 56,
+    "passed": 33,
+    "failed": 23,
+    "ideal_fp16_rounding_passes_all": true,
+    "rmse_alone_passes_all": true,
+    "status": "Unresolved elementwise precision failures; existing pytest suite is not a precision signoff."
   }
 }
