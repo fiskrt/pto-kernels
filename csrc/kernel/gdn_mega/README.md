@@ -114,8 +114,8 @@ The independent oracle is CPU FP64 token recurrence. Acceptance checks every
 raw-output and final-state element against `1e-5 + 1e-3*abs(reference)`, as well
 as relative RMSE < 0.005, finiteness, exact shapes, guarded outputs, unchanged
 inputs, and repeated launches with poisoned scratch. No tolerance was relaxed.
-Historical RMSE-only results in the
-[branch report](../../../docs/gdn_mega/optimization_report.md) are not certificates
+Historical RMSE-only timing results in the
+[report index](../../../docs/gdn_mega/README.md) are not certificates
 for this stricter policy. Current milestones and remaining limitations are
 recorded in [`success.md`](../../../success.md) and
 [`memory.md`](../../../memory.md).

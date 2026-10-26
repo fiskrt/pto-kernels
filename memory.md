@@ -565,3 +565,20 @@ repeat it. Native FP32 projection ablation only addresses~100us, not entire gap.
 - Primary reproducible evidence: docs/gdn_mega/optimization_20261026.md/json/csv.
   Isolated experiments remain ignored under benchmark_data/gdn_mega/breakthrough_20261026.
   Two global phases, seven production files,1302 physical lines. Target3x NOT met.
+
+2026-10-26, user-requested report cleanup:
+- Maintained docs entry point is docs/gdn_mega/README.md. Only four Markdown
+  pages remain: README, heatmap, error_heatmap, input_ranges. Raw inputs/results
+  are in data/ and plot images in figures/. Obsolete report paths in earlier
+  log entries are historical; recover them from Git commit a83187b if needed.
+- scripts/report_gdn_mega.sh [all|latency|errors|render] is the report entry point.
+  Plotters now generate Markdown from the same JSON as their PNG/SVG. Shared
+  text renderer: benchmarking/gdn_mega_report_text.py. Input-only range script
+  gdn_mega_ranges.py replaces retired experimental gdn_mega_algorithms.py.
+- Fresh AAC latency/error grids49/49 current passes, zero pointwise violations;
+  original error grid0/49, independent FP64 current2/2 original0/2. Keep these
+  distinctions: latency baseline is historical RMSE-only, error baseline fresh.
+- No C++/tolerance changes. Saved80-test pass hashes reverified;12 report/checker
+  CPU tests passed. New data/validation.json records report integrity checks.
+- Source-version lookup excludes README-only commits, so report cleanup cannot
+  relabel the kernel version. Heatmap render uses current actual library hashes.

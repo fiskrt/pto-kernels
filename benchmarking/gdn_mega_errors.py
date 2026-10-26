@@ -190,12 +190,13 @@ def main():
     libraries = {'baseline': args.baseline_lib.resolve(), 'current': args.current_lib.resolve()}
     hashes = {name: hashlib.sha256((path/'libno_workspace_kernel.so').read_bytes()).hexdigest()
               for name, path in libraries.items()}
-    known = json.loads((ROOT/'docs/gdn_mega/heatmap.json').read_text())
+    known_path = ROOT/'docs/gdn_mega/data/heatmap.json'
+    known = json.loads(known_path.read_text()) if known_path.exists() else {}
     commits = {
         'baseline': (known.get('baseline_source', {}).get('source_commit')
-                     if hashes['baseline'] == known['library_sha256']['baseline'] else None),
+                     if hashes['baseline'] == known.get('library_sha256', {}).get('baseline') else None),
         'current': (known.get('current_kernel_commit')
-                    if hashes['current'] == known['library_sha256']['current'] else None),
+                    if hashes['current'] == known.get('library_sha256', {}).get('current') else None),
     }
     sources = ['benchmarking/gdn_mega_errors.py', 'tests/gdn_mega_validation.py', 'tests/test_gdn_mega.py']
     report = dict(created_utc=datetime.now(timezone.utc).isoformat(), heads=args.heads, lengths=args.lengths,

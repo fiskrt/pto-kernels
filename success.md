@@ -607,3 +607,21 @@ H24/Hg6 .826423->.718642ms, H64/Hg16 2.511402->2.144606ms, all strict checks pas
 Fresh hardware profiler task duration794.432->700.678us is recorded separately
 from graph timing. Later two-chunk lookahead passed its initial checks but did
 not improve latency and was not retained.
+
+2026-10-26 — refreshed and consolidated the reports for kernel `aac5a4d`.
+Fresh latency grid:49/49 current cells pass elementwise/finiteness/RMSE checks
+before and after timing;48 historical-original ratios,1.18–4.12x overall and
+1.18–1.71x at4K+. Original64-head/32K timing failure remains gray.
+Fresh matched error grid: current49/49, original0/49; all elements and3 launches
+per shape retained. Independent FP64 crosschecks: current2/2, original0/2.
+Zero current raw-output/final-state elementwise violations. The unchanged kernel
+and checker hashes match the saved80-test production pass;12 report/checker tests
+also pass. No tolerances or kernel implementation changed.
+`bash scripts/report_gdn_mega.sh all` measures both reports; `render` regenerates
+Markdown, PNG and SVG from saved JSON. Generated pages and plots now use the same
+data. docs/gdn_mega contains only README.md, heatmap.md, error_heatmap.md and
+input_ranges.md, plus their data/figures. Removed obsolete checkpoint/experiment
+reports and replaced the solver-screening script with a focused input-range
+script. Historical experiments remain available in Git at a83187b. Complete-grid,
+source/library fingerprint, repeat/bounds and local-link checks pass; figures
+were visually inspected. Evidence is consolidated in data/validation.json.

@@ -8,6 +8,7 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 from matplotlib.colors import LogNorm, TwoSlopeNorm
 import numpy as np
+from gdn_mega_report_text import write_errors
 
 
 VARIANTS = ('baseline', 'current')
@@ -127,12 +128,15 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('input', type=Path)
     parser.add_argument('--output', type=Path, help='Output filename stem; produces max-abs and tolerance-ratio PNG/SVG pairs')
+    parser.add_argument('--markdown', type=Path, help='Generated Markdown report; defaults beside the plots')
+    parser.add_argument('--fp64-report', type=Path, help='Optional matched independent-oracle crosschecks')
     args = parser.parse_args()
     data = json.loads(args.input.read_text())
     heads, lengths, cells = validate(data)
     stem = args.output or args.input.with_suffix('')
     plot(data, heads, lengths, cells, 'max_abs', stem.with_name(stem.name+'_max_abs'))
     plot(data, heads, lengths, cells, 'max_tolerance_ratio', stem.with_name(stem.name+'_tolerance'))
+    write_errors(data, args.input, stem, args.markdown or stem.with_suffix('.md'), args.fp64_report)
 
 
 if __name__ == '__main__':

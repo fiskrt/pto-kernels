@@ -1,0 +1,30 @@
+{
+  "implementation_commit": "aac5a4d",
+  "production_library_sha256": "619b7df351e839f58d853d3ca639cafca44127a18e270626dfe2ddc79f5ed89d",
+  "production_sources": {
+    "csrc/kernel/gdn_mega/common.hpp": "a57c716bf72d22e6439acdb77c1303b8b05c1a7f6371d70881b3d5db28a84a36",
+    "csrc/kernel/gdn_mega/fused_pipeline.hpp": "b813168ddb305cf7db84f55a85be494e07e200d1192477577e79d14995237c5b",
+    "csrc/kernel/gdn_mega/gate_scan.hpp": "9ee4bd4dfda1ca6406bc078475ca7088f79fb4cffd734076633d0df9e0f91126",
+    "csrc/kernel/gdn_mega/inverse.hpp": "48dc9208fd6fee3636ac36d7805c64e66cb1bf20f031369f4a1f3fea08c0318f",
+    "csrc/kernel/gdn_mega/kernel_gdn_mega.cpp": "8009f166499975cb1d8f4803c8a81f72d138da66c71645ece1c273e0a3166a7c",
+    "csrc/kernel/gdn_mega/recurrence_pipeline.hpp": "67f80a7ad5d44ac2da7081ef7158f1b9b7b77d11babf5a775dd5f21be5b27f71",
+    "csrc/kernel/gdn_mega/shared_grams.hpp": "0db69aeef4a2033346c5d81ae6f651ffc5f8b0f031cbfa65e2aa72158eebb166"
+  },
+  "validation_sources": {
+    "tests/test_gdn_mega.py": "a6cb101d3a17b0020a9fc18ae133625d9e3d8d3e29a3a2f210dc751c0d7ce138",
+    "tests/test_gdn_mega_validation.py": "23d32ffda99f1f2961746d9ebbe6c268520f1f988af3b1e9515b57cd8bb07139",
+    "tests/gdn_mega_validation.py": "e58e6399de767701f694dc7dd33eca5ea79b6a3fdfe37a2136134e610295cf58"
+  },
+  "test_log": "........................................................................ [ 90%]\n........                                                                 [100%]\n80 passed in 92.18s (0:01:32)\n",
+  "report_refresh": {
+    "kernel_commit": "aac5a4d3a2d56d977d492eee174d14ddf3283c36",
+    "latency_current_passed": 49,
+    "matched_error_current_passed": 49,
+    "matched_error_original_passed": 0,
+    "fp64_current_passed": 2,
+    "fp64_original_passed": 0,
+    "pointwise_violations_current": 0,
+    "report_checker_tests": "............                                                             [100%]\n12 passed in 0.15s\n",
+    "integrity": "Full grids, loaded library/source hashes, raw-output and final-state bounds before/after replay and every repeat, matched inputs/oracles, visible failed-baseline cells, local Markdown links verified."
+  }
+}

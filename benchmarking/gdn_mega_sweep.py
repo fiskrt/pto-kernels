@@ -90,7 +90,8 @@ def main():
             ("tests/gdn_mega_validation.py", "tests/test_gdn_mega.py", "benchmarking/gdn_mega.py"))).hexdigest(),
         "validation": "pointwise atol=1e-5, rtol=1e-3 AND relative RMSE < 0.005; raw output and final state",
         "current_kernel_commit": subprocess.check_output(
-            ["git", "-c", f"safe.directory={ROOT}", "log", "-1", "--format=%H", "--", "csrc/kernel/gdn_mega"],
+            ["git", "-c", f"safe.directory={ROOT}", "log", "-1", "--format=%H", "--",
+             ":(glob)csrc/kernel/gdn_mega/*.cpp", ":(glob)csrc/kernel/gdn_mega/*.hpp"],
             cwd=ROOT, text=True).strip(),
     }
     historical_cells = {}

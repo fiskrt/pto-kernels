@@ -111,28 +111,11 @@ at equality use the earlier triangle bound, and above it the contraction
 assumption fails. FP16 rounding can cross that endpoint. These families cannot
 be covered by the1554.49 figure, nor is it a blanket production input limit.
 
-## Algorithm screening
-
-`benchmarking/gdn_mega_algorithms.py` evaluates alternative solves against the independent
-FP64 token oracle, with FP32 surrounding arithmetic. It compares direct FP32
-triangular solve, 16-row panel substitution with paired FP16 products, an
-FP16 approximate inverse with one/two residual corrections, an exact finite
-block-preconditioned series, and precomputed affine chunk maps. Results are saved in
-`algorithm_screen.json`. This is numerical feasibility evidence only, not an NPU
-speed measurement or a complete hardware error simulation.
-
-All candidates pass the sampled ordinary, no-decay and three positive-key FLA
-cases. All fail the near-identical-key, amplitude-32 stress case, including direct
-FP32 substitution. Therefore ordinary FP16 overflow is not the only issue:
-Gram-product rounding and recurrent cancellation can violate absolute tolerance.
-The compensated physical recurrence remains necessary until a better general
-formulation also passes that case. No test is removed to make an approach pass.
-
 ## Measured first-block example (D128, 2026-10-23)
 
 These are FP64 measurements on the exact FP16 test inputs, first key/value head
 and first 128-token block only. They are examples, not full-distribution maxima.
-Raw observed input ranges and individual powers are in `input_ranges.json`.
+Raw observed input ranges and individual powers are in [input_ranges.json](data/input_ranges.json).
 
 | Case | Mean off-diagonal KKᵀ | Largest of A¹,A²,…,A⁶⁴ | max abs(L⁻¹) |
 |---|---:|---:|---:|
@@ -149,10 +132,7 @@ alone is not a numerically stable algorithm.
 ## Reproduction and tail regression
 
 ```bash
-bash scripts/gdn_mega_docker.sh python benchmarking/gdn_mega_algorithms.py \
-  --ranges-only --output docs/gdn_mega/input_ranges.json
-bash scripts/gdn_mega_docker.sh python benchmarking/gdn_mega_algorithms.py \
-  --output benchmark_data/gdn_mega/algorithm_screen.json
+bash scripts/gdn_mega_docker.sh python benchmarking/gdn_mega_ranges.py
 bash scripts/gdn_mega_docker.sh python benchmarking/gdn_mega.py \
   --audit-cases fla_positive_no_decay fla_positive_weak fla_gaussian_initial \
   --output benchmark_data/gdn_mega/fla_timings.json

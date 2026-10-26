@@ -8,12 +8,14 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
 from matplotlib.colors import TwoSlopeNorm  # noqa: E402
 import numpy as np  # noqa: E402
+from gdn_mega_report_text import write_latency  # noqa: E402
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("input", type=Path)
     parser.add_argument("--output", type=Path, help="Filename stem; writes PNG and SVG beside input by default")
+    parser.add_argument("--markdown", type=Path, help="Generated Markdown report; defaults beside the plots")
     args = parser.parse_args()
     data = json.loads(args.input.read_text())
     heads, lengths = sorted(data["heads"]), sorted(data["lengths"])
@@ -67,7 +69,9 @@ def main():
     for spine in ax.spines.values():
         spine.set_visible(False)
     bar = fig.colorbar(mesh, ax=ax, label="Speedup (higher is faster)", shrink=0.8)
-    bar.set_ticks(sorted({norm.vmin, 1.0, norm.vmax, *range(2, int(np.ceil(norm.vmax)))}))
+    ticks = sorted({norm.vmin, 1.0, norm.vmax,
+                    *(v for v in range(2, int(np.ceil(norm.vmax))) if norm.vmax-v >= .25)})
+    bar.set_ticks(ticks, labels=[f'{v:.2g}' for v in ticks])
     state = "nonzero" if data["initial_state"] else "zero"
     hardware = data.get("environment", {}).get("device_name", data["device"])
     acceptance = ("Pointwise + RMSE acceptance" if data.get("validation_sha256") else
@@ -90,6 +94,7 @@ def main():
     fig.savefig(svg)
     svg.write_text("\n".join(line.rstrip() for line in svg.read_text().splitlines()) + "\n")
     plt.close(fig)
+    write_latency(data, args.input, output, args.markdown or output.with_suffix('.md'))
     print(f"Saved {output.with_suffix('.png')} and {output.with_suffix('.svg')}")
 
 
