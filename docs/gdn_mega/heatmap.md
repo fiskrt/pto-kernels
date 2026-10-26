@@ -12,6 +12,10 @@ RMSE-only policy; fresh original-kernel spot-checks fail the stricter policy.
 The figure identifies this distinction explicitly. Missing or failed measurements
 remain gray and never receive an inferred speedup.
 
+For a fresh accuracy comparison on this same grid, see the
+[maximum absolute error and per-element tolerance heatmaps](error_heatmap.md).
+Those plots retain numerical failures and use matched new runs of both kernels.
+
 ## Results
 
 Current passes **49/49 shapes** under the strict policy. There are **48 latency ratios**; they range from **1.04× to 3.85×**. For sequences 4K and longer the range is **1.04× to 1.54×**. **0 cells regress below 1×**. The original's failed 64-head/32K cell remains gray.

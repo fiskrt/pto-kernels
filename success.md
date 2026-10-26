@@ -558,3 +558,16 @@ not relabeled strict passes. Tooling `f071140` adds guarded historical-baseline
 reuse and validated byte-equality statistics caching; six checker tests and
 plot/resume integrity checks pass. No production kernel or tolerance changed.
 Evidence: docs/gdn_mega/heatmap.md and heatmap_validation.txt.
+
+2026-10-26 — matched original/current accuracy heatmaps (measurement tooling
+`8e5e7f0`). Fresh 49-cell H/T sweep, identical input/reference fingerprints,
+three NaN-initialized output/final-state launches per implementation. Current
+`bfc99e1` passes49/49 with bitwise identical repeats; original `10748eb` passes0/49.
+Current max absolute output error2.3705e-4–4.8440e-4, worst tolerance ratio≤0.47921;
+47/49 maxima equal the FP16 output rounding floor. Original H64 at8K/16K/32K
+also has repeat-dependent large errors (maxima0.55745/0.58078/0.50206), retained
+in the plots; their cause is not established. Independent FP64 H16/128 and4K
+crosschecks: current2/2, original0/2. Twelve CPU checker tests and six plot
+integrity checks pass. Saved both shared-scale plots, all repeats/CSV, explanation
+and validation in docs/gdn_mega/error_heatmap*. No kernel, tolerance, interface,
+allocation, or performance change is claimed by this reporting improvement.
