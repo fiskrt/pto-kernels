@@ -1,0 +1,11 @@
+PASS: plot rejects incomplete
+PASS: plot rejects wrong_ratio
+PASS: plot rejects hidden_failure
+PASS: resume rejects a stale current-library fingerprint
+......                                                                   [100%]
+6 passed in 0.11s
+PASS: 49 current cells pass pointwise/finiteness checks before and after replay
+PASS: 48 CSV/JSON ratios match their recorded latencies; original failed cell has no ratio
+PASS: all current library fingerprints match the unchanged production binary
+PASS: baseline provenance matches the frozen original-data fingerprint
+PASS: final PNG/SVG rendered; full 7x7 PNG visually inspected

@@ -495,3 +495,18 @@ Strong path latency remains a major limitation, not a target-speed result.
   removed; restored exact bfc99e1 source and rebuilt library hash
   92c7bfe1d266cf8a3fc5a17c632fb83e6cc03a10624b910e91423d8877dc92ef,
   matching the80-test/shared_decay_benchmark checkpoint.
+
+2026-10-26 stable heatmap refresh:
+- User requested replacing obsolete FP16 speedup plots. Measured all49 current
+  H8/12/16/24/32/48/64 x T128/256/1K/4K/8K/16K/32K cells; all pass strict
+  pointwise/RMSE/finiteness checks before and after graph replay.
+- Frozen original10748eb timings retained with explicit historical RMSE-only
+  provenance. Fresh original H16/T128,T4096 strict checks fail; cannot silently
+  call those strict passes. Original H64/T32768 remains gray/no ratio.
+-48 valid latency ratios1.04–3.85x;4K-and-longer1.04–1.54x; no regressions.
+  H16 long ratios~1.10x at4K/8K/16K,1.06x at32K.
+- Tooling f071140 supports --baseline-report with settings/environment/input
+  generator/library guards. Byte-identical validated outputs reuse statistics;
+  six focused checker tests pass. No tolerance or production kernel changes.
+- Updated docs/gdn_mega/heatmap.{png,svg,json,csv,md}; validation checks in
+  heatmap_validation.txt. Long-shape baseline provenance/known failure preserved.

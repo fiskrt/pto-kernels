@@ -151,9 +151,11 @@ both latencies and the speedup are null, and the sweep exited 1. A resume file
 with its validation fingerprint removed was rejected with exit 2.
 A one-token H8/Hg2 case with zero initial state passed the unchanged strict
 policy, completed timing, and passed the post-replay check (2 trials × 2 calls).
-The historical heatmap and branch report now explicitly label their old
-RMSE-only acceptance, including the figure itself. Their original timing values
-are preserved; they have not been reclassified as pointwise passes.
+The branch report preserves its historical RMSE-only results. The
+[heatmap](heatmap.md) was refreshed on 2026-10-26 with the current stable kernel
+and strict checks, compared against explicitly labeled historical original
+latencies. The original measurements have not been reclassified as pointwise
+passes; fresh original strict spot-check failures are preserved alongside it.
 
 ## Reproduce and recorded checks
 

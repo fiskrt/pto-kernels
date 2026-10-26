@@ -1,5 +1,7 @@
 # Current stable GDN result
 
+Latest full head/sequence sweep: [updated heatmap, 2026-10-26](heatmap.md).
+
 Production code: **bfc99e1** (preceded by shared-operand fusion **a329112**).
 All80 strict tests pass. The restored library hash matches the tested checkpoint;
 there are no uncommitted kernel changes or rejected experimental kernels retained.
