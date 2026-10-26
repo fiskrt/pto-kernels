@@ -60,6 +60,23 @@ AUDIT_CASES = [
     dict(name="fla_positive_strong_tail75", seed=51, lengths=(75,), heads=8, key_heads=2,
          fla="positive", gate_normalizer=.01, initial=False),
     dict(name="strong_decay_tail92", seed=53, lengths=(92,), heads=8, key_heads=2, gate_scale=4.),
+    # Regressions from the beta-[0,1] audit. These failed the former kernel's
+    # elementwise bounds despite passing RMSE; keep them in normal pytest.
+    dict(name="slow_decay_interior_beta", seed=3163, lengths=(4097,), heads=8, key_heads=2,
+         correlated=True, beta=.6, constant_log_gate=-1e-7, state_scale=1.),
+    dict(name="slow_decay_nearly_correlated", seed=3011, lengths=(1025,), heads=8, key_heads=2,
+         nearly_correlated=True, beta=1., constant_log_gate=-1e-6, state_scale=1.),
+    dict(name="slow_decay_zero_initial", seed=3089, lengths=(4097,), heads=8, key_heads=2,
+         nearly_correlated=True, beta=1., constant_log_gate=-1e-6, initial=False),
+    dict(name="slow_decay_no_updates_32k", seed=3007, lengths=(32768,), heads=8, key_heads=2,
+         correlated=True, beta=0., constant_log_gate=-1e-7, state_scale=1.),
+    # Independent seeds and changing gates exercise both sides of the expm1
+    # evaluation interval, as well as transitions between strong/weak decay.
+    *[dict(name=f"decay_transition_{rate}_{amplitude}", seed=4217, lengths=(0, 513, 1025),
+           heads=8, key_heads=2, correlated=rate>.5, beta=rate, amplitude=amplitude, state_scale=1.,
+           log_gate_cycle=(0., -1e-8, -1e-6, -.1249/128, -.125/128, -.1251/128,
+                           -.1249, -.125, -.1251, -.3, -80.))
+      for rate, amplitude in ((0., 1.), (.25, 1.), (.9, 1.), (.9, 32.), (.9, 128.))],
 ]
 READ_ONLY = ("q", "k", "v", "g", "beta", "mask_lower", "mask_full", "minus_identity", "cu_seqlens")
 
@@ -85,6 +102,11 @@ def make_audit_inputs(case):
     g.mul_(case.get("gate_scale", 1.))
     if 'constant_log_gate' in case:
         g.fill_(case['constant_log_gate'])
+    if 'log_gate_cycle' in case:
+        gates = torch.tensor(case['log_gate_cycle'], dtype=g.dtype)
+        # Runs of 128 tokens also cross the chunk-decay evaluation boundary.
+        index = torch.arange(g.shape[1])[:, None] // 128 + torch.arange(g.shape[2])[None, :]
+        g.copy_(gates[index % len(gates)][None])
     amplitude = case.get("amplitude", 1.)
     v.mul_(amplitude)
     if case.get("correlated"):

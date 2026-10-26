@@ -1,5 +1,13 @@
 #pragma once
 
+// exp(x)-1 without cancellation near zero. For |x| <= 1/8 the omitted
+// term is below 1.5e-12; FP32 evaluation error dominates that bound.
+AICORE inline float mega_small_expm1(float x)
+{
+    return x*(1.0f+x*(0.5f+x*(1.0f/6.0f+x*(1.0f/24.0f+
+        x*(1.0f/120.0f+x*(1.0f/720.0f+x*(1.0f/5040.0f)))))));
+}
+
 // Public scratch allocations retain their original sizes. Paired operands use
 // separate existing half buffers; the recurrent FP32 state stays in vector UB.
 template <int R,int K,typename T,typename Full>
@@ -236,8 +244,9 @@ AICORE inline void mega_initialize_state(__gm__ half* initial,__gm__ half* final
 
 // Form B = beta * (V - exp(G) * K*S) before applying the inverse.
 // Base output exp(G)*Q*S remains in UB while the cube solves for residuals.
+struct MegaDecay { float alpha, log_alpha; };
 template<int H,int C,int D>
-AICORE inline float mega_prepare_rhs(__gm__ half* v,__gm__ float* g,__gm__ float* glow,__gm__ half* beta,
+AICORE inline MegaDecay mega_prepare_rhs(__gm__ half* v,__gm__ float* g,__gm__ float* glow,__gm__ half* beta,
     __gm__ float* projection,__gm__ float* output_base,
     int64_t pos,int valid,int head,int64_t tokens)
 {
@@ -253,6 +262,7 @@ AICORE inline float mega_prepare_rhs(__gm__ half* v,__gm__ float* g,__gm__ float
     TEXP(exponentials,gates);TCVT(betas,beta_h,RoundMode::CAST_NONE);PipeBarrierVec();
     TEXP(correction,lows);PipeBarrierVec();TMUL(exponentials,exponentials,correction);pipe_barrier(PIPE_ALL);
     float alpha=exponentials.GetValue(valid-1);
+    float log_alpha=gates.GetValue(valid-1)+lows.GetValue(valid-1);
     int stripe=get_subblockid()*R,count=max(0,min(R,valid-stripe));
     Tile<TileType::Vec,float,R,D> value,values,base;
     Tile<TileType::Vec,half,R,D> input;
@@ -271,9 +281,9 @@ AICORE inline float mega_prepare_rhs(__gm__ half* v,__gm__ float* g,__gm__ float
     TSTORE(saved,value);pipe_barrier(PIPE_ALL);
     mega_vector_load<R,D>(base,output_base+stripe*D,R,D,D);
     TROWEXPANDMUL(base,base,expcol);pipe_barrier(PIPE_ALL);
-    return alpha;
+    return {alpha,log_alpha};
 #else
-    return 0.0f;
+    return {0.0f,0.0f};
 #endif
 }
 
@@ -296,7 +306,8 @@ AICORE inline void mega_finish_output(__gm__ float* local,__gm__ half* output,in
 }
 
 template<int D>
-AICORE inline void mega_update_state(__gm__ float* exchange,float alpha,__gm__ half* final_state,bool last)
+AICORE inline void mega_update_state(__gm__ float* exchange,MegaDecay decay,__gm__ float* saved_compensation,
+                                     __gm__ half* final_state,bool first,bool last)
 {
 #if defined(__DAV_VEC__)
     constexpr int R=D/2;
@@ -305,12 +316,30 @@ AICORE inline void mega_update_state(__gm__ float* exchange,float alpha,__gm__ h
     int offset=get_subblockid()*R*D;
     GlobalTensor<float,Shape<1,1,1,R,D>,pto::Stride<1,1,1,D,1>> gm(exchange+offset);
     TLOAD(update,gm);pipe_barrier(PIPE_ALL);
-    TMULS(state,state,alpha);PipeBarrierVec();TADD(state,state,update);pipe_barrier(PIPE_ALL);
+    // Output's base tile is dead here. Preserve state rounding errors across
+    // chunks in the two existing, otherwise unused WY scratch allocations.
+    Tile<TileType::Vec,float,R,D> compensation,y,next;
+    TASSIGN(compensation,32*1024);TASSIGN(y,96*1024);TASSIGN(next,128*1024);
+    GlobalTensor<float,Shape<1,1,1,R,D>,pto::Stride<1,1,1,D,1>> cg(saved_compensation);
+    if(first){TEXPANDS(compensation,0.0f);PipeBarrierVec();}
+    else{TLOAD(compensation,cg);pipe_barrier(PIPE_ALL);}
+    TMULS(compensation,compensation,decay.alpha);PipeBarrierVec();
+    if(decay.log_alpha>=-0.125f && decay.log_alpha<=0.125f){
+        TMULS(y,state,mega_small_expm1(decay.log_alpha));PipeBarrierVec();
+        TSUB(y,y,compensation);PipeBarrierVec();TADD(next,state,y);PipeBarrierVec();
+        TSUB(compensation,next,state);PipeBarrierVec();TSUB(compensation,compensation,y);PipeBarrierVec();
+        TMOV(state,next);PipeBarrierVec();
+    }else{TMULS(state,state,decay.alpha);PipeBarrierVec();}
+    TSUB(y,update,compensation);PipeBarrierVec();TADD(next,state,y);PipeBarrierVec();
+    TSUB(compensation,next,state);PipeBarrierVec();TSUB(compensation,compensation,y);PipeBarrierVec();
+    TMOV(state,next);pipe_barrier(PIPE_ALL);
+    TSTORE(cg,compensation);pipe_barrier(PIPE_ALL);
     // Interleaved high/low rows occupy exactly the FP32 update's footprint.
     // Each subblock overwrites only rows it has already loaded.
     auto pair=reinterpret_cast<__gm__ half*>(exchange)+2*offset;
     mega_store_pair<R,D>(state,pair,pair+D,R,2*D);
     if(last){
+        TSUB(state,state,compensation);PipeBarrierVec();
         TCVT(result,state,RoundMode::CAST_RINT);pipe_barrier(PIPE_ALL);
         GlobalTensor<half,Shape<1,1,1,R,D>,pto::Stride<1,1,1,D,1>> fg(final_state+offset);
         TSTORE(fg,result);pipe_barrier(PIPE_ALL);
@@ -318,28 +347,45 @@ AICORE inline void mega_update_state(__gm__ float* exchange,float alpha,__gm__ h
 #endif
 }
 
-// Pairwise reduction matches a fixed balanced tree, without a serial 128-row
-// accumulation chain. The source may be destroyed after its elementwise product.
+// Reduce high/low products with error-free TwoSum at every tree node.
+// The low tree also carries the persistent state compensation.
 template<int Rows,int Cols>
-AICORE inline void mega_sum_rows(uint32_t address)
+AICORE inline void mega_sum_pairs()
 {
 #if defined(__DAV_VEC__)
-    Tile<TileType::Vec,float,Rows/2,Cols> top,bottom;
-    TASSIGN(top,address);TASSIGN(bottom,address+(Rows/2)*Cols*sizeof(float));
-    TADD(top,top,bottom);PipeBarrierVec();
-    if constexpr(Rows>2)mega_sum_rows<Rows/2,Cols>(address);
+    constexpr int HalfBytes=Rows/2*Cols*sizeof(float);
+    using M=Tile<TileType::Vec,float,Rows/2,Cols>;
+    M a,b,lo,lb,sum,z;
+    TASSIGN(a,64*1024);TASSIGN(b,64*1024+HalfBytes);
+    TASSIGN(lo,96*1024);TASSIGN(lb,96*1024+HalfBytes);
+    TASSIGN(sum,128*1024);TASSIGN(z,128*1024+HalfBytes);
+    TADD(sum,a,b);TADD(lb,lb,lo);PipeBarrierVec();
+    TSUB(z,sum,a);PipeBarrierVec();TSUB(lo,sum,z);PipeBarrierVec();
+    TSUB(lo,a,lo);TSUB(b,b,z);PipeBarrierVec();TADD(lo,lo,b);PipeBarrierVec();
+    TADD(lo,lo,lb);TMOV(a,sum);PipeBarrierVec();
+    if constexpr(Rows>2)mega_sum_pairs<Rows/2,Cols>();
 #endif
 }
 
 template<int D,typename State,typename Key,typename Row>
-AICORE inline void mega_vector_dot(State& state,Key& key,Row& result)
+AICORE inline void mega_accurate_dot(State& state,State& compensation,Key& key,Row& result,Row& error)
 {
 #if defined(__DAV_VEC__)
     constexpr int V=D/2;
-    Tile<TileType::Vec,float,D,V> product;TASSIGN(product,64*1024);
-    Tile<TileType::Vec,float,1,V> sum;TASSIGN(sum,64*1024);
-    TROWEXPANDMUL(product,state,key);PipeBarrierVec();
-    mega_sum_rows<D,V>(64*1024);TMOV(result,sum);PipeBarrierVec();
+    Tile<TileType::Vec,float,D,V> high,low,temp;
+    TASSIGN(high,64*1024);TASSIGN(low,96*1024);TASSIGN(temp,128*1024);
+    Tile<TileType::Vec,uint32_t,D,V> bits,split;
+    TASSIGN(bits,(uint64_t)state.data());TASSIGN(split,64*1024);
+    // Two 12-bit FP32 components retain the full exponent range. Their
+    // products with the original 11-bit FP16 key/query are exact in FP32.
+    TANDS(split,bits,0xfffff000u);PipeBarrierVec();
+    TSUB(low,state,high);PipeBarrierVec();
+    TROWEXPANDMUL(high,high,key);TROWEXPANDMUL(low,low,key);
+    TROWEXPANDMUL(temp,compensation,key);PipeBarrierVec();
+    TSUB(low,low,temp);PipeBarrierVec();
+    mega_sum_pairs<D,V>();
+    Tile<TileType::Vec,float,1,V> hi,lo;TASSIGN(hi,64*1024);TASSIGN(lo,96*1024);
+    TMOV(result,hi);TMOV(error,lo);PipeBarrierVec();
 #endif
 }
 
@@ -373,6 +419,11 @@ AICORE inline void mega_compensated_recurrence(__gm__ half* q,__gm__ half* k,__g
     Tile<TileType::Vec,float,1,V> values,prediction,correction,delta;
     TASSIGN(values,162*1024+512);TASSIGN(prediction,163*1024);
     TASSIGN(correction,163*1024+512);TASSIGN(delta,164*1024);
+    Tile<TileType::Vec,float,1,V> delta_low,virt,delta_high_part,delta_low_part;
+    TASSIGN(delta_low,166*1024+512);TASSIGN(virt,167*1024);
+    TASSIGN(delta_high_part,167*1024+512);TASSIGN(delta_low_part,168*1024);
+    Tile<TileType::Vec,uint32_t,1,V> delta_bits,split_bits;
+    TASSIGN(delta_bits,164*1024);TASSIGN(split_bits,167*1024+512);
     Tile<TileType::Vec,float,1,8> gate;
     Tile<TileType::Vec,half,1,16> beta_h;
     Tile<TileType::Vec,float,1,16> beta_f;
@@ -386,19 +437,50 @@ AICORE inline void mega_compensated_recurrence(__gm__ half* q,__gm__ half* k,__g
         mega_vector_load<1,16>(beta_h,beta+head*tokens+token,1,1,16);
         TCVT(keys,key_h,RoundMode::CAST_NONE);TCVT(queries,query_h,RoundMode::CAST_NONE);
         TCVT(values,value_h,RoundMode::CAST_NONE);TCVT(beta_f,beta_h,RoundMode::CAST_NONE);
+        pipe_barrier(PIPE_ALL);
+        float log_decay=gate.GetValue(0);
         TEXP(gate,gate);pipe_barrier(PIPE_ALL);
         float decay=gate.GetValue(0),rate=beta_f.GetValue(0);
-        TMULS(state,state,decay);TMULS(compensation,compensation,decay);PipeBarrierVec();
-        mega_vector_dot<D>(state,keycol,prediction);mega_vector_dot<D>(compensation,keycol,correction);
-        TSUB(prediction,prediction,correction);PipeBarrierVec();TSUB(delta,values,prediction);PipeBarrierVec();
-        TMULS(delta,delta,rate);PipeBarrierVec();
+        TMULS(compensation,compensation,decay);PipeBarrierVec();
+        if(log_decay!=0.0f && log_decay>=-0.125f && log_decay<=0.125f){
+            // S*exp(g) = S + S*expm1(g). Preserve both the tiny decay
+            // and its addition error, just as for the rank-one update.
+            TMULS(y,state,mega_small_expm1(log_decay));PipeBarrierVec();
+            TSUB(y,y,compensation);PipeBarrierVec();TADD(next,state,y);PipeBarrierVec();
+            TSUB(compensation,next,state);PipeBarrierVec();TSUB(compensation,compensation,y);PipeBarrierVec();
+            TMOV(state,next);PipeBarrierVec();
+        }else{TMULS(state,state,decay);PipeBarrierVec();}
+        mega_accurate_dot<D>(state,compensation,keycol,prediction,correction);
+        // Error-free subtraction keeps the low projection bits through the
+        // residual, rather than discarding them before a long update chain.
+        TSUB(delta,values,prediction);PipeBarrierVec();
+        TSUB(virt,delta,values);PipeBarrierVec();TSUB(delta_low,delta,virt);PipeBarrierVec();
+        TSUB(delta_low,values,delta_low);TADD(virt,prediction,virt);PipeBarrierVec();
+        TSUB(delta_low,delta_low,virt);PipeBarrierVec();TSUB(delta_low,delta_low,correction);PipeBarrierVec();
+        // beta and K are original FP16 inputs. Splitting the FP32 operand
+        // into 12-bit parts makes both products exact without FP16 narrowing.
+        TANDS(split_bits,delta_bits,0xfffff000u);PipeBarrierVec();
+        TSUB(delta_low_part,delta,delta_high_part);PipeBarrierVec();
+        TMULS(delta_high_part,delta_high_part,rate);TMULS(delta_low_part,delta_low_part,rate);
+        TMULS(delta_low,delta_low,rate);PipeBarrierVec();
+        TADD(delta,delta_high_part,delta_low_part);PipeBarrierVec();
+        TSUB(correction,delta_high_part,delta);PipeBarrierVec();TADD(correction,correction,delta_low_part);PipeBarrierVec();
+        TADD(delta_low,delta_low,correction);PipeBarrierVec();
+        TANDS(split_bits,delta_bits,0xfffff000u);PipeBarrierVec();
+        TSUB(delta_low_part,delta,delta_high_part);PipeBarrierVec();
         Tile<TileType::Vec,float,D,V> update;TASSIGN(update,64*1024);
-        TCOLEXPAND(update,delta);PipeBarrierVec();TROWEXPANDMUL(update,update,keycol);PipeBarrierVec();
-        TSUB(y,update,compensation);PipeBarrierVec();TADD(next,state,y);PipeBarrierVec();
-        TSUB(compensation,next,state);PipeBarrierVec();TSUB(compensation,compensation,y);PipeBarrierVec();
+        TCOLEXPAND(update,delta_high_part);TCOLEXPAND(y,delta_low_part);TCOLEXPAND(next,delta_low);PipeBarrierVec();
+        TROWEXPANDMUL(update,update,keycol);TROWEXPANDMUL(y,y,keycol);TROWEXPANDMUL(next,next,keycol);PipeBarrierVec();
+        TADD(y,y,next);PipeBarrierVec();TSUB(compensation,compensation,y);PipeBarrierVec();
+        // TwoSum(state, update) retains the addition error even when the
+        // two large terms nearly cancel; compensation has the negative sign.
+        TADD(next,state,update);PipeBarrierVec();TSUB(y,next,state);PipeBarrierVec();
+        TSUB(update,update,y);PipeBarrierVec();TSUB(y,next,y);PipeBarrierVec();
+        TSUB(y,state,y);PipeBarrierVec();TADD(y,y,update);PipeBarrierVec();
+        TSUB(compensation,compensation,y);PipeBarrierVec();
         TMOV(state,next);PipeBarrierVec();
-        mega_vector_dot<D>(state,querycol,prediction);mega_vector_dot<D>(compensation,querycol,correction);
-        TSUB(prediction,prediction,correction);PipeBarrierVec();TCVT(result_h,prediction,RoundMode::CAST_RINT);pipe_barrier(PIPE_ALL);
+        mega_accurate_dot<D>(state,compensation,querycol,prediction,correction);
+        TADD(prediction,prediction,correction);PipeBarrierVec();TCVT(result_h,prediction,RoundMode::CAST_RINT);pipe_barrier(PIPE_ALL);
         GlobalTensor<half,Shape<1,1,1,1,V>,pto::Stride<1,1,1,V,1>> out(output+(token*H+head)*D+column);
         TSTORE(out,result_h);pipe_barrier(PIPE_ALL);
     }
@@ -421,7 +503,8 @@ AICORE inline void mega_fused_pipeline(__gm__ half* q,__gm__ half* k,__gm__ half
     __gm__ half* uh_ws,__gm__ half* ul_ws,__gm__ half* k_ws,__gm__ half* state_ws,__gm__ half* solve_ws,
     __gm__ half* output,__gm__ half* final_state,__gm__ half* initial,bool has_initial,
     __gm__ int32_t* cu,int64_t sequences,int kh,int64_t tokens,
-    __gm__ float* kk,__gm__ float* kk_upper,__gm__ float* qk,__gm__ float* lower,__gm__ float* full,__gm__ float* g_raw)
+    __gm__ float* kk,__gm__ float* kk_upper,__gm__ float* qk,__gm__ float* lower,__gm__ float* full,__gm__ float* g_raw,
+    __gm__ half* compensation_first,__gm__ half* compensation_second)
 {
 #if defined(__DAV_VEC__)
     set_mask_norm();set_vector_mask(-1,-1);
@@ -448,6 +531,10 @@ AICORE inline void mega_fused_pipeline(__gm__ half* q,__gm__ half* k,__gm__ half
     auto first=uh_ws+block*C*C,second=ul_ws+block*C*C;
     auto solve_scratch=reinterpret_cast<__gm__ float*>(solve_ws+block*C*C);
     auto control=solve_ws+block*C*C+C*C/2;
+#if defined(__DAV_VEC__)
+    auto saved_compensation=reinterpret_cast<__gm__ float*>(
+        (get_subblockid()==0?compensation_first:compensation_second)+block*D*D);
+#endif
     for(int64_t work=block;work<sequences*H;work+=get_block_num()){
         int seq=work/H,head=work%H;int64_t start=cu[seq],end=cu[seq+1];
 #if defined(__DAV_VEC__)
@@ -488,13 +575,13 @@ AICORE inline void mega_fused_pipeline(__gm__ half* q,__gm__ half* k,__gm__ half
             if(pos+C<end)next_coupled=mega_prepare_weights<H,C>(g,glow,beta,kk,kk_upper,qk,lower,full,att_high,att_low,pos+C,min(static_cast<int64_t>(C),end-pos-C),head,
                 kh,tokens);
             wait_flag_dev(5);
-            float alpha=mega_prepare_rhs<H,C,D>(v,g,glow,beta,exchange,local_output,pos,valid,head,tokens);
+            auto decay=mega_prepare_rhs<H,C,D>(v,g,glow,beta,exchange,local_output,pos,valid,head,tokens);
             ffts_cross_core_sync(PIPE_MTE3,1|(2<<4)|(6<<8));
             if(pos+C<end)mega_finish_inverse<H,C>(g,glow,lower,full,weighted_first,pos+C,min(static_cast<int64_t>(C),end-pos-C),head,kh,tokens,first,second,
                 k,weighted_second,control,next_coupled);
             wait_flag_dev(9);
             mega_finish_output<H,C,D>(local_output,output+(pos*H+head)*D,valid);
-            mega_update_state<D>(exchange,alpha,final_state+work*D*D,pos+C>=end);
+            mega_update_state<D>(exchange,decay,saved_compensation,final_state+work*D*D,pos==start,pos+C>=end);
             ffts_cross_core_sync(PIPE_MTE3,1|(2<<4)|(6<<8));
 #endif
 #if defined(__DAV_CUBE__)

@@ -64,7 +64,8 @@ AICORE inline void mega_kernel_impl(GM_ADDR q_ptr, GM_ADDR k_ptr, GM_ADDR v_ptr,
         reinterpret_cast<__gm__ half*>(h_ws_ptr),reinterpret_cast<__gm__ half*>(o_ws_qk_ptr),reinterpret_cast<__gm__ half*>(o_ptr),reinterpret_cast<__gm__ half*>(fs_ptr),
         reinterpret_cast<__gm__ half*>(h0_ptr),has_initial_state,cu,batch_size,num_key_heads,total_tokens,
         reinterpret_cast<__gm__ float*>(v_new_ptr),reinterpret_cast<__gm__ float*>(s_ptr),reinterpret_cast<__gm__ float*>(A_inv_f32_ptr),
-        reinterpret_cast<__gm__ float*>(msk_lower_ptr),reinterpret_cast<__gm__ float*>(msk_full_ptr),reinterpret_cast<__gm__ float*>(g_in_ptr));
+        reinterpret_cast<__gm__ float*>(msk_lower_ptr),reinterpret_cast<__gm__ float*>(msk_full_ptr),reinterpret_cast<__gm__ float*>(g_in_ptr),
+        reinterpret_cast<__gm__ half*>(wy_ws_a1_ptr),reinterpret_cast<__gm__ half*>(wy_ws_a2_ptr));
     pipe_barrier(PIPE_ALL);
 }
 
