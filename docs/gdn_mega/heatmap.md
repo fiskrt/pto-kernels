@@ -1,5 +1,8 @@
 # Current GDN latency heatmap
 
+Snapshot note: this page measures `bfc99e1`. The later `aac5a4d` changes and
+checked performance are in the [structural optimization report](optimization_20261026.md).
+
 Updated 2026-10-26. **Original `10748eb` versus current stable `bfc99e1`.** This replaces
 the old `5141f56` FP16 heatmap and its outdated 2.91–7.53× summary.
 

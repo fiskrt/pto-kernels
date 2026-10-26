@@ -534,3 +534,34 @@ Next promising structural targets: keep stable inverse intermediates closer to
 compute; take independent prep off late state feedback with bounded buffers
 and idle core groups. Prior global-precompute design was slower: do not simply
 repeat it. Native FP32 projection ablation only addresses~100us, not entire gap.
+
+2026-10-26, follow-up structural optimization (`aac5a4d`):
+- Batched dependent inverse levels: independent operands/accumulators, six
+  synchronized export/reload phases. Small MAD accumulator layout MUST be native
+  BxB per group; treating it as a RowsxB subview corrupts later column panels.
+- Direct byte-offset coefficient gathers eliminate diagonal transposes. Vector
+  vmla with src1 repeat stride0 consumes solved rows without broadcast copies.
+- Weight next chunk before flag5, preserve its coefficients in UB96..128 through
+  RHS (V converts in UB128, input reuses0); finish inverse only after ack.
+- Whole attention/Gamma tiles partition existing allocations by halves of heads;
+  all supported H are even. No caller allocation/ABI/stage changes.
+- Normal production build:80tests pass92.18s; strict256..32K sweep7/7. H16/Hg4
+  4K803.037->720.410us;32K6528.661->5766.021us. Additional4K H8/H24/H64 speedups
+  1.157/1.150/1.171x. Screening final_base701us is NOT production's720us.
+- Hardware profile:794.432->700.678us (separate from graph timing); cube active
+  175.58->169.46, MTE2 193.66->166.26, FIX148.04->114.58, vector316.97->282.95us.
+  Vec flag5 wait114.85->3.56, flag9 wait12.07->87.86us; counters overlap.
+- Rejected measured4K candidates: headmajor810us; all-core precomputed inverse
+  1147; split weights with extra copy801; factored final64 solve812; paired
+  on-chip inverse/native RHS830; packed FP32 GM799.7; native projections874;
+  spare-core full preparation824 (H8 709 vs retained680); helpers weights-only
+  748. Two-chunk lookahead with pending weights preserved through output/state
+  passed128/4K but730us, so rejected. No inactive versions in production.
+- Compiler rejects FP32 cc->cbuf intrinsic destinations even bypassing PTO guard;
+  supported direct accumulator copies narrow. Do not claim native FP32 L1 path.
+- Failed cached-identity and early source-layout variants retained as failures
+  in report. One early packed run loaded baseline before candidate finished;
+  explicitly excluded, launcher now tests candidate exists, compare loaded SHA.
+- Primary reproducible evidence: docs/gdn_mega/optimization_20261026.md/json/csv.
+  Isolated experiments remain ignored under benchmark_data/gdn_mega/breakthrough_20261026.
+  Two global phases, seven production files,1302 physical lines. Target3x NOT met.

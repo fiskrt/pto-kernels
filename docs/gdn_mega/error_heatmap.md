@@ -1,5 +1,8 @@
 # Original versus current GDN output error
 
+Snapshot note: this page measures `bfc99e1`. The later `aac5a4d` changes and
+checked performance are in the [structural optimization report](optimization_20261026.md).
+
 Fresh measurements on 2026-10-26, original `10748eb` versus current stable
 `bfc99e1`. Both implementations receive byte-identical inputs and reference
 results. These are accuracy measurements, separate from the historical latency

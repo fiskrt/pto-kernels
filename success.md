@@ -581,3 +581,29 @@ persistent phase768.41us. Identified vector preparation, dependent FP32 inverse
 scratch round trips,129us state feedback waits and16/24 active persistent groups.
 Raw counters, clock samples, reproducible diagnostic patch and traceviz timeline
 are saved. No tolerance/ABI/allocation change.3x target remains unmet.
+
+2026-10-26 — `aac5a4d`: reduce stable GDN solve serialization and overlap
+next-chunk preparation. Queue independent FP32 inverse joins by level; gather
+triangular-solve coefficients directly and broadcast the solved row through
+vector instruction strides; retain pending weights in UB before projection
+acknowledgement; transfer whole FP32 attention/Gamma tiles in the existing
+allocations. All seven production source files remain used, with no new tuning
+options, entry arguments, allocations, precision shortcuts or global stages.
+Production GDN-only build succeeded; all80 strict tests passed in92.18s, including
+FP64/poisoned-workspace audits. Fresh H16/Hg4/nonzero-state production graph sweep
+(9x20) passes7/7 shapes: T256 .094064->.086807ms;512 .141884->.127788;
+1024 .235302->.211988;4096 .803037->.720410;8192 1.577844->1.418542;
+16384 3.208187->2.833265;32768 6.528661->5.766021. These are1.084–1.132x
+speedups against the previous *correct* production kernel, not the inaccurate
+historical original. The screened isolated candidate reached .701ms at4K;
+report the cleaned production build's .720ms instead. Library SHA256:
+619b7df351e839f58d853d3ca639cafca44127a18e270626dfe2ddc79f5ed89d.
+Raw measurements, numerical errors and rejected structural experiments are in
+docs/gdn_mega/optimization_20261026.json/csv and the accompanying Markdown report.
+The requested3x target is still unmet; this is a validated improvement, not a
+claim of the requested2x/3x breakthrough.
+Additional matched4K checks for `aac5a4d`: H8/Hg2 .787242->.680237ms,
+H24/Hg6 .826423->.718642ms, H64/Hg16 2.511402->2.144606ms, all strict checks pass.
+Fresh hardware profiler task duration794.432->700.678us is recorded separately
+from graph timing. Later two-chunk lookahead passed its initial checks but did
+not improve latency and was not retained.
