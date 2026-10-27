@@ -703,3 +703,29 @@ critical audit section and data/precision_audit.json/csv. Source commits0a1797e,
 -31 CPU report/checker tests pass. Deterministic rendering,complete800 launches,
   provenance,local links and four Markdown pages verified. No kernel/tolerance
   changes; do not claim universal green suite or catastrophic errors.
+
+2026-10-27 — IMPORTANT current policy supersedes historical no-relaxation notes:
+- User explicitly said all measured errors are acceptable and requested changing
+  atol/rtol to accept them and moving these cases into regular suites.
+- Commitdf37822: ATOL=1e-4, RTOL=1e-3, MAX_RMSE_RATIO=.005. Fixed global policy
+  for every raw output and state element; never adapt thresholds to candidates.
+  Kernel677c0ee / librarydfb01e1 unchanged. Do NOT call this a numerical kernel fix.
+- Shared pure-Python catalog tests/gdn_mega_cases.py:STANDARD36+CRITICAL56+
+  CORRELATION68=AUDIT_CASES160. Pytest now parametrizes all160 by default;
+  audit --suite standard still selects36; --suite all exactly160 without duplicates.
+  Original dictionaries/seeds are identical to historical numerical_regimes.json.
+- Fresh23-former-failure audit allpass, identical input hashes and unchanged
+  tolerance-independent statistics. Max required_atol_at_fixed_rtol8.2929952887e-5
+  (critical_nearly_correlated_3011_128.0 finalstate); new worst ratio.841616.
+  The137 older passing cases already needed<=1e-5. Full fresh suite245pass501.87s;
+  ordinary collection explicitly lists160 parameter names, total245tests.
+- Every-element checks, FP64 independent reference, finiteness, exact shapes,
+  guards/inputs and five scratch-poison repetitions kept. Three new boundary
+  tests at reference0/1/100 reject one element1% over budget despite passing RMSE.
+- Report formulas now use their recorded policy, not hardcoded/live tolerance.
+  Old error grids/numerical_regimes data stay immutable withatol1e-5 diagnostics.
+  accepted_precision.json records authorization, calibration, all245test log,
+  collection, source hashes. Renderer verifies matching kernel/cases/input hashes.
+- Canonical auto-loop test command is the four GDN files in docs/gdn_mega/README.md;
+  no old240s timeout (expanded full suite takes~8m21s, mostly CPU FP64 work).
+  No new runtime tuning options, fallback, caller allocation or production-code changes.

@@ -726,3 +726,20 @@ near-lossless cases and20larger-scale probes fail. Failures remain finite and
 explicit. Worst normalized witness7.35452e-5 against1.10690e-5 allowance (6.644x)
 is described as a small absolute error, not a massive output error. No tolerance
 changes, outlier removal or fallback. Data: docs/gdn_mega/data/numerical_regimes.json.
+
+2026-10-27 — `df37822`: user-approved precision budget and regular stress coverage.
+The user explicitly accepted the small measured errors and requested a tolerance
+change plus normal regression tests. Fixed ATOL is now1e-4 (was1e-5), RTOL remains
+1e-3; finiteness, RMSE<.005, every raw-output/state element, CPU FP64 golden,
+input/guard integrity and five poisoned-workspace launches remain mandatory.
+All160 exact existing cases now come from tests/gdn_mega_cases.py and run under
+ordinary pytest (36standard+56critical+68correlation), with no opt-in stress flag.
+Full245-test suite passes501.87s;34 reporting/checker tests pass0.27s. Three new
+boundary tests reject a single beyond-budget element even when RMSE passes.
+All23 former failures were freshly recalibrated: largest required absolute floor
+at unchanged rtol8.2929952887e-5, below1e-4; worst new ratio in those cases.841616.
+This is a policy/coverage improvement, NOT improved kernel arithmetic. Inputs and
+tolerance-independent error statistics match the older audit; kernel binary
+remainsdfb01e1. Historical figures and failure data retain their old policy.
+Calibration/full log/collection: docs/gdn_mega/data/accepted_precision.json;
+current policy and old diagnostics coexist in error_heatmap.md and README.md.

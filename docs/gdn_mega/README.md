@@ -16,23 +16,34 @@ of the maintained report set.
 
 ## Current implementation and correctness
 
-**Production now always uses the parallel chunk pipeline; the sequential
-fallback and its detection overhead have been removed.** The final regression
-run after removal passes **116 tests and fails 2**: `nearly_correlated_beta1`
-and `delayed_nearly_correlated`, both synthetic amplitude-32 cases with beta=1
-and no decay. These failures remain ordinary failing tests, with unchanged
-tolerances; the whole suite is not green.
+**Production always uses the parallel chunk pipeline; the sequential fallback
+remains removed.** At the user's request, the absolute tolerance is now
+**1e-4**, with **rtol=1e-3 unchanged**. This explicitly accepts the measured
+small absolute errors; it is a policy change, not a kernel precision improvement.
 
-The expanded current-kernel audit passes **137/160 synthetic cases** and fails
-23, including three unit-scale 32K near-lossless-memory cases and 20 larger-scale
-stress cases. All remain finite. The [accuracy regimes and failure severity](error_heatmap.md#accuracy-regimes-where-the-current-kernel-passes-and-fails)
-separate these from the 126/126 passing real-input cases and show absolute witness
-errors, allowances, violation counts and priorities for further validation.
+The complete GDN regression suite passes **245 tests in 501.87 seconds**, including
+**all 160 fixed numerical cases**: 36 standard, 56 critical and 68 correlation
+cases. The 124 cases formerly available only through the standalone audit are
+now ordinary pytest parameters, with no opt-in marker or external data dependency.
+Every one of the 23 formerly failing cases passes the approved bound.
+
+At fixed rtol, the largest absolute floor actually needed by those former
+failures is **8.2929953e-5**; choosing 1e-4 leaves a modest margin. All inputs,
+kernel arithmetic and tolerance-independent error statistics stayed the same.
+The three new boundary tests verify that one element just beyond the approved
+budget fails even when RMSE passes. [Calibration and full test log](data/accepted_precision.json).
+
+The [accuracy regimes and severity report](error_heatmap.md#accuracy-regimes-where-the-current-kernel-passes-and-fails)
+shows the current acceptance alongside preserved tighter-policy diagnostics.
+Under the old 1e-5 absolute floor, the expanded audit passed 137/160 and failed
+23; those historical records have not been overwritten or relabeled. Existing
+126/126 real-input passes already satisfied that older, tighter bound.
 
 Historical results below retain their original library fingerprints. Before
 removal, `aac5a4d` passed 118 regression tests but failed 23/56 additional
 critical cases, even with beta in [0,1]. Its saved FP64 heatmap passes 63/63
-shapes, while the original implementation fails all 63 under this policy.
+shapes, while the original implementation fails all 63 under that run's
+recorded atol=1e-5 policy.
 Those grids have not been relabeled as measurements of the new kernel.
 [Historical validation evidence](data/validation.json) and
 [critical audit](#critical-precision-audit-beta-in-01).
@@ -40,9 +51,9 @@ The tests include an independent FP64 token oracle, supplied initial state,
 ragged/empty sequences, FLA-derived stress cases and poisoned/repeated workspace.
 
 Every raw-output and final-state element must meet
-`abs(error) <= 1e-5 + 1e-3*abs(reference)`, plus finiteness and relative RMSE < 0.005.
+`abs(error) <= 1e-4 + 1e-3*abs(reference)`, plus finiteness and relative RMSE < 0.005.
 This is an elementwise mixed absolute/relative bound, not RMSE-only acceptance
-or a uniform maximum absolute error of 1e-5. Original-kernel failures remain visible.
+or a uniform maximum absolute error of 1e-4. Historical original-kernel results retain their recorded policy.
 
 The current kernel batches independent inverse joins, eliminates vector-solve
 transposes/broadcast copies, starts next-chunk weighting earlier and transfers
@@ -62,9 +73,16 @@ From the repository root, using the prepared CANN container:
 
 ```bash
 bash scripts/gdn_mega_docker.sh bash scripts/build_gdn_mega.sh
-bash scripts/gdn_mega_docker.sh python -m pytest tests/test_gdn_mega.py tests/test_gdn_mega_validation.py -q
+bash scripts/gdn_mega_docker.sh python -m pytest tests/test_gdn_mega.py tests/test_gdn_mega_validation.py tests/test_gdn_mega_errors.py tests/test_gdn_mega_benchmark.py -q
 bash scripts/report_gdn_mega.sh all
 ```
+
+Use the full pytest command above in optimization loops; it includes all 160
+numerical cases and five poisoned-workspace launches per case. The shared
+catalog is `tests/gdn_mega_cases.py`; acceptance lives in
+`tests/gdn_mega_validation.py`. A plain test run fails on any element beyond
+the fixed budget; no tolerance is fitted to the candidate kernel. The CPU FP64
+goldens dominate the complete suite runtime.
 
 Use `latency` or `errors` instead of `all` to regenerate one report. Use `render`
 to regenerate both Markdown pages and all plots from saved data without running
@@ -241,12 +259,13 @@ remain valid for its stated input distribution; they do not cover these cases.
 [All cases, five repeats, source/binary hashes and analytic witnesses](data/precision_audit.json) ·
 [Per-case CSV](data/precision_audit.csv).
 
-Reproduce the supported-range audit (currently exits 1 because of numerical failures):
+Reproduce these input cases under the current approved policy (the historical
+results above used atol=1e-5):
 
 ```bash
 bash scripts/gdn_mega_docker.sh python benchmarking/audit_gdn_mega.py \
   --suite critical --output benchmark_data/gdn_mega/critical_precision.json
-# Smaller failing case, beta strictly inside [0,1]:
+# Former strict-bound failing case, beta strictly inside [0,1]:
 bash scripts/gdn_mega_docker.sh python benchmarking/audit_gdn_mega.py \
   --suite critical --cases interior_beta_0.6_correlated \
   --output benchmark_data/gdn_mega/precision_repro.json
@@ -324,8 +343,8 @@ their coupling coefficients is at most 0.3751, below the 0.5 trigger. That grid
 therefore does not establish correlated-key performance. The verified input
 hashes and bounds are included in the full evidence.
 
-Reproduce the 68 controlled cases on the current production library (exits 1
-because the strict failures are retained):
+Reproduce the 68 controlled cases under the current approved policy (the
+historical results above used atol=1e-5):
 
 ```bash
 bash scripts/gdn_mega_docker.sh python benchmarking/audit_gdn_mega.py \
@@ -475,9 +494,12 @@ these are seven selected controls, not a regenerated full heatmap.
 | 16384 | 2869.37 | 2687.06 | 1.068× |
 | 32768 | 5900.52 | 5390.88 | 1.095× |
 
-### Remaining strict failures
+### Historical failures under the previous absolute floor
 
-The complete regression suite has **116 passing tests and 2 failing tests**.
+The following results used atol=1e-5. These same cases now pass atol=1e-4 and
+remain in ordinary regression coverage; their historical errors are preserved.
+
+At the original removal checkpoint, the regression suite had **116 passing tests and 2 failing tests**.
 The failures are retained unchanged, without xfail markers or looser bounds:
 
 | Synthetic case | Output violations | State violations | Worst output error / allowance | Worst state error / allowance |

@@ -2,7 +2,10 @@
 
 For measured pass/fail combinations and their absolute error severity, see
 [current accuracy regimes](error_heatmap.md#accuracy-regimes-where-the-current-kernel-passes-and-fails).
-Generator ranges below are not universal accuracy guarantees.
+Generator ranges below are not universal accuracy guarantees. The current
+user-approved policy is atol=1e-4, rtol=1e-3; older measured failures remain
+labeled with their original atol=1e-5. All160 fixed numerical cases now run in
+ordinary pytest and pass the approved bound.
 
 Sources pinned to FLA commit `12cb9d40bae8cd58325d1f8cbec4c8c8c55e9f3e`:
 [test generators](https://github.com/fla-org/flash-linear-attention/blob/12cb9d40bae8cd58325d1f8cbec4c8c8c55e9f3e/tests/ops/test_gdn.py),

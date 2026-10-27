@@ -38,9 +38,10 @@ on decay and no division by a potentially underflowed gate exponential.
 
 Every head uses this parallel chunk algorithm. There is no coupling threshold,
 per-chunk detection reduction, or sequential token fallback. Real Qwen capture
-replays pass without that fallback; synthetic large-amplitude correlated-key
-cases still expose small elementwise failures. The strict tests retain those
-failures rather than changing their tolerance. See the
+replays pass without that fallback. All 160 fixed numerical regression cases
+pass the user-approved atol=1e-4, rtol=1e-3 policy, including the small errors
+previously rejected by atol=1e-5. Historical tighter-policy results remain
+recorded. See the
 [current validation report](../../../docs/gdn_mega/README.md) for measured scope.
 
 A persistent kernel means that the same hardware group loops over successive
@@ -100,19 +101,22 @@ existing shapes, as demonstrated by `_prepare_gdn_mega` in
 
 ```bash
 bash scripts/gdn_mega_docker.sh bash scripts/build_gdn_mega.sh
-bash scripts/gdn_mega_docker.sh timeout 240 python -m pytest \
-  tests/test_gdn_mega.py tests/test_gdn_mega_validation.py -q
-bash scripts/gdn_mega_docker.sh timeout 600 python benchmarking/audit_gdn_mega.py \
-  --output benchmark_data/gdn_mega/current_accuracy.json
+bash scripts/gdn_mega_docker.sh python -m pytest \
+  tests/test_gdn_mega.py tests/test_gdn_mega_validation.py \
+  tests/test_gdn_mega_errors.py tests/test_gdn_mega_benchmark.py -q
+bash scripts/gdn_mega_docker.sh python benchmarking/audit_gdn_mega.py \
+  --suite all --output benchmark_data/gdn_mega/current_accuracy.json
 bash scripts/gdn_mega_docker.sh timeout 600 python benchmarking/gdn_mega.py \
   --initial-state --lengths 128 4096 8192 16384 32768 \
   --output benchmark_data/gdn_mega/current_performance.json
 ```
 
 The independent oracle is CPU FP64 token recurrence. Acceptance checks every
-raw-output and final-state element against `1e-5 + 1e-3*abs(reference)`, as well
+raw-output and final-state element against `1e-4 + 1e-3*abs(reference)`, as well
 as relative RMSE < 0.005, finiteness, exact shapes, guarded outputs, unchanged
-inputs, and repeated launches with poisoned scratch. No tolerance was relaxed.
+inputs, and repeated launches with poisoned scratch. The user approved raising
+atol from1e-5 to1e-4; rtol and the other checks are unchanged. All160 cases run
+by default, with explicit boundary tests rejecting errors beyond the new budget.
 Historical RMSE-only timing results in the
 [report index](../../../docs/gdn_mega/README.md) are not certificates
 for this stricter policy. Current milestones and remaining limitations are
