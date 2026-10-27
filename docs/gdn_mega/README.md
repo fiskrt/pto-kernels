@@ -3,7 +3,15 @@
 The current experimental findings for chunk size, inverse size, leaf algorithm,
 joining and arithmetic are recorded in [the structural search report](algorithm_search.md).
 It distinguishes CPU stability models, partial NPU screens and fully verified
-candidates; production remains unchanged by those experiments.
+candidates; production remains unchanged by those experiments. Cube Newton A16
+and A32 both passed 246 tests but were 1.8–1.9× slower than the faster vector
+candidate at long contexts, so their implementations were discarded.
+
+Exploration cleanup removed 2,551 files (6.04 GB). The ignored GDN data directory
+now contains only the original baseline library, the current profile's render
+inputs, the user-provided Qwen capture, the FP64 reference cache, and the verified
+faster join candidate. Its source patch is retained in the structural-search JSON;
+rejected prototypes and unused experimental build directories are gone.
 
 The maintained reports are:
 
@@ -577,9 +585,10 @@ bash scripts/gdn_mega_docker.sh python benchmarking/gdn_mega.py \
   --output benchmark_data/gdn_mega/fallback_removal/ordinary_after.json
 ```
 
-The old library is preserved locally under
-`benchmark_data/gdn_mega/fallback_removal/before_lib/`; its SHA256 starts `619b7df`.
-Select it through `LD_LIBRARY_PATH` to reproduce the before measurements.
+The historical pre-removal library SHA256 starts `619b7df`; its measurements
+and provenance remain in the committed report data. The obsolete local library
+was removed during exploration cleanup. Rebuild its recorded source checkpoint
+to repeat those historical measurements.
 The current library SHA256 starts `dfb01e1`. The speed heatmap now measures this
 library against the original. The error heatmaps remain explicitly tied to their
 pre-removal checkpoint and tighter historical tolerance.

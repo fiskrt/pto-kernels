@@ -808,7 +808,8 @@ kernel-latency comparison. The 35 checker/benchmark tests also pass (0.29 second
 including cache invalidation and corruption rejection. Quick screens take about
 2.2–2.4 seconds after process startup and before the checked timing sweep.
 
-No production kernel optimization is promoted by this commit. Raw evidence is
-under `benchmark_data/gdn_mega/optimize_20261027/`; full candidate manifest is
-`build/gdn_async_joins/verification.json`.
+No production kernel optimization is promoted by this commit. After the requested
+exploration cleanup, evidence is retained in `docs/gdn_mega/data/algorithm_search.json`;
+the verified faster candidate library/manifest are in
+`benchmark_data/gdn_mega/verified_candidate/`. Rejected raw experiments were removed.
 

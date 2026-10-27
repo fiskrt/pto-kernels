@@ -48,8 +48,9 @@ These are sampled matrices, not complete input-domain guarantees.
 
 For L=I-N with strictly lower-triangular N, the inverse is the *finite* polynomial
 I+N+...+N^(C_inv-1). None of these models drops powers based on decay.
-Horner, Estrin, Paterson–Stockmeyer and band-limited Newton have **not yet been
-implemented and benchmarked as complete NPU pipelines in this sweep**.
+Horner, Estrin and Paterson–Stockmeyer have **not yet been implemented and
+benchmarked as complete NPU pipelines in this sweep**. Band-limited Newton has
+now been tested on hardware; see the cube Newton experiment below.
 
 Maximum absolute leaf-inverse error against FP64, with FP32 arithmetic:
 
@@ -74,7 +75,7 @@ Maximum absolute leaf-inverse error against FP64, with FP32 arithmetic:
   size-32 errors reach order 10. Their unmodified FP32 forms are poor candidates
   for the full supported numerical regime. This does not rule out stabilized
   or differently preconditioned variants of these methods.
-- **Band-limited Newton:** the most interesting unmeasured A candidate. Starting
+- **Band-limited Newton:** numerically promising in this CPU study. Starting
   with the diagonal and first subdiagonal, apply X←X(2I−LX), then retain the
   diagonal band known to be correct. The band grows 1→3→7→15→31→63. In exact
   arithmetic, if I−LX is zero through band b, its square is zero through band
@@ -82,7 +83,8 @@ Maximum absolute leaf-inverse error against FP64, with FP32 arithmetic:
   is a structural construction, not a decay threshold. Sampled intermediate
   magnitudes stayed ≤1 and FP32 errors remained near forward substitution.
   It needs 6 dense products at size 16 and 8 at size 32, plus masking and data
-  movement. Whether cube execution beats vector substitution is still unknown.
+  movement. The hardware experiment below finds that the tested cube mapping is
+  slower than vector substitution.
 
 Single-FP16-operand polynomial models also fail multiple sampled regimes.
 Neither their failure nor the CPU FP32 success substitutes for NPU elementwise
@@ -116,6 +118,95 @@ those exchanges but increases matrix work and forces substantial retiling.
 **C=128, C_inv=16 remains the best measured complete configuration.** The modest
 factored/asynchronous gain is not the requested breakthrough, and its long-context
 gain is smaller and variable; no 2× or 3× new improvement has been demonstrated.
+
+## Cube Newton hardware experiment
+
+Band-limited Newton was implemented and tested as a complete NPU pipeline for C=128
+and C_inv=16/32. It uses native FP32 cube products and vector band masks:
+
+```
+X = I + first_subdiagonal(N)
+L = I - N
+repeat until the band covers the leaf:
+    E = I - L @ X
+    X = mask_to_next_band(X + X @ E)
+```
+
+The 16-leaf version performs three Newton iterations; the 32-leaf version
+performs four. Masks retain bands 0..3, 0..7, 0..15, and then 0..31. There is
+no decay-based power truncation, threshold, or sequential fallback. Both use
+factored final joining and overlap independent joins, matching the FP32 search
+candidate. The external input/output ABI and all caller allocations are unchanged.
+The packed Newton operands fit in the existing 32 KiB per-group solve scratch.
+
+The first implementation incorrectly placed a persistent distance tile in
+PTO's reserved [184,192) KiB UB scratch, causing ordinary-input failures.
+Moving it below that region fixed the defect. Those broken executions are
+excluded from performance and numerical conclusions. Final constants use vector
+broadcast/arithmetic rather than a scalar store for every mask element.
+
+H16/Hg4, D=128, nonzero initial state. Each entry is the range of two median
+measurements in opposite variant orders; each median uses 15 graph trials of
+20 calls. Outputs and final states pass before and after replay. Times are µs.
+
+| Algorithm | T=256 | T=4096 | T=32768 |
+|---|---:|---:|---:|
+| Production, vector A16 | 82.4–82.5 | 692.5–694.7 | 5348.4–5429.7 |
+| Factored/overlapped joins, vector A16 | 78.6–79.2 | 659.1–661.6 | 5327.6–5330.9 |
+| Cube Newton A16 | 105.1–105.2 | 1183.0–1191.2 | 9518.5–9619.5 |
+| Cube Newton A32 | 109.0–111.2 | 1281.0–1285.7 | 10147.4–10204.5 |
+
+Both final Newton variants pass **all 246 regression tests**, including the
+independent FP64 token-recurrence elementwise checks on outputs and final states,
+input/guard integrity and five poisoned-workspace launches. The unchanged bound
+is `abs(error) <= 1e-4 + 1e-3*abs(reference)`; no RMSE-only acceptance or relaxed
+tolerances. Full-suite times were 154.6 s (A16) and 155.6 s (A32); all-seven-head
+builds took 12.0 s and 11.2 s. These tests cover the supported test catalog, not
+every possible input.
+
+All three candidates also pass a matched nine-case numerical audit. On the
+nearly-correlated beta=1, g=-1e-6, amplitude-128 stress case, the worst
+error/allowance ratio over output and state is **0.9794** for vector A16,
+**0.8823** for Newton A16, and **0.8160** for Newton A32. A ratio above 1 fails.
+This gives Newton useful numerical margin on this case, but does not offset
+its roughly 1.8–1.9× long-context runtime cost against the faster vector candidate.
+
+This particular cube mapping loses despite logarithmic iteration depth. At
+C_inv=16, its eight leaves require 48 small cube matrix multiplies per chunk;
+at C_inv=32, four leaves require 32. These are in addition to the remaining
+joins. Each iteration also needs two cube-to-vector-to-cube exchanges to form
+the residual and mask/update X: six exchanges at size 16, eight at size 32.
+Native FP32 accumulator results cannot feed L1 directly on this device, so
+these exchanges go through global-memory addresses, usually served by L2.
+The mask and update vector work interrupts the vector-side preparation pipeline.
+Fewer sequential mathematical steps therefore do not imply a faster pipeline.
+
+Fresh H16/T4096 hardware counters confirm that arithmetic is a small part of
+the extra latency. Values below are active-group medians in µs; engine times
+and waits overlap and must not be added as a wall-time breakdown.
+
+| Counter | Vector A16 candidate | Newton A16 | Newton A32 |
+|---|---:|---:|---:|
+| Cube arithmetic | 157.9 | 182.0 | 184.2 |
+| Cube MTE1 | 78.8 | 129.1 | 121.9 |
+| Cube MTE2 | 161.2 | 228.1 | 225.6 |
+| Cube waits for Newton vector exchanges | — | 373.2 | 431.7 |
+| Vector waits for Newton cube products | — | 248.8 | 322.3 |
+
+Cube-side L2 read-hit rates are 98.98%, 99.02% and 99.15%, respectively.
+The evidence points to instruction/transfer dependencies and repeated core
+handshakes; it does not establish saturated HBM bandwidth.
+
+These results reject this concrete round-trip-heavy mapping, not every stabilized
+Newton implementation. A competitive version would need to remove most of the
+intermediate exchanges or combine substantially more independent work per cube
+instruction. Changing leaf size alone did not solve the problem. Production is
+unchanged; this is a stable but slower experimental result, not a speed advance.
+
+The existing JSON evidence retains build/source/library hashes, full-suite
+results, checked timing trials, numerical metrics and hardware counter summaries.
+Rejected Newton source patches, prototypes, debug scripts, binaries and raw
+profiler dumps were removed after recording these results.
 
 ## HF32 precision/runtime tradeoff
 
@@ -166,13 +257,21 @@ bash scripts/gdn_mega_docker.sh bash scripts/check_gdn_mega.sh --quick
 bash scripts/gdn_mega_docker.sh bash scripts/check_gdn_mega.sh
 ```
 
-`--source` and `--output` build isolated source snapshots. Raw experiments,
-generators and logs remain under `benchmark_data/gdn_mega/optimize_20261027/`;
-none are production kernel includes. The C=256 prototype additionally requires
-its explicitly experimental allocation harness. Production has seven sources,
-one schedule and its unchanged caller allocation contract.
+`--source` and `--output` build isolated source snapshots. Rejected experimental
+sources, build outputs and raw runs were removed at the user's request. Historical
+paths inside the evidence JSON identify provenance; they are not live dependencies.
+Production still has seven sources, one schedule and its unchanged allocation contract.
 
-The next meaningful A experiment is a hardware mapping of stable, band-limited
-Newton, including the masking/transfer cost and overlap with other stages.
-More pipelined C=256 schedules and other joining algorithms remain open; the
-current sweep does not exhaust this search space.
+The one retained unpromoted speed improvement is the factored/overlapped-join
+candidate: its checked library and verification manifest are in
+`benchmark_data/gdn_mega/verified_candidate/`. Its compact source patch and base
+hashes are in `data/algorithm_search.json` under `retained_improvement`; no separate
+unused candidate headers remain. Apply that patch to a copy of the production
+sources and use `check_gdn_mega.sh --source <copy> --output <build>` to rebuild it.
+Production arithmetic and the installed production library have not changed.
+
+The native FP32 cube Newton mapping has now been tested, including masking,
+transfers and the surrounding pipeline. Further work on this family would need
+to remove its repeated cube/vector exchanges. More pipelined C=256 schedules
+and other joining algorithms remain open; this sweep does not exhaust the
+search space.

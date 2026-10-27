@@ -810,3 +810,27 @@ precompute/factored64 caveats are in profile.md; no optimization was implemented
 - Detailed raw scripts/sources/logs ignored under benchmark_data/gdn_mega/optimize_20261027;
   reusable fastbuild/check tooling committed400151f,successentry57f0593. Latest
   user asks conclusions across A,C,Cinv,J; emphasize measured vs CPU-only scope.
+
+
+2026-10-27 — cube Newton completed; user explicitly requested exploration cleanup:
+- Native FP32 band-Newton cube A16 and A32, C128, factored/asynchronous J, both
+  pass all246tests (154.60/155.61s), unchanged1e-4+1e-3*abs(FP64) policy. No ABI
+  or allocation change. Initial bug: distance at184KiB clobbered by PTO's8KiB
+  reserved scratch. Fixed to168KiB, identity176KiB; vectorize initial constants.
+- Matched H16/Hg4 h0, T256/4096/32768, two variant orders: production82.4/693–695/
+  5348–5430us; faster vectorcandidate78.6–79.2/659–662/5328–5331us;
+  Newton16 105/1183–1191/9518–9620us; Newton32 109–111/1281–1286/10147–10205us.
+- Hardware cube arithmetic158->182/184us; new cube wait8 373/432us, vector wait10
+  249/322us. L2 read hit~99%. Reject roundtrip-heavy mapping, not numerical method.
+  Extra9case matched audit passesall; amp128near-correlated worst error/allowance
+  .9794 vector, .8823 Newton16, .8160 Newton32. No precision policy changes.
+- All Newton/rejected prototypes, rawprofilerlogs, scripts and build/gdn_* dirs
+  removed at explicit user request:2551files,6038218773bytes. Existing reportdata
+  preserves measurements/hashes; historical rawpaths there are provenance, not live.
+- benchmark_data/gdn_mega now ONLY baseline_lib,profile_current_20261027 (render
+  inputs; removed diagnostic source/build),qwen_capture(userinputs+README),
+  reference_cache(activefasttests),verified_candidate(2files:checked.so+manifest).
+  The one verified speed improvement's exact source patch/basehashes are under
+  retained_improvement in docs/gdn_mega/data/algorithm_search.json. It rebuilds
+  against current7production sources using check_gdn_mega.sh. Productionlibhash
+  dfb01e1 unchanged, candidate00144c5. Newtonsourcepatches explicitly discarded.
