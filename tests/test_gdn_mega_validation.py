@@ -148,7 +148,7 @@ def make_capture_inputs(record, start=0):
     return inputs, initial, cu
 
 
-def run_audit_case(case, device, *, prepared_inputs=None):
+def run_audit_case(case, device, *, prepared_inputs=None, benchmark=None):
     inputs, initial, cu = make_audit_inputs(case) if prepared_inputs is None else prepared_inputs
     digest = hashlib.sha256()
     for tensor in [*inputs, initial, cu]:
@@ -192,18 +192,19 @@ def run_audit_case(case, device, *, prepared_inputs=None):
                      {"raw_output": error_metrics(actual, expected),
                       "scaled_output": error_metrics(actual.double() * D**-.5, expected * D**-.5),
                       "final_state": error_metrics(state, expected_state)})
-        diagnostic = {}
-        if "key_correlation" in case or case.get("observe_coupling"):
-            # Source-specific observation, never an acceptance criterion.
-            # With one head per hardware group, production retains a true
-            # marker when it exits to the whole-head recurrence. A diagnostic
-            # binary disabling dispatch must NOT call these fallback counts.
-            assert len(case["lengths"]) == 1 and case["heads"] <= launch["block_dim"]
-            control = launch["o_workspace_qk"].cpu().view(launch["block_dim"], -1)
-            flags = control[:case["heads"], [128*128//2+15, 128*128//2+31]]
-            diagnostic["control_flags_at_exit"] = (flags != 0).any(-1).tolist()
-        metrics.append({**numerical, **diagnostic,
+        metrics.append({**numerical,
                         "inputs_and_guards_intact": integrity, "scratch_independent": independent})
+    timing = {}
+    if benchmark is not None:
+        timing["timing"] = benchmark(launch)
+        actual = launch["out"].cpu().clone()
+        state = launch["final_state"].cpu().view_as(expected_state).clone()
+        timing["after_replay"] = {
+            "raw_output": error_metrics(actual, expected),
+            "final_state": error_metrics(state, expected_state),
+            "inputs_and_guards_intact": all(torch.equal(launch[name], before) for name, before in snapshots.items())
+                and all(bool((x[:64] == -123.25).all() and (x[-64:] == -123.25).all()) for x in guards),
+        }
     correlation = {}
     if "key_correlation" in case:
         cosine = torch.nn.functional.cosine_similarity(inputs[1][:, 1:].double(), inputs[1][:, :-1].double(), dim=-1)
@@ -220,7 +221,7 @@ def run_audit_case(case, device, *, prepared_inputs=None):
                                   ("raw_output", actual[:, :, head], expected[:, :, head]),
                                   ("final_state", state[:, head], expected_state[:, head]))}}
             for head in range(case["heads"])]
-    return {"case": case, "policy": POLICY, "repeats": metrics, "input_sha256": digest.hexdigest(), **per_head,
+    return {"case": case, "policy": POLICY, "repeats": metrics, "input_sha256": digest.hexdigest(), **per_head, **timing,
             "input_ranges": {
                 **correlation,
                 "beta": [inputs[4].min().item(), inputs[4].max().item()],
@@ -232,7 +233,9 @@ def run_audit_case(case, device, *, prepared_inputs=None):
             },
             "fp16_output_rounding_floor": error_metrics(expected.half(), expected),
             "fp16_state_rounding_floor": error_metrics(expected_state.half(), expected_state),
-            "passed": all(m["raw_output"]["passed"] and m["final_state"]["passed"] and
+            "passed": (not timing or (timing["after_replay"]["raw_output"]["passed"] and
+                       timing["after_replay"]["final_state"]["passed"] and
+                       timing["after_replay"]["inputs_and_guards_intact"])) and all(m["raw_output"]["passed"] and m["final_state"]["passed"] and
                           m["inputs_and_guards_intact"] and m["scratch_independent"] for m in metrics)}
 
 

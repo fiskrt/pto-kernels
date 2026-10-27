@@ -1,8 +1,8 @@
 // GDN mega kernel: one launch, two global phases, one production schedule.
 // Phase 1: gate prefix scan/layout and shared KK/QK products run concurrently.
 // Phase 2: a head-persistent pipeline overlaps next-chunk inverse preparation
-// with residual, state and output products. Strong coupling uses compensated
-// recurrence. See README.md for the file map and workspace contract.
+// with residual, state and output products for every input.
+// See README.md for the file map and workspace contract.
 #ifndef GM_ADDR
 #define GM_ADDR __gm__ uint8_t*
 #endif
@@ -64,7 +64,7 @@ AICORE inline void mega_kernel_impl(GM_ADDR q_ptr, GM_ADDR k_ptr, GM_ADDR v_ptr,
         reinterpret_cast<__gm__ half*>(h_ws_ptr),reinterpret_cast<__gm__ half*>(o_ws_qk_ptr),reinterpret_cast<__gm__ half*>(o_ptr),reinterpret_cast<__gm__ half*>(fs_ptr),
         reinterpret_cast<__gm__ half*>(h0_ptr),has_initial_state,cu,batch_size,num_key_heads,total_tokens,
         reinterpret_cast<__gm__ float*>(v_new_ptr),reinterpret_cast<__gm__ float*>(s_ptr),reinterpret_cast<__gm__ float*>(A_inv_f32_ptr),
-        reinterpret_cast<__gm__ float*>(msk_lower_ptr),reinterpret_cast<__gm__ float*>(msk_full_ptr),reinterpret_cast<__gm__ float*>(g_in_ptr));
+        reinterpret_cast<__gm__ float*>(msk_lower_ptr),reinterpret_cast<__gm__ float*>(msk_full_ptr));
     pipe_barrier(PIPE_ALL);
 }
 

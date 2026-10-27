@@ -415,7 +415,7 @@ def test_gdn_mega_tails_and_memory(lengths, gate_scale, npu_device):
 
 @pytest.mark.parametrize("beta_value", [0.0, 0.02])
 def test_gdn_mega_correlated_keys(beta_value, npu_device):
-    """Identity and high-row-norm inverses, including the adaptive fallback."""
+    """Identity and high-row-norm inverses in the parallel chunk solve."""
     length, heads, key_heads = 256, 16, 4
     q, k, v, g, beta = _make_inputs(length, heads, key_heads, seed=17)
     k = k[:, :1].expand_as(k).contiguous()

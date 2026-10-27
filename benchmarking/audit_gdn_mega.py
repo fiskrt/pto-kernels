@@ -120,7 +120,7 @@ def capture_cases(store):
                 cases.append(dict(name=f"capture_{sample}_L{layer}_start{start}",
                                   sample=sample, layer=layer, start=start,
                                   lengths=(tokens-start,), heads=heads, key_heads=key_heads,
-                                  initial=bool(start), observe_coupling=True, per_head=True))
+                                  initial=bool(start), per_head=True))
     return cases
 
 
@@ -160,11 +160,13 @@ def main():
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--device", default=os.environ.get("NPU_DEVICE", "npu:0"))
     parser.add_argument("--suite", choices=["standard", "critical", "correlation", "capture", "all"], default="standard")
+    parser.add_argument("--timing", action="store_true", help="Also measure 15 trials of 20 graph calls and recheck every output/state element")
     parser.add_argument("--capture", type=Path, help="Captured gdn_keys.pt; required with --suite capture")
     all_cases = AUDIT_CASES + CRITICAL_CASES + CORRELATION_CASES
     parser.add_argument("--cases", nargs="+",
                         help="Explicit subset for reproducing failures; default runs every case")
     args = parser.parse_args()
+    from gdn_mega import time_launch
     if (args.suite == "capture") != (args.capture is not None):
         parser.error("--capture is required exactly when --suite capture is selected")
     captured = torch.load(args.capture, map_location="cpu", weights_only=True)["store"] if args.capture else None
@@ -206,7 +208,8 @@ def main():
     for case in cases:
         prepared = (make_capture_inputs(captured[case["sample"]][case["layer"]], case["start"])
                     if captured is not None else None)
-        result = run_audit_case(case, args.device, prepared_inputs=prepared)
+        result = run_audit_case(case, args.device, prepared_inputs=prepared,
+                                benchmark=time_launch if args.timing else None)
         if prepared is not None:
             result["capture_statistics"] = capture_statistics(prepared[0])
         bounds = result["input_ranges"]["beta"]

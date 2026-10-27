@@ -36,13 +36,12 @@ Invalid rows and future columns are masked before exponentiation, preventing
 `0*inf` from padded prefixes. Gate differences retain `G_i-G_j`; there is no inverse-power truncation based
 on decay and no division by a potentially underflowed gate exponential.
 
-Strong coupling can amplify small chunk-solve errors. When any strict-lower
-coefficient `abs(beta_i * exp(G_i-G_j) * dot(k_i,k_j))` exceeds 0.5, the head
-is recomputed from its supplied initial state using compensated FP32 token
-recurrence and balanced dot reductions. This also corrects a previously computed
-prefix when coupling appears later. Selection depends on input arithmetic, not
-seeds, test identifiers, or reference outputs. This conservative path is slower;
-latency consequently depends on the values as well as the shape.
+Every head uses this parallel chunk algorithm. There is no coupling threshold,
+per-chunk detection reduction, or sequential token fallback. Real Qwen capture
+replays pass without that fallback; synthetic large-amplitude correlated-key
+cases still expose small elementwise failures. The strict tests retain those
+failures rather than changing their tolerance. See the
+[current validation report](../../../docs/gdn_mega/README.md) for measured scope.
 
 A persistent kernel means that the same hardware group loops over successive
 chunks of a head, retaining state locally. It does not mean a background process
@@ -56,7 +55,7 @@ or an additional launch. File count does not equal stage count.
 | `shared_grams.hpp` | Shared FP32 KKᵀ/QKᵀ with pipelined input loads |
 | `inverse.hpp` | Batched 16×16 triangular substitution |
 | `recurrence_pipeline.hpp` | Original-input × paired-state products and native FP32 block joins |
-| `fused_pipeline.hpp` | Preparation overlap, recurrent state, output and compensated path |
+| `fused_pipeline.hpp` | Preparation overlap, recurrent state and output |
 
 All seven files are used by the entry point. There are no probe kernels, runtime
 accuracy knobs, or selectable tuning configurations. Compiler architecture and
@@ -85,7 +84,7 @@ Only `out` and `final_state` are primary outputs. The existing caller applies
 | `wy_workspace_a1/a2` | Reserved compatibility storage |
 | `kkt_workspace` | FP32 output-product exchange |
 | `h_workspace` | FP32 projection/residual/state exchange, saved FP32 RHS and paired state |
-| `o_workspace_qk` | Native FP32 inverse join scratch (first 16 KiB/core), coupling markers (second half) |
+| `o_workspace_qk` | Native FP32 inverse join scratch (first 16 KiB/core); remaining capacity reserved for ABI compatibility |
 | `o_workspace_qs/gated` | Two row halves of prepared native FP32 inverse |
 
 For attention and Gamma, each existing half allocation holds `H/2` complete

@@ -50,6 +50,26 @@ def check_outputs(launch, expected, expected_state, previous=None, *, allow_fail
     return raw, state, metrics, expected, expected_state, expected._version, expected_state._version
 
 
+def time_launch(launch, *, trials=15, inner=20):
+    """Median device time for warmed, allocation-free graph replays."""
+    graph = torch.npu.NPUGraph()
+    with torch.npu.graph(graph):
+        for _ in range(inner):
+            pto_gdn_mega(**launch)
+    graph.replay()
+    torch.npu.synchronize()
+    times = []
+    for _ in range(trials):
+        start, end = (torch.npu.Event(enable_timing=True) for _ in range(2))
+        start.record()
+        graph.replay()
+        end.record()
+        end.synchronize()
+        times.append(start.elapsed_time(end) * 1000 / inner)
+    return dict(median_us=statistics.median(times), min_us=min(times), max_us=max(times),
+                trials=trials, calls_per_trial=inner, trial_us=times)
+
+
 def benchmark_case(args, length, audit_case=None):
     """Check and time one shape; release its graph/tensors on return."""
     reference_start = time.perf_counter()
@@ -82,22 +102,9 @@ def benchmark_case(args, length, audit_case=None):
         print(json.dumps(dict(length=length, numerical_errors=metrics, validation_policy=POLICY)), flush=True)
         return None
     # Capture launches so Python dispatch cannot leave gaps between kernels.
-    graph = torch.npu.NPUGraph()
-    with torch.npu.graph(graph):
-        for _ in range(args.inner):
-            pto_gdn_mega(**launch)
-    graph.replay()
-    torch.npu.synchronize()
-    times = []
-    for _ in range(args.trials):
-        start, end = (torch.npu.Event(enable_timing=True) for _ in range(2))
-        start.record()
-        graph.replay()
-        end.record()
-        end.synchronize()
-        times.append(start.elapsed_time(end) * 1000 / args.inner)
+    timing = time_launch(launch, trials=args.trials, inner=args.inner)
     record = dict(length=length, heads=args.heads, key_heads=args.key_heads, initial_state=args.initial_state, gate_scale=args.gate_scale,
-                  median_us=statistics.median(times), min_us=min(times), max_us=max(times),
+                  **timing,
                   numerical_errors=metrics)
     if audit_case is not None:
         record.update(audit_case=audit_case["name"], input_distribution=audit_case,
