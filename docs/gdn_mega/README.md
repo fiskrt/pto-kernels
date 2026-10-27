@@ -85,6 +85,34 @@ catalog is `tests/gdn_mega_cases.py`; acceptance lives in
 the fixed budget; no tolerance is fitted to the candidate kernel. The CPU FP64
 goldens dominate the complete suite runtime.
 
+For faster candidate iteration, build isolated head specializations concurrently
+and reuse verified CPU FP64 goldens:
+
+```bash
+bash scripts/gdn_mega_docker.sh bash scripts/check_gdn_mega.sh --quick
+bash scripts/gdn_mega_docker.sh bash scripts/check_gdn_mega.sh
+```
+
+The first command runs nine fixed ordinary, tail, packed, correlated-key,
+large-value and tiny-gate cases, then checked 256/4096-token timings saved in
+`build/gdn_mega_iteration/benchmark.json`. It is a **partial screen**, not permission to
+promote a kernel. The second builds every supported head specialization and
+runs the complete regression suite. Both leave the installed library untouched,
+verify the actual loaded library hash, and save source/library hashes and timings
+in `build/gdn_mega_iteration/verification.json`. `--source` and `--output` select
+an isolated source snapshot and build directory; they are build-tool arguments,
+not kernel tuning options.
+
+All seven specializations compiled in 10.7 seconds in the prepared container.
+The full 246-test suite took 506 seconds while creating goldens and 149 seconds
+with the cache. All 160 numerical cases still execute all five poisoned-scratch
+launches, compare every output/state element, and check inputs and guards.
+The cache stores only CPU oracle tensors, never device outputs or pass/fail
+results. Exact input bytes, oracle source and PyTorch version form its key;
+every loaded golden is content-hashed. `GDN_REFERENCE_CACHE` enables the same
+cache for direct pytest/audit calls; without it, references are recomputed.
+Deleting `benchmark_data/gdn_mega/reference_cache` forces fresh goldens.
+
 Use `latency` or `errors` instead of `all` to regenerate one report. Use `render`
 to regenerate both Markdown pages and all plots from saved data without running
 NPU measurements. Markdown statistics, tables, version labels and figures come

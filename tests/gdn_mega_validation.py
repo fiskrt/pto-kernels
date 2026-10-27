@@ -4,6 +4,11 @@ The oracle is CPU FP64 token recurrence: no chunking, inverse, norm threshold,
 FP16 intermediate rounding, or dependency on the production kernel.
 """
 import math
+import hashlib
+import json
+import os
+from pathlib import Path
+import tempfile
 
 import torch
 
@@ -42,6 +47,52 @@ def recurrent_reference(q, k, v, g, beta, initial_state=None, cu_seqlens=None):
             torch.sum(scratch, dim=1, out=output[0, token])
         states.append(state)
     return output, torch.stack(states)
+
+
+def cached_recurrent_reference(*inputs):
+    """Optionally reuse CPU goldens, never device outputs or acceptance results.
+
+    Changing any input byte, this oracle module, or PyTorch invalidates the key.
+    Verify every loaded golden byte before using it. Without the environment
+    variable the ordinary independent recurrence still runs from scratch.
+    """
+    directory = os.environ.get("GDN_REFERENCE_CACHE")
+    if not directory:
+        return recurrent_reference(*inputs)
+
+    def fingerprint(tensors):
+        digest = hashlib.sha256()
+        for tensor in tensors:
+            if tensor is None:
+                digest.update(b"None")
+            else:
+                value = tensor.detach().cpu().contiguous()
+                digest.update(str((tuple(value.shape), str(value.dtype))).encode())
+                if value.numel():
+                    digest.update(memoryview(value.numpy()).cast("B"))
+        return digest.hexdigest()
+
+    identity = dict(inputs=fingerprint(inputs), torch_version=str(torch.__version__),
+                    oracle_sha256=hashlib.sha256(Path(__file__).read_bytes()).hexdigest())
+    key = hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()
+    directory = Path(directory)
+    directory.mkdir(parents=True, exist_ok=True)
+    path = directory / f"{key}.pt"
+    if path.exists():
+        saved = torch.load(path, map_location="cpu", weights_only=True)
+        if saved["identity"] != identity or fingerprint(saved["tensors"]) != saved["sha256"]:
+            raise RuntimeError("FP64 reference cache identity or content mismatch")
+        return tuple(saved["tensors"])
+    result = recurrent_reference(*inputs)
+    # A killed writer must not leave a partial file that looks like a cache hit.
+    with tempfile.NamedTemporaryFile(dir=directory, suffix=".tmp", delete=False) as temporary:
+        temporary_path = Path(temporary.name)
+    try:
+        torch.save(dict(identity=identity, tensors=result, sha256=fingerprint(result)), temporary_path)
+        os.replace(temporary_path, path)
+    finally:
+        temporary_path.unlink(missing_ok=True)
+    return result
 
 
 def error_metrics(actual, expected, *, include_percentiles=False):

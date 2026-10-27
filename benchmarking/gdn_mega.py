@@ -18,7 +18,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tests"))
 from test_gdn_mega import (  # noqa: E402
     _make_inputs, _prepare_gdn_mega,
 )
-from gdn_mega_validation import POLICY, error_metrics, recurrent_reference
+from gdn_mega_validation import POLICY, error_metrics, cached_recurrent_reference
 from test_gdn_mega_validation import AUDIT_CASES, make_audit_inputs  # noqa: E402
 from pto_kernels import pto_gdn_mega  # noqa: E402
 
@@ -77,11 +77,11 @@ def benchmark_case(args, length, audit_case=None):
         inputs = _make_inputs(length, args.heads, args.key_heads)
         inputs[3].mul_(args.gate_scale)
         initial = torch.randn(1, args.heads, 128, 128, dtype=torch.float16) * 0.1 if args.initial_state else None
-        expected, expected_state = recurrent_reference(*inputs, initial)
+        expected, expected_state = cached_recurrent_reference(*inputs, initial)
         cu = torch.tensor([0, length], dtype=torch.int32)
     else:
         inputs, initial, cu = make_audit_inputs(audit_case)
-        expected, expected_state = recurrent_reference(*inputs, initial, cu)
+        expected, expected_state = cached_recurrent_reference(*inputs, initial, cu)
     reference_seconds = time.perf_counter() - reference_start
     check_seconds = 0.0
     launch = _prepare_gdn_mega(

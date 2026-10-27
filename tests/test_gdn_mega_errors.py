@@ -96,6 +96,32 @@ def test_shared_golden_requires_matching_inputs_source_and_contents(monkeypatch,
         shared_reference(path, identity, compute)
 
 
+def test_regression_golden_cache_invalidates_and_rejects_corruption(monkeypatch, tmp_path):
+    import gdn_mega_validation as validation
+    monkeypatch.setenv('GDN_REFERENCE_CACHE', str(tmp_path))
+    calls = []
+    def compute(value, initial):
+        calls.append(1)
+        return value.double() + (0 if initial is None else initial), value.double().sum()
+    monkeypatch.setattr(validation, 'recurrent_reference', compute)
+    value = torch.arange(8, dtype=torch.float16)
+    first = validation.cached_recurrent_reference(value, None)
+    second = validation.cached_recurrent_reference(value.clone(), None)
+    assert len(calls) == 1 and all(torch.equal(a, b) for a, b in zip(first, second))
+    validation.cached_recurrent_reference(value + 1, None)
+    validation.cached_recurrent_reference(value, torch.tensor(0.))
+    assert len(calls) == 3
+    for path in tmp_path.glob('*.pt'):
+        saved = torch.load(path, weights_only=True)
+        saved['tensors'][0][0] += 1
+        torch.save(saved, path)
+    with pytest.raises(RuntimeError, match='mismatch'):
+        validation.cached_recurrent_reference(value, None)
+    monkeypatch.delenv('GDN_REFERENCE_CACHE')
+    validation.cached_recurrent_reference(value, None)
+    assert len(calls) == 4
+
+
 @pytest.mark.parametrize('baseline,current,additional,expected', [
     ('passed', 'passed', {}, (False, False)),
     ('failed', 'passed', {}, (True, False)),

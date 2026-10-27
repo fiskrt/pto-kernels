@@ -4,7 +4,7 @@ import pytest
 import torch
 
 from pto_kernels import pto_gdn_mega
-from gdn_mega_validation import POLICY, assert_numerically_close, error_metrics, recurrent_reference
+from gdn_mega_validation import POLICY, assert_numerically_close, error_metrics, recurrent_reference, cached_recurrent_reference
 from test_gdn_mega import D, _expand_kv_heads, _make_inputs, _prepare_gdn_mega, _reference
 
 
@@ -105,7 +105,7 @@ def run_audit_case(case, device, *, prepared_inputs=None, benchmark=None):
             digest.update(str((tuple(tensor.shape), str(tensor.dtype))).encode())
             digest.update(memoryview(tensor.contiguous().numpy()).cast("B"))
     # Reference stays on the CPU and is never passed to the device/launch helper.
-    expected, expected_state = recurrent_reference(*inputs, initial, cu)
+    expected, expected_state = cached_recurrent_reference(*inputs, initial, cu)
     launch = _prepare_gdn_mega(*(x.to(device) for x in inputs), cu.to(device),
                                initial.to(device) if initial is not None else None)
     snapshots = {name: launch[name].clone() for name in READ_ONLY}
