@@ -788,3 +788,27 @@ under benchmark_data, with no production macros/probe files. Ranked structural
 hypotheses: shorten state feedback, direct blocked RHS solve instead of inverse
 materialization, bounded preparation helpers, affine chunk-state scan. These
 are opportunities, not measured speedups or a claim of2x.
+## 400151f — fast isolated builds and verified FP64 reference caching
+
+Added `scripts/check_gdn_mega.sh`: head specializations compile concurrently in
+an isolated directory, preserving the production source, ABI and installed
+library. All seven compiled in 10.66 seconds. The tool verifies the loaded
+library hash and records source hashes, coverage and timings. Its nine-case quick
+screen uses unchanged regular-suite cases and adds checked 256/4096-token timings;
+the full mode still runs every regression test.
+
+Optional CPU-golden caching keys exact input bytes, oracle source and PyTorch
+version, and hashes every loaded reference tensor. Device outputs and acceptance
+results are never cached across runs. All 160 numerical cases retain five
+poisoned-workspace launches, every-element bounds, input checks and guards.
+Unchanged production passed 246 tests in 505.95 seconds while populating the cache;
+the isolated asynchronous-join candidate passed the same 246 tests in 148.71
+seconds with cached goldens. These are different kernel binaries, not a matched
+kernel-latency comparison. The 35 checker/benchmark tests also pass (0.29 seconds),
+including cache invalidation and corruption rejection. Quick screens take about
+2.2–2.4 seconds after process startup and before the checked timing sweep.
+
+No production kernel optimization is promoted by this commit. Raw evidence is
+under `benchmark_data/gdn_mega/optimize_20261027/`; full candidate manifest is
+`build/gdn_async_joins/verification.json`.
+

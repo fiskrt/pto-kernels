@@ -753,3 +753,24 @@ Simulator trace181.81us is512tokens, not4K; traceviz aggregate occupancy counts
 wait instructions and is NOT arithmetic utilization. No matmul probe or
 instrumentation added to production. Main opportunities and previous failed
 precompute/factored64 caveats are in profile.md; no optimization was implemented.
+2026-10-27 — fast iteration tooling 400151f:
+- `bash scripts/gdn_mega_docker.sh bash scripts/check_gdn_mega.sh [--quick]`
+  snapshots source and compiles each H separately, parallel, then links a launch
+  dispatcher. No production #ifdef/config proliferation. All7 specializations
+  10.66s; quick H8/H16 builds ~10s. --source/--output accept isolated directories;
+  --build-only permits CPU compilation alongside an NPU test. Never run NPU jobs
+  concurrently. Every worker verifies loaded library SHA against its manifest.
+- Full246test baseline505.95s fills6.2GB reference cache; cached candidate148.71s.
+  Cache is opt-in GDN_REFERENCE_CACHE, enabled by tool. Hash inputs/source/torch
+  version, validate every golden byte; no stored device outputs/pass results.
+  Corruption raises, atomic write;35 checker/benchmark tests pass. Unset env for
+  fresh FP64. Quick9fixedcatalog cases+checked256/4K timings is partial only.
+- Production source677c0ee/librarydfb01e1 unchanged. Isolated async_joins removes
+  final inverse-block materialization, applies F*R0, overlaps independent joins
+  using dependency-specific events. Full246pass; initialH16singlehead screen
+  4K654us vsbase692us, not yet matched allshape production evidence or promotion.
+- User steered search toward (C,C_inv,A,J) with A including forward solves,
+  Horner/Estrin/Paterson-Stockmeyer and cube/vector mapping. Continue structural
+  search, not merely the~6% scheduling result. All experiments currently ignored
+  under benchmark_data/gdn_mega/optimize_20261027. Keep numerical policy fixed.
+
