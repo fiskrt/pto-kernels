@@ -20,6 +20,7 @@ def numerical_failure(row, variant):
 
 def write_latency(data, source, stem, markdown):
     rows = data['records']
+    policy = rows[0]['current']['validation_policy']
     ratios = [r['speedup'] for r in rows if r['speedup'] is not None]
     long = [r['speedup'] for r in rows if r['length'] >= 4096 and r['speedup'] is not None]
     passed = sum(r['current']['status'] == 'passed' for r in rows)
@@ -90,7 +91,7 @@ all FLA distributions or characterize the slower strong-coupling fallback.
 The loaded library hash is checked for every worker.
 
 The numerical pass criterion for every raw-output and final-state element is
-`abs(error) <= 1e-5 + 1e-3*abs(reference)`, plus finiteness and relative RMSE < 0.005,
+`abs(error) <= {policy['atol']:g} + {policy['rtol']:g}*abs(reference)`, plus finiteness and relative RMSE < {policy['max_relative_rmse']:g},
 before and after timing. The baseline is timed even when it fails, with its
 failures retained. Current-kernel failures still fail the report command.
 Cached statistics are reused only after byte equality
@@ -136,6 +137,55 @@ def accuracy_regimes(source, markdown):
     if audit['policy'] != evidence['after_metadata']['policy']:
         raise ValueError('Regime audit and captured-input evidence use different tolerances')
     failed = [c for c in cases if not c['passed']]
+    approved_path = directory / 'accepted_precision.json'
+    approved = json.loads(approved_path.read_text()) if approved_path.exists() else None
+    policy_update = ''
+    if approved:
+        if (approved['kernel_library_sha256'] != audit['kernel_library_sha256'] or
+                approved['previous_policy'] != audit['policy'] or
+                approved['regular_suite']['audit_case_names'] != audit['requested_cases'] or
+                approved['regular_suite']['failed'] != 0):
+            raise ValueError('Approved-policy evidence does not match the kernel, old policy or complete regression suite')
+        policy = approved['policy']
+        recalibrated = approved['previous_failures']['cases']
+        if ({c['case']['name'] for c in recalibrated} != {c['case']['name'] for c in failed}
+                or not all(c['passed'] for c in recalibrated)):
+            raise ValueError('Approved policy must cover every previously failing case')
+        original_inputs = {c['case']['name']: c['input_sha256'] for c in failed}
+        if any(c['input_sha256'] != original_inputs[c['case']['name']] or c['policy'] != policy
+               for c in recalibrated):
+            raise ValueError('Policy comparison must retain identical inputs and the approved tolerance')
+        policy_update = f'''
+### Current approved acceptance and regular regression coverage
+
+The user accepted these small absolute errors. The current fixed policy is:
+
+```text
+abs(error[i]) <= {policy['atol']:g} + {policy['rtol']:g} * abs(reference[i])
+```
+
+**Atol increased from {audit['policy']['atol']:g} to {policy['atol']:g}; rtol remains
+{policy['rtol']:g}. All {len(cases)} synthetic cases now pass**, including the
+{len(failed)} former failures. Every case is part of ordinary pytest discovery;
+there is no opt-in stress marker. The complete GDN suite passes
+**{approved['regular_suite']['passed']} tests**.
+
+At unchanged rtol, the largest absolute floor needed by the former failures is
+{approved['maximum_required_atol']:.6g}, below the fixed {policy['atol']:g} budget.
+Finiteness, raw-output and final-state bounds, independent CPU FP64 reference,
+all five poisoned-scratch launches, input/guard integrity and relative RMSE
+< {policy['max_relative_rmse']:g} remain enforced. No clipping, outlier removal,
+case-specific tolerance or adaptive acceptance is used. Boundary tests inject
+one bad element while RMSE still passes, checking that a regression beyond the
+approved elementwise budget is rejected.
+
+This is a **user-approved tolerance change, not a kernel accuracy improvement**.
+The original tighter-policy measurements and their failures remain intact below
+as diagnostics. Passing model captures already satisfied the older, tighter bound.
+[Policy calibration and full-suite evidence]({link(approved_path, markdown)}).
+
+### Historical characterization under the earlier tighter tolerance
+'''
     primary = [c for c in cases if c['beta_in_production_range']
                and c['input_ranges']['log_gate'][1] <= 0 and c['case'].get('key_scale', 1.) == 1.]
     controlled = [c for c in cases if c['case']['name'].startswith('correlation_')]
@@ -148,6 +198,9 @@ def accuracy_regimes(source, markdown):
     slow_failed = [c for c in slow if not c['passed']]
     def count(group):
         return f"{sum(c['passed'] for c in group)}/{len(group)} pass"
+    def regime_count(group):
+        return (f"{len(group)}/{len(group)} pass current policy; {count(group)} under the old bound"
+                if approved else count(group))
     def worst(case):
         return max(((field, m[field]) for m in case['repeats'] for field in ('raw_output', 'final_state')),
                    key=lambda pair: pair[1]['max_tolerance_ratio'])
@@ -159,6 +212,7 @@ def accuracy_regimes(source, markdown):
         'control_coordinate_beta_zero', 'nearly_correlated_beta1', 'delayed_nearly_correlated')]
     selected += [max(large_failed, key=lambda c: worst(c)[1]['max_tolerance_ratio'])]
     severity = []
+    current_column = ' | Approved allowance | Error / approved allowance' if approved else ''
     for c in selected:
         field, m = worst(c)
         out, state = [c['repeats'][0][f] for f in ('raw_output', 'final_state')]
@@ -166,7 +220,9 @@ def accuracy_regimes(source, markdown):
             f"| `{c['case']['name']}` | {out['pointwise_violations']:,} / {state['pointwise_violations']:,} | "
             f"{'output' if field == 'raw_output' else 'state'} | {m['abs_error_at_worst_tolerance']:.3e} | "
             f"{m['allowed_at_worst_tolerance']:.3e} | {m['max_tolerance_ratio']:.3f}× | "
-            f"{m['abs_error_at_worst_tolerance']-m['allowed_at_worst_tolerance']:.3e} |")
+            f"{m['abs_error_at_worst_tolerance']-m['allowed_at_worst_tolerance']:.3e}"
+            + (f" | {policy['atol']+policy['rtol']*abs(m['reference_at_worst_tolerance']):.3e} | "
+               f"{m['abs_error_at_worst_tolerance']/(policy['atol']+policy['rtol']*abs(m['reference_at_worst_tolerance'])):.3f}×" if approved else '') + ' |')
     finite = all(m[f]['finite'] for c in cases for m in c['repeats'] for f in ('raw_output', 'final_state'))
     floors = all(c[f]['passed'] for c in cases for f in ('fp16_output_rounding_floor', 'fp16_state_rounding_floor'))
     max_ratio = max(worst(c)[1]['max_tolerance_ratio'] for c in failed)
@@ -182,12 +238,14 @@ def accuracy_regimes(source, markdown):
 
 **This section concerns the fallback-free kernel `{evidence['after_kernel_commit'][:7]}`**,
 library `{audit['kernel_library_sha256'][:12]}`, audited {audit['created_utc'][:10]}.
+{policy_update}
 The figures above retain their own dated checkpoint; their green cells do not
-certify the additional regimes below. The refreshed synthetic audit has
+certify the additional regimes below. At the recorded diagnostic tolerance
+`atol={audit['policy']['atol']:g}, rtol={audit['policy']['rtol']:g}`, the synthetic audit has
 **{count(cases)}, {len(failed)} failing cases**, with five launches per case.
 The separate real-input replay has **{count([dict(passed=c['after']['passed']) for c in evidence['cases']])}**.
 Case counts are coverage, not estimates of how often production inputs fail.
-Within beta in [0,1], g <= 0 and normalized-key setups, **{count(primary)}**.
+Within beta in [0,1], g <= 0 and normalized-key setups, **{regime_count(primary)}**.
 The other {len(cases)-len(primary)} exploratory cases remain in the full report;
 they are not used to establish safety for this primary workload.
 
@@ -208,12 +266,12 @@ together. Beta=0 is not automatically safe: the initial state still propagates.
 |---|---|---|---|
 | **Pass: observed model workload** | Captured beta median {capture['captured_beta_quantiles'][4]:.3f}; g median {capture['log_gate_quantiles'][4]:.6f}, alpha about 0.99385; natural per-head/token variation retained | Actual correlated Qwen keys, max abs(V) {capture['value_abs_max']:.2f}; supplied-state max about 12.60; 346–1024 tokens | All 108 full traces and 18 continuations pass. This is the strongest evidence for the measured workload, not all models or longer contexts. |
 | **Pass: ordinary long sequences** | Uniform beta in [0,1), ordinary log-sigmoid Gaussian gates | Independent normalized Gaussian keys, unit-scale V, initial-state standard deviation 0.1; 256–32768 tokens, H16/Hg4 | All {len(evidence['ordinary_summary'])} current-kernel shapes pass. Does not establish long-context accuracy with correlated, nearly lossless heads. |
-| **Pass: controlled correlation at unit scale** | beta=0.5 or 1; g=0, -0.001, -0.1 or -1; alpha=1, 0.9990005, 0.90484 or 0.36788 | Mean key cosine 0–1; V standard deviation 1, initial-state standard deviation 0.1 or 1; mostly 4K, two 32K no-decay cases | **{count(unit)}.** Correlation, beta=1, or alpha=1 alone is not enough to cause failure. |
-| **Caution: sustained near-lossless memory at 32K** | Tested g=-1e-8, -1e-7, -1e-6; alpha approximately 0.99999999, 0.9999999, 0.999999; beta=0, beta=1 and uniform[0,1) probes | Includes identical keys and supplied unit-scale state; failing examples have max abs(V) 3.90 and max abs(initial) 3.89 | **{count(slow)}** in this selected long/tiny-gate group. Failures occur without large amplitudes. This merits real long-context validation, not dismissal as a large-value stress artifact. |
-| **Caution: high-amplitude stress combinations** | Failures here use beta=1 and g=0, -1e-6 or -0.001; alpha=1, about 0.999999 or 0.9990005 | V/state scale factors 32 or 128; keys range from uncorrelated to nearly identical; typical failing max abs(V) about 125–500 | **{count(large)}** across all high-amplitude/large-state probes. Some large-value cases pass; magnitude is not a proven failure threshold. Large values plus cancellation/long memory are the concern. |
+| **Pass: controlled correlation at unit scale** | beta=0.5 or 1; g=0, -0.001, -0.1 or -1; alpha=1, 0.9990005, 0.90484 or 0.36788 | Mean key cosine 0–1; V standard deviation 1, initial-state standard deviation 0.1 or 1; mostly 4K, two 32K no-decay cases | **{regime_count(unit)}.** Correlation, beta=1, or alpha=1 alone is not enough to cause failure. |
+| **Stress: sustained near-lossless memory at 32K** | Tested g=-1e-8, -1e-7, -1e-6; alpha approximately 0.99999999, 0.9999999, 0.999999; beta=0, beta=1 and uniform[0,1) probes | Includes identical keys and supplied unit-scale state; old-bound failures have max abs(V) 3.90 and max abs(initial) 3.89 | **{regime_count(slow)}**. The previous tighter bound can fail without large amplitudes. Real long-context coverage is still useful. |
+| **Stress: high-amplitude combinations** | Old-bound failures use beta=1 and g=0, -1e-6 or -0.001; alpha=1, about 0.999999 or 0.9990005 | V/state scale factors 32 or 128; keys range from uncorrelated to nearly identical; typical old-bound failing max abs(V) about 125–500 | **{regime_count(large)}**. Magnitude is not a proven failure threshold; keep these cases in regression coverage. |
 | **Unestablished: other joint distributions** | Arbitrary persistent gate/beta patterns, other checkpoints; beta>1 or positive g are outside the primary workload above | Real correlated 8K–32K+ traces, other key norms and incoming-state distributions | The small set of exploratory cases and short model captures cannot establish blanket safety. No values are clipped or excluded to obtain a pass. |
 
-### How large are the failures?
+### How large were the tighter-policy violations?
 
 **All {len(cases)} cases remain finite; no NaN/Inf or overflow was observed.**
 All ideal FP16-rounded goldens pass. The failures are additional internal
@@ -223,7 +281,7 @@ arithmetic error, not an inadequate final FP16 output range.
 numerical blow-up was observed.** At the worst normalized witness, reference
 is {worst_witness['reference_at_worst_tolerance']:.9f} and the kernel returns
 {worst_witness['actual_at_worst_tolerance']:.9f}: the absolute difference is
-**{worst_witness['abs_error_at_worst_tolerance']:.3e}**. Our configured allowance is
+**{worst_witness['abs_error_at_worst_tolerance']:.3e}**. The recorded old allowance is
 **{worst_witness['allowed_at_worst_tolerance']:.3e}**, so the error is
 **{max_ratio:.3f}× the allowance**. That ratio measures a test-threshold overrun;
 it does **not** mean the output is {max_ratio:.2f}× wrong or establish a large
@@ -235,8 +293,8 @@ case, using whichever tensor (output or state) is worse. “Excess” is the abs
 amount beyond its allowance. The violation counts include every element, not a
 sample. These witness errors are **not** the global maximum absolute error.
 
-| Case | Violating output / state elements | Worst tensor | Absolute error at witness | Allowed error | Error / allowance | Excess over allowance |
-|---|---:|---|---:|---:|---:|---:|
+| Case | Violating output / state elements under old bound | Worst tensor | Absolute error at witness | Old allowance | Error / old allowance | Excess over old allowance{current_column} |
+|---|---:|---|---:|---:|---:|---:|{'---:|---:|' if approved else ''}
 ''' + '\n'.join(severity) + f'''
 
 For the unit-scale 32K, g=-1e-8 example, {tiny['pointwise_violations']:,} of
@@ -244,7 +302,7 @@ For the unit-scale 32K, g=-1e-8 example, {tiny['pointwise_violations']:,} of
 with zero state violations. Its worst witness error is
 {tiny['abs_error_at_worst_tolerance']:.3e}, or {tiny['max_tolerance_ratio']:.3f}× its allowance.
 That is a small absolute error, not the large drift of the removed sequential
-fallback, but it still fails our stated elementwise contract. We have not measured
+fallback, but it fails the recorded older contract. We have not measured
 its effect on model logits or quality.
 
 The largest raw-output max-abs statistic among failing cases is {largest_error:.6f};
@@ -264,9 +322,9 @@ behavior. Captured initial states already reach about 12.60, so the failing
 amplitude-32 tests' state maximum of about 12.5 is not, by itself, unrealistic.
 
 1. **First priority: obtain long-context real captures with their incoming states.**
-   Check the 32K near-lossless regime: it already fails at unit scale, so it is
+   Check the 32K near-lossless regime: it exceeded the old bound at unit scale, so it is
    potentially relevant even when V never reaches the large stress magnitudes.
-   A failure on real inputs would justify prioritizing a parallel numerical fix.
+   A failure beyond the current approved budget would justify prioritizing a parallel numerical fix.
 2. **Lower immediate priority: the amplitude-32/128 stress-only combinations.**
    Their failing V maxima are roughly 125–500 versus 19.41 in these captures.
    Establish their joint frequency in the target model before paying a general
@@ -274,20 +332,23 @@ amplitude-32 tests' state maximum of about 12.5 is not, by itself, unrealistic.
    or impossible; retain their failures and test larger models/contexts.
 3. **Keep the decision tied to elementwise errors and model impact.** A few
    small violations and an overflow need different responses. Any repair should
-   preserve the fast parallel execution; this report does not restore fallback,
-   loosen tolerances or alter the kernel. These small stress-test errors alone
+   preserve the fast parallel execution. The approved policy update above is
+   explicit; historical metrics are not relabeled. These small stress-test errors alone
    do not justify a costly fallback or a general performance penalty.
 
 [All refreshed cases, five repeats and fingerprints]({link(audit_path, markdown)}) ·
 [Captured-input and ordinary-control evidence]({link(evidence_path, markdown)}) ·
 [Input ranges](input_ranges.md).
 
-Refresh the regime evidence separately from the plotted shape grid; the audit
-currently exits 1 because it retains numerical failures:
+Run all regular regressions and optionally save a fresh audit under the current
+policy. Preserve the historical diagnostic artifact instead of overwriting it:
 
 ```bash
+bash scripts/gdn_mega_docker.sh python -m pytest \\
+  tests/test_gdn_mega.py tests/test_gdn_mega_validation.py \\
+  tests/test_gdn_mega_errors.py tests/test_gdn_mega_benchmark.py -q
 bash scripts/gdn_mega_docker.sh python benchmarking/audit_gdn_mega.py \\
-  --suite all --output docs/gdn_mega/data/numerical_regimes.json
+  --suite all --output benchmark_data/gdn_mega/current_accuracy.json
 bash scripts/report_gdn_mega.sh render
 ```
 '''
@@ -295,6 +356,7 @@ bash scripts/report_gdn_mega.sh render
 
 def write_errors(data, source, stem, markdown):
     rows = data['records']
+    policy = rows[0]['current']['policy']
     commits = data.get('kernel_commits', {})
     versions = {v: (commits.get(v) or data['library_sha256'][v])[:7] for v in ('baseline', 'current')}
     passes = {v: sum(r[v]['status'] == 'passed' for r in rows) for v in versions}
@@ -328,12 +390,12 @@ Finite failures remain visible on the shared scale; gray marks NaN/Inf.
 ## Elementwise acceptance
 
 ```text
-abs(actual[i] - reference[i]) <= 1e-5 + 1e-3 * abs(reference[i])
+abs(actual[i] - reference[i]) <= {policy['atol']:g} + {policy['rtol']:g} * abs(reference[i])
 ```
 
 This is a mixed absolute/relative bound, **not** a uniform maximum absolute error
-of 1e-5. The ratio below divides each element's error by its allowance; a maximum
-ratio ≤ 1 means every element satisfies that bound. Finiteness, relative RMSE < 0.005
+of {policy['atol']:g}. The ratio below divides each element's error by its allowance; a maximum
+ratio ≤ 1 means every element satisfies that bound. Finiteness, relative RMSE < {policy['max_relative_rmse']:g}
 and final-state checks are additional requirements. No outliers are discarded.
 
 ![Worst elementwise tolerance ratio]({link(stem.with_name(stem.name+'_tolerance.png'), markdown)})

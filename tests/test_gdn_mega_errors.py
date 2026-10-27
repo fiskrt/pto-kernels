@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 import torch
 
-from gdn_mega_validation import error_metrics
+from gdn_mega_validation import ATOL, RTOL, MAX_RMSE_RATIO, error_metrics
 
 
 @pytest.mark.parametrize("case", ["rounded", "spike", "nan", "inf", "empty"])
@@ -112,13 +112,30 @@ def test_numerical_asterisk_is_per_cell_and_implementation(monkeypatch, baseline
 
 def test_worst_tolerance_witness_is_distinct_from_maximum_absolute_error():
     expected = torch.tensor([0., .5, 1.], dtype=torch.float64)
-    actual = torch.tensor([2e-5, .5004, 1.0009], dtype=torch.float64)
+    actual = torch.tensor([2*ATOL, .5004, 1.0009], dtype=torch.float64)
     m = error_metrics(actual, expected)
     assert not m['passed'] and m['pointwise_violations'] == 1
     assert m['max_error_flat_index'] == 2
     assert m['worst_tolerance_flat_index'] == 0
-    assert m['actual_at_worst_tolerance'] == 2e-5
+    assert m['actual_at_worst_tolerance'] == 2*ATOL
     assert m['reference_at_worst_tolerance'] == 0.
-    assert m['abs_error_at_worst_tolerance'] == 2e-5
-    assert m['allowed_at_worst_tolerance'] == 1e-5
+    assert m['abs_error_at_worst_tolerance'] == 2*ATOL
+    assert m['allowed_at_worst_tolerance'] == ATOL
     assert m['max_tolerance_ratio'] == 2.
+
+
+@pytest.mark.parametrize("reference_value", [0., 1., 100.])
+def test_approved_elementwise_policy_rejects_a_single_regressing_element(reference_value):
+    # Thousands of exact elements make the RMSE check pass even for the spike.
+    # The elementwise bound must still distinguish the two sides of the limit.
+    assert ATOL == 1e-4 and RTOL == 1e-3
+    expected = torch.ones(4096, dtype=torch.float64)
+    expected[0] = reference_value
+    allowed = ATOL + RTOL * abs(reference_value)
+    for factor, passed in ((.99, True), (1.01, False)):
+        actual = expected.clone()
+        actual[0] += factor * allowed
+        result = error_metrics(actual, expected)
+        assert result["relative_rmse"] < MAX_RMSE_RATIO
+        assert result["passed"] is passed
+        assert result["pointwise_violations"] == (0 if passed else 1)

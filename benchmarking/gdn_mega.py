@@ -181,7 +181,7 @@ def main():
             record["reference"] = "CPU FP64 token recurrence"
             record["validation_sha256"] = hashlib.sha256(b"".join(
                 (Path(__file__).resolve().parents[1] / name).read_bytes() for name in
-                ("tests/gdn_mega_validation.py", "tests/test_gdn_mega.py", "benchmarking/gdn_mega.py"))).hexdigest()
+                ("tests/gdn_mega_validation.py", "tests/gdn_mega_cases.py", "tests/test_gdn_mega.py", "benchmarking/gdn_mega.py"))).hexdigest()
             record["environment"] = environment
             records.append(record)
             print(json.dumps(record), flush=True)

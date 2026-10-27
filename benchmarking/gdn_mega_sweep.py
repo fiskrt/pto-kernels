@@ -121,8 +121,8 @@ def main():
         # Never reuse historical RMSE-only passes after changing acceptance or
         # its oracle. Include both the shared checker and the worker/reference.
         "validation_sha256": hashlib.sha256(b"".join((ROOT / name).read_bytes() for name in
-            ("tests/gdn_mega_validation.py", "tests/test_gdn_mega.py", "benchmarking/gdn_mega.py"))).hexdigest(),
-        "validation": "pointwise atol=1e-5, rtol=1e-3 AND relative RMSE < 0.005; raw output and final state",
+            ("tests/gdn_mega_validation.py", "tests/gdn_mega_cases.py", "tests/test_gdn_mega.py", "benchmarking/gdn_mega.py"))).hexdigest(),
+        "validation": "Every raw output and final state element must satisfy the recorded per-worker validation_policy, including finiteness and relative RMSE",
         "current_kernel_commit": subprocess.check_output(
             ["git", "-c", f"safe.directory={ROOT}", "log", "-1", "--format=%H", "--",
              ":(glob)csrc/kernel/gdn_mega/*.cpp", ":(glob)csrc/kernel/gdn_mega/*.hpp"],

@@ -8,7 +8,8 @@ import math
 import torch
 
 
-ATOL = 1e-5
+# User-approved absolute floor; keep the relative bound fixed.
+ATOL = 1e-4
 RTOL = 1e-3
 MAX_RMSE_RATIO = 0.005
 POLICY = {"atol": ATOL, "rtol": RTOL, "max_relative_rmse": MAX_RMSE_RATIO,
@@ -74,6 +75,7 @@ def error_metrics(actual, expected, *, include_percentiles=False):
         "passed": violations == 0 and relative_rmse < MAX_RMSE_RATIO,
         "finite": True, "elements": diff.numel(), "max_abs": diff.max().item(),
         "mean_abs": diff.mean().item(), **percentiles,
+        "required_atol_at_fixed_rtol": (diff - RTOL * expected.abs()).clamp_min_(0).max().item(),
         "relative_rmse": relative_rmse, "r_squared": r_squared,
         "pointwise_violations": violations, "max_tolerance_ratio": tolerance_ratio.flatten()[worst_index].item(),
         "worst_tolerance_flat_index": worst_index,

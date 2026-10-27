@@ -8,60 +8,9 @@ from gdn_mega_validation import POLICY, assert_numerically_close, error_metrics,
 from test_gdn_mega import D, _expand_kv_heads, _make_inputs, _prepare_gdn_mega, _reference
 
 
-# Fixed before evaluating the kernel: no tuning the oracle or tolerances to results.
-AUDIT_CASES = [
-    dict(name="ordinary_seed2027", seed=2027, lengths=(257,), heads=16, key_heads=4),
-    dict(name="weak_seed119", seed=119, lengths=(513,), heads=16, key_heads=4, gate_scale=.01),
-    dict(name="no_decay", seed=911, lengths=(257,), heads=8, key_heads=8, gate_scale=0.),
-    dict(name="zero_state_tail", seed=1709, lengths=(129,), heads=12, key_heads=3, initial=False),
-    dict(name="packed_empty", seed=31, lengths=(0, 1, 127, 0, 129, 0), heads=16, key_heads=4, gate_scale=.01),
-    dict(name="packed_empty_zero_state", seed=313, lengths=(0, 1, 129, 0), heads=8, key_heads=2, initial=False),
-    dict(name="large_values_and_state", seed=191, lengths=(257,), heads=8, key_heads=2, amplitude=32.),
-    dict(name="tiny_values_and_state", seed=509, lengths=(257,), heads=8, key_heads=2, amplitude=1e-3),
-    dict(name="zero_beta_no_decay", seed=809, lengths=(257,), heads=8, key_heads=2, gate_scale=0., beta=0.),
-    dict(name="zero_query", seed=811, lengths=(257,), heads=8, key_heads=2, zero_query=True),
-    dict(name="zero_values_and_state", seed=821, lengths=(257,), heads=8, key_heads=2, amplitude=0.),
-    dict(name="correlated_beta002", seed=823, lengths=(256,), heads=8, key_heads=2, correlated=True, gate_scale=0., beta=.02),
-    dict(name="correlated_beta05", seed=827, lengths=(256,), heads=8, key_heads=2, correlated=True, gate_scale=0., beta=.5),
-    dict(name="correlated_beta1", seed=829, lengths=(256,), heads=8, key_heads=2, correlated=True, gate_scale=0., beta=1.),
-    dict(name="mixed_decay", seed=839, lengths=(513,), heads=8, key_heads=2, mixed=True),
-    dict(name="equal_heads64", seed=853, lengths=(129,), heads=64, key_heads=64),
-    dict(name="single_key_head", seed=857, lengths=(129,), heads=24, key_heads=1),
-    dict(name="keys_norm2_stable_beta", seed=859, lengths=(257,), heads=8, key_heads=2, key_scale=2., beta=.1),
-    dict(name="long_8k_weak", seed=863, lengths=(8192,), heads=8, key_heads=2, gate_scale=.01),
-    dict(name="long_32k", seed=877, lengths=(32768,), heads=8, key_heads=2),
-    dict(name="correlated_random_beta09", seed=883, lengths=(513,), heads=8, key_heads=2,
-         correlated_random=True, gate_scale=0., beta=.9, amplitude=32.),
-    dict(name="nearly_correlated_beta1", seed=887, lengths=(257,), heads=16, key_heads=4,
-         nearly_correlated=True, gate_scale=0., beta=1., amplitude=32.),
-    dict(name="positive_log_gates", seed=907, lengths=(257,), heads=8, key_heads=2, gate_scale=-.01),
-    dict(name="long_16k_no_decay", seed=919, lengths=(16384,), heads=8, key_heads=2, gate_scale=0.),
-    dict(name="delayed_nearly_correlated", seed=929, lengths=(385,), heads=8, key_heads=2,
-         nearly_correlated=True, correlated_after=128, gate_scale=0., beta=1., amplitude=32.),
-    dict(name="strong_correlated_decay", seed=937, lengths=(257,), heads=8, key_heads=2,
-         nearly_correlated=True, gate_scale=.01, beta=.9, amplitude=32.),
-    # Distribution families from FLA test_gdn.py at 12cb9d4, adapted to our
-    # FP16 input/state ABI and D128. Keep our independent FP64 oracle/policy.
-    dict(name="fla_positive_no_decay", seed=42, lengths=(1024,), heads=8, key_heads=2,
-         fla="positive", gate_mask=1., initial=False),
-    dict(name="fla_positive_weak", seed=43, lengths=(1500,), heads=8, key_heads=2,
-         fla="positive", gate_normalizer=10., initial=False),
-    dict(name="fla_positive_strong", seed=44, lengths=(257,), heads=8, key_heads=2,
-         fla="positive", gate_normalizer=.01, initial=False),
-    dict(name="fla_positive_masked", seed=45, lengths=(513,), heads=8, key_heads=2,
-         fla="positive", gate_mask=.5, initial=False),
-    dict(name="fla_gaussian_initial", seed=46, lengths=(1024,), heads=8, key_heads=2,
-         fla="gaussian", gate_normalizer=10., state_scale=1.),
-    dict(name="fla_negative_eigenvalues", seed=47, lengths=(513,), heads=8, key_heads=2,
-         fla="positive", beta_logits=True, negative_eigenvalues=True, initial=False),
-    dict(name="fla_gate_activation", seed=48, lengths=(513,), heads=8, key_heads=2,
-         fla="positive", gate_activation=True, initial=False),
-    dict(name="fla_gaussian_logits", seed=49, lengths=(513,), heads=8, key_heads=2,
-         fla="gaussian", beta_logits=True, gate_logits=True, state_scale=1.),
-    dict(name="fla_positive_strong_tail75", seed=51, lengths=(75,), heads=8, key_heads=2,
-         fla="positive", gate_normalizer=.01, initial=False),
-    dict(name="strong_decay_tail92", seed=53, lengths=(92,), heads=8, key_heads=2, gate_scale=4.),
-]
+from gdn_mega_cases import AUDIT_CASES
+
+
 READ_ONLY = ("q", "k", "v", "g", "beta", "mask_lower", "mask_full", "minus_identity", "cu_seqlens")
 
 
