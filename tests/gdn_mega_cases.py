@@ -150,4 +150,15 @@ CORRELATION_CASES = [
 ]
 
 
-AUDIT_CASES = STANDARD_CASES + CRITICAL_CASES + CORRELATION_CASES
+# Exercise the independent value-column workers and producer streams across
+# grouped, single-key and ordinary multi-head layouts, including partial tiles.
+# Existing critical cases cover H8/Hg2 at 1K–32K with extreme gates and beta.
+SCHEDULING_CASES = [
+    dict(name=f'parallel_columns_hg{keys}_t{length}_initial{initial}',
+         seed=4111, lengths=(length,), heads=8, key_heads=keys,
+         nearly_correlated=True, beta=1., constant_log_gate=-1e-6,
+         amplitude=32., initial=initial)
+    for keys in (1, 4, 8) for length in (1024, 2048, 2139) for initial in (False, True)
+]
+
+AUDIT_CASES = STANDARD_CASES + CRITICAL_CASES + CORRELATION_CASES + SCHEDULING_CASES

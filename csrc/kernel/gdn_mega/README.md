@@ -1,20 +1,31 @@
 # Production GDN mega kernel
 
-One launch and two global phases, with a fixed compiled schedule on Ascend 910B2:
+One launch with shared setup followed by recurrence on Ascend 910B2:
 
 1. Vector computes compensated gate prefixes and transposes beta while cube
    computes FP32 KKᵀ and QKᵀ, shared by grouped value heads. A global barrier
    joins these independent producers.
-2. Each active cube/vector group retains one head across its chunks. Vector
+2. Normally each active cube/vector group retains one head across its chunks. Vector
    weights the next chunk before waiting for current projections, retains its
    coefficients through RHS preparation, then finishes its inverse while cube
    processes the current chunk. The recurrent state stays in vector-local FP32 storage.
 
+For one sequence with H=8, at least 1024 tokens, and at least two chunk/key-head
+tasks per spare group, the second phase uses a different work partition:
+16 groups retain two independent 64-value-column slices of each head; the
+remaining eight groups prepare future chunks. The helpers share cached KK/QK
+across grouped heads and compute weights, leaf inverses, cube joins and Gamma.
+Consumers form the RHS while waiting for/loading those prepared inverses.
+State never moves between workers. An extra global barrier initializes readiness
+flags before producers and consumers start concurrently. Shorter shapes and
+other head/batch counts use the local preparation schedule above.
+
 The inverse uses stable 16×16 FP32 triangular substitution followed by
 block-triangular joins. The vector solve gathers coefficients directly without
 transposing or expanding solved rows. Independent cube joins are queued by
-level, with six synchronized export/reload phases rather than fourteen serial
-product round trips. The number of mathematical products is unchanged. It never forms the large powers of A that caused the
+level. The final join stays factored: with D0/D1 the diagonal inverses and
+F=-D1*L10, the solve computes R0=D0*B0, then R1=D1*B1+F*R0. It avoids
+materializing F*D0. It never forms the large powers of A that caused the
 previous FP16 overflow. Inverse joins, RHS solves and attention products use
 native FP32 operands. A stacked K/Q product shares two FP16 components of
 state and accumulates in FP32. Preparation computes Gamma = exp(G_last-G_i)*K
@@ -38,7 +49,7 @@ on decay and no division by a potentially underflowed gate exponential.
 
 Every head uses this parallel chunk algorithm. There is no coupling threshold,
 per-chunk detection reduction, or sequential token fallback. Real Qwen capture
-replays pass without that fallback. All 160 fixed numerical regression cases
+replays pass without that fallback. The fixed numerical regression cases
 pass the user-approved atol=1e-4, rtol=1e-3 policy, including the small errors
 previously rejected by atol=1e-5. Historical tighter-policy results remain
 recorded. See the
@@ -50,7 +61,7 @@ or an additional launch. File count does not equal stage count.
 
 | File | Used for |
 |---|---|
-| `kernel_gdn_mega.cpp` | Two-phase orchestration, entry and head dispatch |
+| `kernel_gdn_mega.cpp` | Setup, shape-based worker partition, entry and head dispatch |
 | `common.hpp` | Synchronization, packed I/O and sequence indexing |
 | `gate_scan.hpp` | Compensated prefix scan and gate/beta layout conversion |
 | `shared_grams.hpp` | Shared FP32 KKᵀ/QKᵀ with pipelined input loads |
@@ -58,8 +69,8 @@ or an additional launch. File count does not equal stage count.
 | `recurrence_pipeline.hpp` | Original-input × paired-state products and native FP32 block joins |
 | `fused_pipeline.hpp` | Preparation overlap, recurrent state and output |
 
-All seven files are used by the entry point. There are no probe kernels, runtime
-accuracy knobs, or selectable tuning configurations. Compiler architecture and
+All seven files are used by the entry point. Shape-based scheduling is internal;
+there are no probe kernels, runtime accuracy knobs, or selectable tuning configurations. Compiler architecture and
 cube/vector guards remain necessary. Hardware validation is on Ascend 910B2;
 the inherited A5 synchronization path is not a verified implementation.
 
@@ -80,7 +91,7 @@ Only `out` and `final_state` are primary outputs. The existing caller applies
 | `g_t`, `g_sum`, `beta_t` | Head-major high/low gate prefixes and beta |
 | `A`, `w` | Whole FP32 Gamma tiles: first/second halves of heads, head-major |
 | `A_inv`, `u` | Whole FP32 attention tiles: first/second halves of heads, head-major |
-| `A_inv_f32` | FP32 QKᵀ shared by grouped heads |
+| `A_inv_f32` | FP32 QKᵀ shared by grouped heads; token helpers reuse it for per-head factored inverses and readiness flags after caching QK |
 | `v_new`, `s` | Two column halves of FP32 KKᵀ |
 | `wy_workspace_a1/a2` | Reserved compatibility storage |
 | `kkt_workspace` | FP32 output-product exchange |

@@ -37,52 +37,50 @@ using MegaFloat = Tile<TileType::Mat,float,R,C,BLayout::ColMajor,R,C,SLayout::Ro
 // Join all independent diagonal block pairs at one level together. Products
 // retain separate accumulators. Export/reload phases are synchronized once
 // per level, with independent DMA and matrix operations queued together.
-template<int B,int C,typename Mat>
-AICORE inline void mega_float_join_level(Mat& inverse,__gm__ float* scratch)
+template<int B,int C,bool FirstOnly=false,typename Mat>
+AICORE inline void mega_float_join_level(Mat& inverse,__gm__ float* scratch,__gm__ float* prepared=nullptr,int valid=C)
 {
 #if defined(__DAV_CUBE__)
     constexpr int Groups=C/(2*B),Rows=Groups*B;
     MegaFloat<Rows,B> temporary;TASSIGN(temporary,128*1024);
-    TileLeft<float,B,B> left;TileRight<float,B,B> right;
-    TileAcc<float,B,B> acc;
-    TASSIGN(left,0);TASSIGN(right,0);
-    for(int group=0;group<Groups;++group){
-        int offset=group*2*B;
-        TASSIGN(left,group*B*B*sizeof(float));TASSIGN(right,group*B*B*sizeof(float));
-        TEXTRACT(left,inverse,offset+B,offset+B);TEXTRACT(right,inverse,offset+B,offset);
-    }
-    pipe_barrier(PIPE_ALL);
-    for(int group=0;group<Groups;++group){
-        TASSIGN(left,group*B*B*sizeof(float));TASSIGN(right,group*B*B*sizeof(float));
-        TASSIGN(acc,group*B*B*sizeof(float));TMATMUL(acc,left,right);
-    }
-    pipe_barrier(PIPE_ALL);
+    TileLeft<float,B,B> left;TileRight<float,B,B> right;TileAcc<float,B,B> acc;
     GlobalTensor<float,Shape<1,1,1,Rows,B>,pto::Stride<1,1,1,B,1>> gm(scratch);
     for(int group=0;group<Groups;++group){
+        int offset=group*2*B;
+        TASSIGN(left,group*B*B*sizeof(float));TASSIGN(right,group*B*B*sizeof(float));
         TASSIGN(acc,group*B*B*sizeof(float));
+        TEXTRACT(left,inverse,offset+B,offset+B);TEXTRACT(right,inverse,offset+B,offset);
+        set_flag(PIPE_MTE1,PIPE_M,EVENT_ID0);wait_flag(PIPE_MTE1,PIPE_M,EVENT_ID0);
+        TMATMUL(acc,left,right);
+        set_flag(PIPE_M,PIPE_FIX,EVENT_ID0);wait_flag(PIPE_M,PIPE_FIX,EVENT_ID0);
         GlobalTensor<float,Shape<1,1,1,B,B>,pto::Stride<1,1,1,B,1>> out(scratch+group*B*B);
         TSTORE(out,acc);
     }
-    pipe_barrier(PIPE_ALL);TLOAD(temporary,gm);pipe_barrier(PIPE_ALL);
+    set_flag(PIPE_FIX,PIPE_MTE2,EVENT_ID0);wait_flag(PIPE_FIX,PIPE_MTE2,EVENT_ID0);
+    if constexpr(!FirstOnly){
+        TLOAD(temporary,gm);
+        set_flag(PIPE_MTE2,PIPE_MTE1,EVENT_ID0);wait_flag(PIPE_MTE2,PIPE_MTE1,EVENT_ID0);
+        for(int group=0;group<Groups;++group){
+            int offset=group*2*B;
+            TASSIGN(left,group*B*B*sizeof(float));TASSIGN(right,group*B*B*sizeof(float));
+            TASSIGN(acc,group*B*B*sizeof(float));
+            TEXTRACT(left,temporary,group*B,0);TEXTRACT(right,inverse,offset,offset);
+            set_flag(PIPE_MTE1,PIPE_M,EVENT_ID0);wait_flag(PIPE_MTE1,PIPE_M,EVENT_ID0);
+            TMATMUL(acc,left,right);
+            set_flag(PIPE_M,PIPE_FIX,EVENT_ID0);wait_flag(PIPE_M,PIPE_FIX,EVENT_ID0);
+            GlobalTensor<float,Shape<1,1,1,B,B>,pto::Stride<1,1,1,B,1>> out(scratch+group*B*B);
+            TSTORE(out,acc);
+        }
+        set_flag(PIPE_FIX,PIPE_MTE2,EVENT_ID0);wait_flag(PIPE_FIX,PIPE_MTE2,EVENT_ID0);
+    }
     for(int group=0;group<Groups;++group){
         int offset=group*2*B;
-        TASSIGN(left,group*B*B*sizeof(float));TASSIGN(right,group*B*B*sizeof(float));
-        TEXTRACT(left,temporary,group*B,0);TEXTRACT(right,inverse,offset,offset);
-    }
-    pipe_barrier(PIPE_ALL);
-    for(int group=0;group<Groups;++group){
-        TASSIGN(left,group*B*B*sizeof(float));TASSIGN(right,group*B*B*sizeof(float));
-        TASSIGN(acc,group*B*B*sizeof(float));TMATMUL(acc,left,right);
-    }
-    pipe_barrier(PIPE_ALL);
-    for(int group=0;group<Groups;++group){
-        TASSIGN(acc,group*B*B*sizeof(float));
-        GlobalTensor<float,Shape<1,1,1,B,B>,pto::Stride<1,1,1,B,1>> out(scratch+group*B*B);
-        TSTORE(out,acc);
-    }
-    pipe_barrier(PIPE_ALL);
-    for(int group=0;group<Groups;++group){
-        int offset=group*2*B;
+        int rows=max(0,min(B,valid-offset-B));
+        if(prepared!=nullptr && rows>0){
+            TileAcc<float,B,B,DYNAMIC,B> result(rows);TASSIGN(result,group*B*B*sizeof(float));
+            GlobalTensor<float,Shape<1,1,1,DYNAMIC,B>,pto::Stride<1,1,1,C,1>> out(prepared+(offset+B)*C+offset,{1,1,1,rows,B});
+            TSTORE(out,result);
+        }
         Tile<TileType::Mat,float,C,C,BLayout::ColMajor,B,B,SLayout::RowMajor,512> destination;
         TASSIGN(destination,(uint64_t)inverse.data()+(offset*C+(offset+B)*8)*sizeof(float));
         GlobalTensor<float,Shape<1,1,1,B,B>,pto::Stride<1,1,1,B,1>> block(scratch+group*B*B);
@@ -93,12 +91,12 @@ AICORE inline void mega_float_join_level(Mat& inverse,__gm__ float* scratch)
 }
 
 template<int C,typename Mat>
-AICORE inline void mega_float_inverse(Mat& inverse,__gm__ float* scratch)
+AICORE inline void mega_float_inverse(Mat& inverse,__gm__ float* scratch,__gm__ float* prepared=nullptr,int valid=C)
 {
 #if defined(__DAV_CUBE__)
-    mega_float_join_level<16,C>(inverse,scratch);
-    mega_float_join_level<32,C>(inverse,scratch);
-    mega_float_join_level<64,C>(inverse,scratch);
+    mega_float_join_level<16,C>(inverse,scratch,prepared,valid);
+    mega_float_join_level<32,C>(inverse,scratch,prepared,valid);
+    mega_float_join_level<64,C,true>(inverse,scratch,prepared,valid);
 #endif
 }
 
@@ -108,7 +106,7 @@ template<int C,int D,typename Acc,typename Attention,typename Gamma,typename Res
 AICORE inline void mega_combined_residual_products(Acc& result,Attention& attention,Gamma& gamma,Residual& residual)
 {
 #if defined(__DAV_CUBE__)
-    static_assert(C==D);
+
     TileLeft<float,2*C,C/2> left;
     TileLeft<float,C,C/2> top,bottom;
     TileRight<float,C/2,D> right;
@@ -119,5 +117,34 @@ AICORE inline void mega_combined_residual_products(Acc& result,Attention& attent
         if(part==0)TMATMUL(result,left,right);else TMATMUL_ACC(result,result,left,right);
         pipe_barrier(PIPE_ALL);
     }
+#endif
+}
+
+template<int C,int D,typename Mat,typename Rhs>
+AICORE inline void mega_factored_solve(Mat& inverse,Rhs& rhs,__gm__ float* exchange)
+{
+#if defined(__DAV_CUBE__)
+    constexpr int B=C/2;
+    TileLeft<float,B,B> left0,left1;TileRight<float,B,D> right0,right1;
+    TileAcc<float,B,D> acc0,acc1;
+    TASSIGN(left0,0);TASSIGN(left1,B*B*sizeof(float));
+    TASSIGN(right0,0);TASSIGN(right1,B*D*sizeof(float));
+    TASSIGN(acc0,0);TASSIGN(acc1,B*D*sizeof(float));
+    TEXTRACT(left0,inverse,0,0);TEXTRACT(left1,inverse,B,B);
+    TEXTRACT(right0,rhs,0,0);TEXTRACT(right1,rhs,B,0);
+    set_flag(PIPE_MTE1,PIPE_M,EVENT_ID0);wait_flag(PIPE_MTE1,PIPE_M,EVENT_ID0);
+    TMATMUL(acc0,left0,right0);
+    set_flag(PIPE_M,PIPE_FIX,EVENT_ID0);wait_flag(PIPE_M,PIPE_FIX,EVENT_ID0);
+    GlobalTensor<float,Shape<1,1,1,B,D>,pto::Stride<1,1,1,D,1>> top(exchange),bottom(exchange+B*D);
+    TSTORE(top,acc0);
+    TMATMUL(acc1,left1,right1);
+    set_flag(PIPE_FIX,PIPE_MTE2,EVENT_ID0);wait_flag(PIPE_FIX,PIPE_MTE2,EVENT_ID0);
+    Tile<TileType::Mat,float,C,D,BLayout::ColMajor,B,D,SLayout::RowMajor,512> solved_top;TASSIGN(solved_top,(uint64_t)rhs.data());
+    TLOAD(solved_top,top);
+    set_flag(PIPE_MTE2,PIPE_MTE1,EVENT_ID0);wait_flag(PIPE_MTE2,PIPE_MTE1,EVENT_ID0);
+    TEXTRACT(left0,inverse,B,0);TEXTRACT(right0,rhs,0,0);
+    set_flag(PIPE_MTE1,PIPE_M,EVENT_ID0);wait_flag(PIPE_MTE1,PIPE_M,EVENT_ID0);
+    TMATMUL_ACC(acc1,acc1,left0,right0);pipe_barrier(PIPE_ALL);
+    TSTORE(bottom,acc1);pipe_barrier(PIPE_ALL);
 #endif
 }

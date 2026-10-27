@@ -1,7 +1,6 @@
-// GDN mega kernel: one launch, two global phases, one production schedule.
-// Phase 1: gate prefix scan/layout and shared KK/QK products run concurrently.
-// Phase 2: a head-persistent pipeline overlaps next-chunk inverse preparation
-// with residual, state and output products for every input.
+// GDN mega kernel: one launch, shared Gram/prefix phase, then recurrence.
+// Small head counts use spare groups for token preparation and split the state
+// by independent value columns. Other shapes prepare ahead within each head.
 // See README.md for the file map and workspace contract.
 #ifndef GM_ADDR
 #define GM_ADDR __gm__ uint8_t*
@@ -49,11 +48,55 @@ AICORE inline void mega_kernel_impl(GM_ADDR q_ptr, GM_ADDR k_ptr, GM_ADDR v_ptr,
                          reinterpret_cast<__gm__ half*>(beta_t_ptr),
                          reinterpret_cast<__gm__ int32_t*>(cu_seqlens_ptr), batch_size, total_tokens);
 
+    // Two 64-column workers per head retain disjoint FP32 state. Remaining
+    // groups prepare chunks concurrently. Require eight recurrent chunks and
+    // at least two preparation tasks per helper to amortize startup/grouping.
+    if constexpr(H==8){
+        if(batch_size==1 && total_tokens>=1024 && get_block_num()>2*H &&
+           internal_matrices/H*num_key_heads>=2*(get_block_num()-2*H)){
+            mega_shared_grams<H, C, D,true>(reinterpret_cast<__gm__ half*>(k_ptr),
+                                      reinterpret_cast<__gm__ float*>(v_new_ptr), reinterpret_cast<__gm__ float*>(s_ptr),
+                                      reinterpret_cast<__gm__ int32_t*>(cu_seqlens_ptr), internal_matrices, num_key_heads,
+                                      reinterpret_cast<__gm__ half*>(q_ptr),
+                                      reinterpret_cast<__gm__ float*>(A_inv_f32_ptr),total_tokens);
+
+            mega_sync_all();
+            constexpr int consumers=2*H;
+            // Initialize ready flags in the unused upper-right inverse entry.
+#if defined(__DAV_CUBE__)
+            for(uint32_t m=get_block_idx();m<internal_matrices;m+=get_block_num()){
+                auto info=mega_chunk_info(m,H,C,cu);
+                int head=m%H;int64_t pos=info.bsnd_offset/(H*C);
+                auto flag=reinterpret_cast<__gm__ uint32_t*>(A_inv_f32_ptr)+(head*total_tokens+pos)*C+C-1;
+                *flag=0;dcci(flag,SINGLE_CACHE_LINE);
+            }
+            dsb(DSB_DDR);
+#endif
+            mega_sync_all();
+            if(get_block_idx()>=consumers){
+                mega_token_prepare<H,C>(reinterpret_cast<__gm__ float*>(g_t_ptr),reinterpret_cast<__gm__ float*>(g_sum_ptr),
+                    reinterpret_cast<__gm__ half*>(beta_t_ptr),reinterpret_cast<__gm__ float*>(v_new_ptr),reinterpret_cast<__gm__ float*>(s_ptr),
+                    reinterpret_cast<__gm__ float*>(A_inv_f32_ptr),reinterpret_cast<__gm__ float*>(msk_lower_ptr),reinterpret_cast<__gm__ float*>(msk_full_ptr),
+                    reinterpret_cast<__gm__ half*>(A_ptr),reinterpret_cast<__gm__ half*>(w_ptr),reinterpret_cast<__gm__ half*>(A_inv_ptr),reinterpret_cast<__gm__ half*>(u_ptr),
+                    reinterpret_cast<__gm__ half*>(k_ptr),reinterpret_cast<__gm__ half*>(o_ws_qk_ptr),cu,internal_matrices,num_key_heads,total_tokens,consumers);
+            }else{
+                mega_fused_pipeline<H,C,D,64,true>(reinterpret_cast<__gm__ half*>(q_ptr),reinterpret_cast<__gm__ half*>(k_ptr),reinterpret_cast<__gm__ half*>(v_ptr),
+                    reinterpret_cast<__gm__ float*>(g_t_ptr),reinterpret_cast<__gm__ float*>(g_sum_ptr),reinterpret_cast<__gm__ half*>(beta_t_ptr),
+                    reinterpret_cast<__gm__ half*>(A_ptr),reinterpret_cast<__gm__ half*>(w_ptr),reinterpret_cast<__gm__ half*>(A_inv_ptr),reinterpret_cast<__gm__ half*>(u_ptr),
+                    reinterpret_cast<__gm__ half*>(o_ws_qs_ptr),reinterpret_cast<__gm__ half*>(o_ws_gated_ptr),reinterpret_cast<__gm__ half*>(kkt_ws_ptr),
+                    reinterpret_cast<__gm__ half*>(h_ws_ptr),reinterpret_cast<__gm__ half*>(o_ws_qk_ptr),reinterpret_cast<__gm__ half*>(o_ptr),reinterpret_cast<__gm__ half*>(fs_ptr),
+                    reinterpret_cast<__gm__ half*>(h0_ptr),has_initial_state,cu,batch_size,num_key_heads,total_tokens,
+                    reinterpret_cast<__gm__ float*>(v_new_ptr),reinterpret_cast<__gm__ float*>(s_ptr),reinterpret_cast<__gm__ float*>(A_inv_f32_ptr),
+                    reinterpret_cast<__gm__ float*>(msk_lower_ptr),reinterpret_cast<__gm__ float*>(msk_full_ptr));
+            }
+            return;
+        }
+    }
     mega_shared_grams<H, C, D>(reinterpret_cast<__gm__ half*>(k_ptr),
                               reinterpret_cast<__gm__ float*>(v_new_ptr), reinterpret_cast<__gm__ float*>(s_ptr),
                               reinterpret_cast<__gm__ int32_t*>(cu_seqlens_ptr), internal_matrices, num_key_heads,
                               reinterpret_cast<__gm__ half*>(q_ptr),
-                              reinterpret_cast<__gm__ float*>(A_inv_f32_ptr));
+                              reinterpret_cast<__gm__ float*>(A_inv_f32_ptr),total_tokens);
 
     mega_sync_all();
 
