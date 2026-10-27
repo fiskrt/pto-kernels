@@ -1,5 +1,9 @@
 # GDN input ranges and numerical design
 
+For measured pass/fail combinations and their absolute error severity, see
+[current accuracy regimes](error_heatmap.md#accuracy-regimes-where-the-current-kernel-passes-and-fails).
+Generator ranges below are not universal accuracy guarantees.
+
 Sources pinned to FLA commit `12cb9d40bae8cd58325d1f8cbec4c8c8c55e9f3e`:
 [test generators](https://github.com/fla-org/flash-linear-attention/blob/12cb9d40bae8cd58325d1f8cbec4c8c8c55e9f3e/tests/ops/test_gdn.py),
 [comparison helper](https://github.com/fla-org/flash-linear-attention/blob/12cb9d40bae8cd58325d1f8cbec4c8c8c55e9f3e/fla/utils/testing.py),

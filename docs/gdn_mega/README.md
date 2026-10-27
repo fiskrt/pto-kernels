@@ -23,6 +23,12 @@ and `delayed_nearly_correlated`, both synthetic amplitude-32 cases with beta=1
 and no decay. These failures remain ordinary failing tests, with unchanged
 tolerances; the whole suite is not green.
 
+The expanded current-kernel audit passes **137/160 synthetic cases** and fails
+23, including three unit-scale 32K near-lossless-memory cases and 20 larger-scale
+stress cases. All remain finite. The [accuracy regimes and failure severity](error_heatmap.md#accuracy-regimes-where-the-current-kernel-passes-and-fails)
+separate these from the 126/126 passing real-input cases and show absolute witness
+errors, allowances, violation counts and priorities for further validation.
+
 Historical results below retain their original library fingerprints. Before
 removal, `aac5a4d` passed 118 regression tests but failed 23/56 additional
 critical cases, even with beta in [0,1]. Its saved FP64 heatmap passes 63/63

@@ -1,5 +1,6 @@
 """Markdown summaries derived from the same validated data as the GDN plots."""
 import os
+import json
 from gdn_mega_sweep import head_configs
 from pathlib import Path
 
@@ -116,6 +117,182 @@ bash scripts/report_gdn_mega.sh render
     print(f'Saved {markdown}')
 
 
+def accuracy_regimes(source, markdown):
+    """Keep the measured scope and stress failures in regenerated error reports."""
+    directory = Path(source).parent
+    audit_path = directory / 'numerical_regimes.json'
+    if not audit_path.exists():
+        return ''
+    audit = json.loads(audit_path.read_text())
+    evidence_path = directory / 'fallback_removal.json'
+    evidence = json.loads(evidence_path.read_text())
+    capture = json.loads((directory / 'qwen_capture.json').read_text())['input_summary']
+    cases = audit['cases']
+    if ([c['case']['name'] for c in cases] != audit['requested_cases'] or
+            len({c['case']['name'] for c in cases}) != len(cases)):
+        raise ValueError('Numerical regimes require a complete, unique audit')
+    if audit['kernel_library_sha256'] != evidence['after_metadata']['kernel_library_sha256']:
+        raise ValueError('Regime audit and captured-input evidence use different kernels')
+    if audit['policy'] != evidence['after_metadata']['policy']:
+        raise ValueError('Regime audit and captured-input evidence use different tolerances')
+    failed = [c for c in cases if not c['passed']]
+    primary = [c for c in cases if c['beta_in_production_range']
+               and c['input_ranges']['log_gate'][1] <= 0 and c['case'].get('key_scale', 1.) == 1.]
+    controlled = [c for c in cases if c['case']['name'].startswith('correlation_')]
+    unit = [c for c in controlled if c['case'].get('amplitude', 1.) == 1.]
+    large = [c for c in cases if c['case'].get('amplitude', 1.) >= 32. or c['case'].get('state_scale', .1) > 1.]
+    large_failed = [c for c in large if not c['passed']]
+    slow = [c for c in cases if max(c['case']['lengths']) >= 32768
+            and -1e-6 <= c['case'].get('constant_log_gate', -1.) < 0
+            and c['case'].get('amplitude', 1.) <= 1.]
+    slow_failed = [c for c in slow if not c['passed']]
+    def count(group):
+        return f"{sum(c['passed'] for c in group)}/{len(group)} pass"
+    def worst(case):
+        return max(((field, m[field]) for m in case['repeats'] for field in ('raw_output', 'final_state')),
+                   key=lambda pair: pair[1]['max_tolerance_ratio'])
+    if not failed or not large_failed or not slow_failed:
+        raise ValueError('Regime evidence changed; review the measured-failure interpretation')
+    named = {c['case']['name']: c for c in cases}
+    selected = [named[name] for name in (
+        'critical_tiny_gate_-1e-08_32768', 'critical_tiny_gate_-1e-07_32768',
+        'control_coordinate_beta_zero', 'nearly_correlated_beta1', 'delayed_nearly_correlated')]
+    selected += [max(large_failed, key=lambda c: worst(c)[1]['max_tolerance_ratio'])]
+    severity = []
+    for c in selected:
+        field, m = worst(c)
+        out, state = [c['repeats'][0][f] for f in ('raw_output', 'final_state')]
+        severity.append(
+            f"| `{c['case']['name']}` | {out['pointwise_violations']:,} / {state['pointwise_violations']:,} | "
+            f"{'output' if field == 'raw_output' else 'state'} | {m['abs_error_at_worst_tolerance']:.3e} | "
+            f"{m['allowed_at_worst_tolerance']:.3e} | {m['max_tolerance_ratio']:.3f}× | "
+            f"{m['abs_error_at_worst_tolerance']-m['allowed_at_worst_tolerance']:.3e} |")
+    finite = all(m[f]['finite'] for c in cases for m in c['repeats'] for f in ('raw_output', 'final_state'))
+    floors = all(c[f]['passed'] for c in cases for f in ('fp16_output_rounding_floor', 'fp16_state_rounding_floor'))
+    max_ratio = max(worst(c)[1]['max_tolerance_ratio'] for c in failed)
+    worst_witness = worst(max(failed, key=lambda c: worst(c)[1]['max_tolerance_ratio']))[1]
+    tiny = named['critical_tiny_gate_-1e-08_32768']['repeats'][0]['raw_output']
+    largest = max(failed, key=lambda c: c['repeats'][0]['raw_output']['max_abs'])
+    largest_error = largest['repeats'][0]['raw_output']['max_abs']
+    largest_floor = largest['fp16_output_rounding_floor']['max_abs']
+    if not finite or not floors:
+        raise ValueError('New nonfinite or output-representation failures require a different severity summary')
+    return f'''
+## Accuracy regimes: where the current kernel passes and fails
+
+**This section concerns the fallback-free kernel `{evidence['after_kernel_commit'][:7]}`**,
+library `{audit['kernel_library_sha256'][:12]}`, audited {audit['created_utc'][:10]}.
+The figures above retain their own dated checkpoint; their green cells do not
+certify the additional regimes below. The refreshed synthetic audit has
+**{count(cases)}, {len(failed)} failing cases**, with five launches per case.
+The separate real-input replay has **{count([dict(passed=c['after']['passed']) for c in evidence['cases']])}**.
+Case counts are coverage, not estimates of how often production inputs fail.
+Within beta in [0,1], g <= 0 and normalized-key setups, **{count(primary)}**.
+The other {len(cases)-len(primary)} exploratory cases remain in the full report;
+they are not used to establish safety for this primary workload.
+
+### Parameters and measured regimes
+
+`beta` is write strength. The kernel receives the FP32 **log gate `g`**;
+**`alpha = exp(g)`** is per-token retention, so alpha and g are the same control
+on different scales. More-negative g means more forgetting. Tiny negative g
+means alpha is almost 1 and memory persists. Our primary workload has beta in
+[0,1], g <= 0, and L2-normalized keys (with ordinary FP16 rounding).
+
+These are **measured combinations, not universal safe intervals**. There is no
+established rule such as “beta below X always passes” or “alpha above Y fails.”
+Key alignment, V magnitude, incoming state and the duration of weak decay matter
+together. Beta=0 is not automatically safe: the initial state still propagates.
+
+| Regime | Beta, gate / retention | Keys, values/state and length | Evidence and interpretation |
+|---|---|---|---|
+| **Pass: observed model workload** | Captured beta median {capture['captured_beta_quantiles'][4]:.3f}; g median {capture['log_gate_quantiles'][4]:.6f}, alpha about 0.99385; natural per-head/token variation retained | Actual correlated Qwen keys, max abs(V) {capture['value_abs_max']:.2f}; supplied-state max about 12.60; 346–1024 tokens | All 108 full traces and 18 continuations pass. This is the strongest evidence for the measured workload, not all models or longer contexts. |
+| **Pass: ordinary long sequences** | Uniform beta in [0,1), ordinary log-sigmoid Gaussian gates | Independent normalized Gaussian keys, unit-scale V, initial-state standard deviation 0.1; 256–32768 tokens, H16/Hg4 | All {len(evidence['ordinary_summary'])} current-kernel shapes pass. Does not establish long-context accuracy with correlated, nearly lossless heads. |
+| **Pass: controlled correlation at unit scale** | beta=0.5 or 1; g=0, -0.001, -0.1 or -1; alpha=1, 0.9990005, 0.90484 or 0.36788 | Mean key cosine 0–1; V standard deviation 1, initial-state standard deviation 0.1 or 1; mostly 4K, two 32K no-decay cases | **{count(unit)}.** Correlation, beta=1, or alpha=1 alone is not enough to cause failure. |
+| **Caution: sustained near-lossless memory at 32K** | Tested g=-1e-8, -1e-7, -1e-6; alpha approximately 0.99999999, 0.9999999, 0.999999; beta=0, beta=1 and uniform[0,1) probes | Includes identical keys and supplied unit-scale state; failing examples have max abs(V) 3.90 and max abs(initial) 3.89 | **{count(slow)}** in this selected long/tiny-gate group. Failures occur without large amplitudes. This merits real long-context validation, not dismissal as a large-value stress artifact. |
+| **Caution: high-amplitude stress combinations** | Failures here use beta=1 and g=0, -1e-6 or -0.001; alpha=1, about 0.999999 or 0.9990005 | V/state scale factors 32 or 128; keys range from uncorrelated to nearly identical; typical failing max abs(V) about 125–500 | **{count(large)}** across all high-amplitude/large-state probes. Some large-value cases pass; magnitude is not a proven failure threshold. Large values plus cancellation/long memory are the concern. |
+| **Unestablished: other joint distributions** | Arbitrary persistent gate/beta patterns, other checkpoints; beta>1 or positive g are outside the primary workload above | Real correlated 8K–32K+ traces, other key norms and incoming-state distributions | The small set of exploratory cases and short model captures cannot establish blanket safety. No values are clipped or excluded to obtain a pass. |
+
+### How large are the failures?
+
+**All {len(cases)} cases remain finite; no NaN/Inf or overflow was observed.**
+All ideal FP16-rounded goldens pass. The failures are additional internal
+arithmetic error, not an inadequate final FP16 output range.
+
+**Small absolute errors; they exceed a strict elementwise tolerance. No massive
+numerical blow-up was observed.** At the worst normalized witness, reference
+is {worst_witness['reference_at_worst_tolerance']:.9f} and the kernel returns
+{worst_witness['actual_at_worst_tolerance']:.9f}: the absolute difference is
+**{worst_witness['abs_error_at_worst_tolerance']:.3e}**. Our configured allowance is
+**{worst_witness['allowed_at_worst_tolerance']:.3e}**, so the error is
+**{max_ratio:.3f}× the allowance**. That ratio measures a test-threshold overrun;
+it does **not** mean the output is {max_ratio:.2f}× wrong or establish a large
+effect on the model. Keep the strict failure visible, but do not equate its
+multiplier with practical severity.
+
+The table shows the element with the worst normalized error in each selected
+case, using whichever tensor (output or state) is worse. “Excess” is the absolute
+amount beyond its allowance. The violation counts include every element, not a
+sample. These witness errors are **not** the global maximum absolute error.
+
+| Case | Violating output / state elements | Worst tensor | Absolute error at witness | Allowed error | Error / allowance | Excess over allowance |
+|---|---:|---|---:|---:|---:|---:|
+''' + '\n'.join(severity) + f'''
+
+For the unit-scale 32K, g=-1e-8 example, {tiny['pointwise_violations']:,} of
+{tiny['elements']:,} outputs fail ({100*tiny['pointwise_violations']/tiny['elements']:.5f}%),
+with zero state violations. Its worst witness error is
+{tiny['abs_error_at_worst_tolerance']:.3e}, or {tiny['max_tolerance_ratio']:.3f}× its allowance.
+That is a small absolute error, not the large drift of the removed sequential
+fallback, but it still fails our stated elementwise contract. We have not measured
+its effect on model logits or quality.
+
+The largest raw-output max-abs statistic among failing cases is {largest_error:.6f};
+the ideal FP16-rounding maximum on that same case is {largest_floor:.6f}.
+Large max-abs numbers at large activation magnitudes can be normal FP16 rounding.
+Use the witness, allowance and counts above to judge the extra numerical defect;
+RMSE or the global maximum alone cannot establish acceptance.
+
+### Which failures are important enough to fix?
+
+The measured Qwen workload currently passes every checked element. **Do not call
+weak gates themselves rare or extreme:** {100*capture['fraction_g_above_minus_0.001']:.2f}%
+of its gates exceed -0.001 and {100*capture['fraction_g_above_minus_1e_6']:.2f}% exceed -1e-6.
+The unverified part is sustained weak forgetting over a long sequence with the
+relevant beta, key and state history. Global percentiles do not measure that joint
+behavior. Captured initial states already reach about 12.60, so the failing
+amplitude-32 tests' state maximum of about 12.5 is not, by itself, unrealistic.
+
+1. **First priority: obtain long-context real captures with their incoming states.**
+   Check the 32K near-lossless regime: it already fails at unit scale, so it is
+   potentially relevant even when V never reaches the large stress magnitudes.
+   A failure on real inputs would justify prioritizing a parallel numerical fix.
+2. **Lower immediate priority: the amplitude-32/128 stress-only combinations.**
+   Their failing V maxima are roughly 125–500 versus 19.41 in these captures.
+   Establish their joint frequency in the target model before paying a general
+   runtime cost. This is a prioritization judgment, not a claim that they are safe
+   or impossible; retain their failures and test larger models/contexts.
+3. **Keep the decision tied to elementwise errors and model impact.** A few
+   small violations and an overflow need different responses. Any repair should
+   preserve the fast parallel execution; this report does not restore fallback,
+   loosen tolerances or alter the kernel. These small stress-test errors alone
+   do not justify a costly fallback or a general performance penalty.
+
+[All refreshed cases, five repeats and fingerprints]({link(audit_path, markdown)}) ·
+[Captured-input and ordinary-control evidence]({link(evidence_path, markdown)}) ·
+[Input ranges](input_ranges.md).
+
+Refresh the regime evidence separately from the plotted shape grid; the audit
+currently exits 1 because it retains numerical failures:
+
+```bash
+bash scripts/gdn_mega_docker.sh python benchmarking/audit_gdn_mega.py \\
+  --suite all --output docs/gdn_mega/data/numerical_regimes.json
+bash scripts/report_gdn_mega.sh render
+```
+'''
+
+
 def write_errors(data, source, stem, markdown):
     rows = data['records']
     commits = data.get('kernel_commits', {})
@@ -131,11 +308,16 @@ def write_errors(data, source, stem, markdown):
         table.append(f"| {row['length']} | {number(a['max_abs'])} | {number(b['max_abs'])} | "
                      f"{number(a['max_tolerance_ratio'], '.3f')} | {number(b['max_tolerance_ratio'], '.3f')} |")
     oracle = 'CPU FP64 token recurrence' if data['reference'] == 'recurrent-fp64' else 'CPU FP32 chunked reference'
+    regimes = accuracy_regimes(source, markdown)
+    scope_note = ("\n**Version scope:** “Current” in the figures means the plotted checkpoint,\n"
+                  "not automatically the latest production build. See [accuracy regimes](#accuracy-regimes-where-the-current-kernel-passes-and-fails)\n"
+                  "for the fallback-free kernel's broader passing and failing cases.\n" if regimes else '')
     text = f'''# GDN absolute-error heatmaps
 
 Measurements dated {data['created_utc'][:10]}; original **{versions['baseline']}**,
 current **{versions['current']}**. Both receive identical inputs and reference
 results. [Overview](README.md) · [Latency heatmap](heatmap.md).
+{scope_note}
 
 ![Maximum absolute raw-output error]({link(stem.with_name(stem.name+'_max_abs.png'), markdown)})
 
@@ -181,6 +363,7 @@ residual. Final FP16 output rounding remains unavoidable. The recorded rounding
 floor is a maximum statistic, not proof that every output is correctly rounded.
 This ordinary-input grid is not an exhaustive input-range guarantee.
 '''
+    text += regimes
     text += f'''
 ## Reproduce
 
