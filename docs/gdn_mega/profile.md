@@ -1,4 +1,11 @@
-# Current GDN kernel: profile and breakthrough opportunities
+# GDN profile before token-parallel preparation
+
+This is the historical profile that motivated the scheduling search in
+[algorithm_search.md](algorithm_search.md). Its figures and counters describe
+the checkpoint below, not the subsequent value-column/token-worker schedule.
+Re-render these historical inputs with the scripts and heatmap at `734fc1d`;
+`profile_gdn_mega.sh collect` profiles the checked-out source and retains the
+H16 stage-clock diagnostic. That diagnostic does not instrument the H8 token workers.
 
 Profiled **2026-10-27**, production kernel **677c0ee**, library
 `dfb01e1bc24fbcbae52c9f58ca434b539e52635008cf1326160ea28798488ab9` on Ascend 910B2.

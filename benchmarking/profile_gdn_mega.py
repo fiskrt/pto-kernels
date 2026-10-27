@@ -36,44 +36,57 @@ def prepare_diagnostic(destination):
     def replace(name, old, new):
         assert sources[name].count(old) == 1, (name, old, sources[name].count(old))
         sources[name] = sources[name].replace(old, new)
+    # Stage clocks describe the H16 persistent schedule. Isolate that function
+    # so similarly named synchronization in token producers is not instrumented.
     f = 'fused_pipeline.hpp'
+    prefix, body = sources[f].split('template<int H,int C,int D,int V=D,bool Prepared=false>', 1)
+    body, suffix = body.split('// K1: token/key-head parallel work', 1)
+    sources[f] = 'template<int H,int C,int D,int V=D,bool Prepared=false>' + body
     replace(f, '__gm__ float* kk,__gm__ float* kk_upper,__gm__ float* qk,__gm__ float* lower,__gm__ float* full)\n{',
             '__gm__ float* kk,__gm__ float* kk_upper,__gm__ float* qk,__gm__ float* lower,__gm__ float* full,uint64_t* report)\n{')
     replace(f, '    int block=get_block_idx();', '    uint64_t stamp=get_sys_cnt();\n    int block=get_block_idx();')
-    replace(f, '        int seq=work/H,head=work%H;', '        stamp=get_sys_cnt();\n        int seq=work/H,head=work%H;')
+    replace(f, '        int64_t head_work=work/(D/V);', '        stamp=get_sys_cnt();\n        int64_t head_work=work/(D/V);')
     replace(f, '        for(int64_t pos=start;pos<end;pos+=C){',
             '        report[3]+=get_sys_cnt()-stamp;\n        for(int64_t pos=start;pos<end;pos+=C){\n            ++report[2];')
     replace(f, '            wait_flag_dev(7);',
             '            stamp=get_sys_cnt();\n            wait_flag_dev(7);\n            report[4]+=get_sys_cnt()-stamp; stamp=get_sys_cnt();')
     replace(f, '            wait_flag_dev(5);',
             '            report[5]+=get_sys_cnt()-stamp; stamp=get_sys_cnt();\n            wait_flag_dev(5);\n            report[6]+=get_sys_cnt()-stamp; stamp=get_sys_cnt();')
-    replace(f, '            if(pos+C<end)mega_finish_inverse',
-            '            report[7]+=get_sys_cnt()-stamp; stamp=get_sys_cnt();\n            if(pos+C<end)mega_finish_inverse')
+    replace(f, '                if(pos+C<end)mega_finish_inverse',
+            '            report[7]+=get_sys_cnt()-stamp; stamp=get_sys_cnt();\n                if(pos+C<end)mega_finish_inverse')
     replace(f, '            wait_flag_dev(9);',
             '            report[8]+=get_sys_cnt()-stamp; stamp=get_sys_cnt();\n            wait_flag_dev(9);\n            report[9]+=get_sys_cnt()-stamp; stamp=get_sys_cnt();')
-    replace(f, '            mega_update_state<D>(exchange,alpha,final_state+work*D*D,pos+C>=end);',
-            '            mega_update_state<D>(exchange,alpha,final_state+work*D*D,pos+C>=end);\n            report[10]+=get_sys_cnt()-stamp;')
+    replace(f, '            mega_update_state<V>(exchange,alpha,final_state+head_work*D*D+lane*V,pos+C>=end);',
+            '            mega_update_state<V>(exchange,alpha,final_state+head_work*D*D+lane*V,pos+C>=end);\n            report[10]+=get_sys_cnt()-stamp;')
     replace(f, '            Tail ktail(valid),qtail(valid);',
             '            stamp=get_sys_cnt();\n            Tail ktail(valid),qtail(valid);')
-    replace(f, '            Tile<TileType::Mat,float,C,C,BLayout::ColMajor,C/2,C,SLayout::RowMajor,512> first_half,second_half;',
-            '            report[4]+=get_sys_cnt()-stamp; stamp=get_sys_cnt();\n            Tile<TileType::Mat,float,C,C,BLayout::ColMajor,C/2,C,SLayout::RowMajor,512> first_half,second_half;')
+    replace(f, '            if constexpr(Prepared)ffts_cross_core_sync',
+            '            report[4]+=get_sys_cnt()-stamp; stamp=get_sys_cnt();\n            if constexpr(Prepared)ffts_cross_core_sync')
     replace(f, '            mega_float_inverse<C>(inverse,solve_scratch);',
-            '            report[5]+=get_sys_cnt()-stamp;\n            mega_float_inverse<C>(inverse,solve_scratch,report);\n            stamp=get_sys_cnt();')
+            '            report[5]+=get_sys_cnt()-stamp;\n            mega_float_inverse<C>(inverse,solve_scratch,nullptr,C,report);\n            stamp=get_sys_cnt();')
     replace(f, '            wait_flag_dev(6);\n            GlobalTensor<float',
             '            report[9]+=get_sys_cnt()-stamp; stamp=get_sys_cnt();\n            wait_flag_dev(6);\n            report[10]+=get_sys_cnt()-stamp; stamp=get_sys_cnt();\n            GlobalTensor<float')
     replace(f, '            TLOAD(native_residual,ex);pipe_barrier(PIPE_ALL);',
             '            TLOAD(native_residual,ex);pipe_barrier(PIPE_ALL);\n            report[11]+=get_sys_cnt()-stamp; stamp=get_sys_cnt();')
-    replace(f, '            wait_flag_dev(6);mega_load_pair<D,D>(state,sh,sh+D,D,2*D);',
-            '            report[12]+=get_sys_cnt()-stamp; stamp=get_sys_cnt();\n            wait_flag_dev(6);\n            report[13]+=get_sys_cnt()-stamp; stamp=get_sys_cnt();\n            mega_load_pair<D,D>(state,sh,sh+D,D,2*D);\n            report[14]+=get_sys_cnt()-stamp;')
+    replace(f, '            wait_flag_dev(6);mega_load_pair<D,V>(state,sh,sh+V,D,2*V);',
+            '            report[12]+=get_sys_cnt()-stamp; stamp=get_sys_cnt();\n            wait_flag_dev(6);\n            report[13]+=get_sys_cnt()-stamp; stamp=get_sys_cnt();\n            mega_load_pair<D,V>(state,sh,sh+V,D,2*V);\n            report[14]+=get_sys_cnt()-stamp;')
     replace(f, '        wait_flag_dev(7);\n#endif',
             '        stamp=get_sys_cnt(); wait_flag_dev(7); report[16]+=get_sys_cnt()-stamp;\n#endif')
+    sources[f] = prefix + sources[f] + '// K1: token/key-head parallel work' + suffix
     f = 'recurrence_pipeline.hpp'
-    replace(f, 'mega_float_inverse(Mat& inverse,__gm__ float* scratch)',
-            'mega_float_inverse(Mat& inverse,__gm__ float* scratch,uint64_t* report)')
+    replace(f, 'mega_float_inverse(Mat& inverse,__gm__ float* scratch,__gm__ float* prepared=nullptr,int valid=C)',
+            'mega_float_inverse(Mat& inverse,__gm__ float* scratch,__gm__ float* prepared=nullptr,int valid=C,uint64_t* report=nullptr)')
     for level, slot in [(16, 6), (32, 7), (64, 8)]:
-        replace(f, f'    mega_float_join_level<{level},C>(inverse,scratch);',
-                f'    {{ uint64_t stamp=get_sys_cnt(); mega_float_join_level<{level},C>(inverse,scratch); report[{slot}]+=get_sys_cnt()-stamp; }}')
+        args = f'{level},C' + (',true' if level == 64 else '')
+        call = f'mega_float_join_level<{args}>(inverse,scratch,prepared,valid);'
+        replace(f, f'    {call}',
+                f'    {{ uint64_t stamp=get_sys_cnt(); {call} report[{slot}]+=get_sys_cnt()-stamp; }}')
     f = 'kernel_gdn_mega.cpp'
+    # This diagnostic is intentionally H16-only. Keep the normal arithmetic
+    # unchanged, and omit the unused H8 dispatch from the instrumented copy.
+    start = sources[f].index('    // Two 64-column workers per head')
+    end = sources[f].index('    mega_shared_grams<H, C, D>(', start)
+    sources[f] = sources[f][:start] + sources[f][end:]
     replace(f, '    // Phase 1: vector gate scan/layout overlaps cube KK/QK products.',
             '    uint64_t report[32]={0}; uint64_t phase_stamp=get_sys_cnt();\n    // Phase 1: vector gate scan/layout overlaps cube KK/QK products.')
     replace(f, '    mega_sync_all();',

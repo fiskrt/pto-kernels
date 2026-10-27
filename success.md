@@ -813,3 +813,38 @@ exploration cleanup, evidence is retained in `docs/gdn_mega/data/algorithm_searc
 the verified faster candidate library/manifest are in
 `benchmark_data/gdn_mega/verified_candidate/`. Rejected raw experiments were removed.
 
+
+## 2026-10-27 — Concurrent token preparation and value-column recurrence (`365b105`)
+
+Promoted factored/asynchronous inverse joining and an H8 schedule that uses
+16 groups for two independent 64-value-column state slices per head, with eight
+helper groups preparing future chunk/key-head work. Helpers share cached KK/QK
+across grouped value heads. RHS preparation overlaps the inverse wait/load.
+Dispatch depends only on shape and available work; C=128, C_inv=16, FP32
+arithmetic, the caller ABI and all allocation sizes are unchanged.
+
+The exact installed binary (`4dc29f4de899315b167f958138895eeca7f9a71c2c16a5b3e4bff36a50979f1c`)
+passed **264 tests in 171.38 seconds**, including 18 new worker-layout cases.
+Every output/state element is checked against the independent CPU FP64
+recurrence using unchanged atol=1e-4, rtol=1e-3, with five poisoned-scratch
+launches, integrity/guard checks and finite/RMSE checks. All seven head
+specializations compile in **14.53 seconds**.
+
+Matched medians against the previously installed `dfb01e1` production binary,
+15 graph trials × 20 calls, supplied initial state, D=128:
+
+| H/Hg | Tokens | Before µs | After µs | Speedup |
+|---|---:|---:|---:|---:|
+| 8/2 | 1024 | 205.68 | 180.18 | 1.142× |
+| 8/2 | 4096 | 685.76 | 520.10 | 1.319× |
+| 8/8 | 4096 | 693.98 | 517.22 | 1.342× |
+| 8/2 | 8192 | 1257.32 | 967.97 | 1.299× |
+| 8/2 | 16384 | 2558.70 | 1834.33 | 1.395× |
+| 8/2 | 32768 | 4956.42 | 3862.76 | 1.283× |
+| 16/4 | 4096 | 696.09 | 665.36 | 1.046× |
+
+Short H8 medians vary by roughly ±2%; this is not a uniform gain over every
+shape. Gate-panel rescaling passed the previous 246-test suite but did not
+provide a repeatable speed improvement, so it is not included. Full tables,
+rejected schedules and provenance are recorded in `docs/gdn_mega/algorithm_search.md`
+and its existing JSON companion.

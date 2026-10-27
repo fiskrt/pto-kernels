@@ -834,3 +834,43 @@ precompute/factored64 caveats are in profile.md; no optimization was implemented
   retained_improvement in docs/gdn_mega/data/algorithm_search.json. It rebuilds
   against current7production sources using check_gdn_mega.sh. Productionlibhash
   dfb01e1 unchanged, candidate00144c5. Newtonsourcepatches explicitly discarded.
+
+## 2026-10-27: token helpers + independent value columns promoted (`365b105`)
+
+Production now includes the factored/asynchronous join candidate. H8, one
+sequence and sufficiently many chunk/key-head tasks use 16 recurrence groups
+(two 64-column state slices/head) plus eight token-preparation helpers. Other
+shapes retain local preparation. The work test requires T>=1024 and at least
+two chunk/key-head tasks per helper; Hg1 starts at 2048 on Ascend910B2.
+No recurrent state handoff, numerical dispatch, gate clipping or new allocation.
+Prepared inverses reuse cached raw-QK storage; row0/col127 is an unused ready
+flag. Initialize flags before concurrent readers/writers, publish only after
+vector exports and cube joins, and let vector RHS overlap the inverse wait/load.
+
+Exact production binary 4dc29f4d passes 264 tests (178 numerical cases; 18 new
+worker-layout regressions), unchanged FP64 elementwise policy, 171.38s pytest;
+all seven head specializations build in 14.53s. Quick verification remains
+nine cases and now benchmarks H8/H16, both T256/T4096. No additional production
+files: seven files, 1342 physical source lines. Profile diagnostic generator
+was adapted and its H16 measured outputs pass; existing profile figures remain
+explicitly historical and do not describe the H8 producer/consumer path.
+
+H8/Hg2 matched before/after production: 4K 685.76→520.10us (1.319x),
+8K 1257.32→967.97us (1.299x), 16K 2558.70→1834.33us (1.395x),
+32K 4956.42→3862.76us (1.283x). H16 gains 1.046x at4K and only1.011x
+at32K. T256 H8 results fluctuate roughly ±2%; no uniform small-shape gain.
+Early prototype group sweeps showed ~1.2–1.4x over the join-only candidate.
+Do not confuse those comparisons with either pre-turn production or10748eb.
+
+Rejected full token-prep barrier (H16/4K867us), streaming prep without column
+splits (745us), leaf-only helpers (679us), and leaf-only early RHS (684us).
+H12 two-way splitting leaves no helpers and did not win. Gate-panel16/64
+factorization was implemented without reciprocal exponentials; panel64 passed
+then-full246 tests but matched4K speedups were ~±1% and short inputs slower.
+Discarded. Existing Gamma already uses exp(G_end-G_i); C16/-5 safety guidance
+from FlashKDA uses BF16, not FP16. Gate work was not the limiting stage here.
+
+Detailed tables, numerical metrics, build/source/library hashes and per-trial
+times live in docs/gdn_mega/algorithm_search.md and its JSON. Rejected source,
+generator, build and log artifacts are removed; the old isolated verified
+candidate is obsolete because its improvement is now production.

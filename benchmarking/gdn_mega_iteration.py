@@ -114,9 +114,13 @@ def verify(manifest_path):
     manifest_path.write_text(json.dumps(manifest, indent=2)+'\n')
     if status == 0 and manifest['quick']:
         import gdn_mega
-        sys.argv = ['gdn_mega.py', '--lengths', '256', '4096', '--initial-state',
-                    '--output', str(manifest_path.parent/'benchmark.json')]
-        gdn_mega.main()
+        # Cover both the shared local-preparation path and the spare-core path.
+        for heads in (8, 16):
+            filename = 'benchmark_h8.json' if heads == 8 else 'benchmark.json'
+            sys.argv = ['gdn_mega.py', '--heads', str(heads), '--key-heads', str(heads // 4),
+                        '--lengths', '256', '4096', '--initial-state',
+                        '--output', str(manifest_path.parent/filename)]
+            gdn_mega.main()
     raise SystemExit(status)
 
 

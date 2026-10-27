@@ -1,24 +1,23 @@
 # GDN mega kernel
 
-The current experimental findings for chunk size, inverse size, leaf algorithm,
-joining and arithmetic are recorded in [the structural search report](algorithm_search.md).
-It distinguishes CPU stability models, partial NPU screens and fully verified
-candidates; production remains unchanged by those experiments. Cube Newton A16
-and A32 both passed 246 tests but were 1.8–1.9× slower than the faster vector
-candidate at long contexts, so their implementations were discarded.
+The [structural search report](algorithm_search.md) records the latest
+parallelism and gate-rescaling experiments, along with the earlier inverse
+search. Production now combines factored/asynchronous joining with concurrent
+token preparation and two independent value-column workers per head when H8
+would otherwise leave cores idle. Short or already occupied shapes retain local
+preparation. There is no gate-dependent dispatch or sequential fallback.
 
-Exploration cleanup removed 2,551 files (6.04 GB). The ignored GDN data directory
-now contains only the original baseline library, the current profile's render
-inputs, the user-provided Qwen capture, the FP64 reference cache, and the verified
-faster join candidate. Its source patch is retained in the structural-search JSON;
-rejected prototypes and unused experimental build directories are gone.
+Rejected prototypes and debug builds are removed after their numerical and
+performance evidence is saved. The seven production source files share their
+preparation, inverse and recurrence implementations; the caller ABI and
+allocation sizes are unchanged.
 
 The maintained reports are:
 
 - [Sequential fallback removal](#sequential-fallback-removal): latest captured-input speedups, validation and retained failures.
 
 - [Speedup heatmap](heatmap.md): freshly timed original versus current fallback-free kernel across heads and sequence lengths.
-- [Current profile](profile.md): real-device counters, stage clocks, traceviz timelines, and ranked structural optimization opportunities.
+- [Pre-change profile](profile.md): counters, stage clocks and traceviz timelines for the checkpoint that motivated the scheduling work; its figures are explicitly historical.
 - [Error heatmaps](error_heatmap.md): maximum absolute output error and worst elementwise tolerance ratio at the explicitly labeled pre-removal checkpoint, plus current accuracy regimes.
 - [Input ranges](input_ranges.md): FLA-derived distributions, inverse overflow and cancellation.
 - [Qwen capture replay](#qwen-forward-pass-capture-replay): actual correlated keys and gates, production versus parallel-only accuracy.
@@ -30,12 +29,21 @@ of the maintained report set.
 
 ## Current implementation and correctness
 
+Scheduling commit `365b105` passes **264 tests in 171.38 seconds**, including
+**178 fixed numerical cases**. Eighteen new cases exercise H8/Hg1, H8/Hg4 and
+H8/Hg8 worker layouts with partial chunks, nearly correlated keys, beta=1,
+weak gates, amplitude 32, and supplied/absent state. The existing critical
+cases cover 32K, zero/tiny/strong gates and beta endpoints. The source and
+installed binary fingerprints accompany the [structural search results](algorithm_search.md).
+
+
 **Production always uses the parallel chunk pipeline; the sequential fallback
 remains removed.** At the user's request, the absolute tolerance is now
 **1e-4**, with **rtol=1e-3 unchanged**. This explicitly accepts the measured
 small absolute errors; it is a policy change, not a kernel precision improvement.
 
-The complete GDN regression suite passes **245 tests in 501.87 seconds**, including
+At the tolerance-policy checkpoint, the complete GDN regression suite passed
+**245 tests in 501.87 seconds**, including
 **all 160 fixed numerical cases**: 36 standard, 56 critical and 68 correlation
 cases. The 124 cases formerly available only through the standalone audit are
 now ordinary pytest parameters, with no opt-in marker or external data dependency.
@@ -589,6 +597,6 @@ The historical pre-removal library SHA256 starts `619b7df`; its measurements
 and provenance remain in the committed report data. The obsolete local library
 was removed during exploration cleanup. Rebuild its recorded source checkpoint
 to repeat those historical measurements.
-The current library SHA256 starts `dfb01e1`. The speed heatmap now measures this
-library against the original. The error heatmaps remain explicitly tied to their
+The fallback-removal library SHA256 starts `dfb01e1`. The speed heatmap identifies
+its measured current library separately, including subsequent scheduling changes. The error heatmaps remain explicitly tied to their
 pre-removal checkpoint and tighter historical tolerance.

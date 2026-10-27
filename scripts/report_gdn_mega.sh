@@ -4,7 +4,10 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 report_dir=docs/gdn_mega
 mkdir -p "$report_dir/data" "$report_dir/figures"
-run() { bash scripts/gdn_mega_docker.sh "$@"; }
+run() {
+    bash scripts/gdn_mega_docker.sh env \
+        GDN_REFERENCE_CACHE=benchmark_data/gdn_mega/reference_cache "$@"
+}
 latency_plot() {
     run python benchmarking/plot_gdn_mega.py "$report_dir/data/heatmap.json" \
         --output "$report_dir/figures/heatmap" --markdown "$report_dir/heatmap.md"
