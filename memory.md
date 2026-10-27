@@ -674,3 +674,32 @@ critical audit section and data/precision_audit.json/csv. Source commits0a1797e,
   counts or fallback-specific mechanism as current. Heatmaps remain labeled
   aac5a4d checkpoint, not silently refreshed. Latest report:
   docs/gdn_mega/data/fallback_removal.json/csv with README section.
+
+2026-10-27 — accuracy regime/severity report ea51f0f:
+- Refreshed ALL160 fixed synthetic cases on unchanged fallback-free677c0ee /
+  librarydfb01e1:137pass23fail,5 launches each. Primary beta[0,1],g<=0,
+  normalized-key setups134/157pass;3 exploratory cases outside these assumptions
+  all pass but do not establish primary-workload safety. All finite, guards and
+  scratch repeats intact; all ideal FP16 rounding floors pass.
+- Controlled unit-scale correlation56/56pass. Long32K fixed tiny-g group3/6pass:
+  g=-1e-8,beta1 has1478of33554432 output violations,ratio2.18890,witness2.314e-5;
+  g=-1e-7,beta1 has21; beta0 matchedcontrol28. All three final states pass.
+  This is not only a large-value issue; long real captures are next evidence need.
+- High-amplitude/large-state probes8/28pass.20fail plus3unit-long=23total.
+  Worst normalized witness: critical_nearly_correlated_3023_128.0,output
+  reference-.001068956603 vsactual-.001142501831,error7.35452e-5,
+  allowance1.10690e-5,ratio6.64428. Small absolute defect exceeding strict test
+  threshold; NOT output6.64x wrong or proof of major model impact. Largest
+  maxabs among failures.249755 equals that case's ideal FP16-rounding max.
+- User emphasized small absolute errors vs massive ones. Lead with absolute
+  error; ratio is only threshold overrun. No model-quality effect measured.
+  Weak g not rare:36.97% >-.001,1.60% >-1e-6 inQwen. Actual captured h0max12.60
+  matches stress h0max~12.5, so state magnitude alone is not an extremeness test.
+- docs/gdn_mega/error_heatmap.md now has passing/caution/untested regimes,
+  witness/error/allowance/excess/count table, real-workload relevance and priority.
+  gdn_mega_report_text.py regenerates it from numerical_regimes.json plus
+  current captured evidence, rejecting incomplete/mixed-kernel data. Figures
+  remain historicalaac5a4d and are explicitly separated from currentregimes.
+-31 CPU report/checker tests pass. Deterministic rendering,complete800 launches,
+  provenance,local links and four Markdown pages verified. No kernel/tolerance
+  changes; do not claim universal green suite or catastrophic errors.

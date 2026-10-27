@@ -715,3 +715,14 @@ requested removal based on the measured real-input accuracy; these failures
 remain to be solved in parallel. Source shrinks1302->1171 lines, same7 files,
 2 phases/1 launch, unchanged public inputs/outputs/allocations. Evidence and
 reproduction: docs/gdn_mega/README.md and data/fallback_removal.json/csv.
+
+2026-10-27 — `ea51f0f`: added regenerable accuracy regimes and numerical severity
+to the error heatmap. The31 report/checker tests pass; deterministic regeneration,
+provenance matching and rejection of incomplete/mixed-kernel evidence verified.
+Refreshed160-case/800-launch audit on unchanged677c0ee:137pass23fail. This is a
+reporting/coverage improvement, not a kernel precision fix.56/56 controlled
+unit-scale correlation cases and126/126 real captures pass;3unit-scale32K
+near-lossless cases and20larger-scale probes fail. Failures remain finite and
+explicit. Worst normalized witness7.35452e-5 against1.10690e-5 allowance (6.644x)
+is described as a small absolute error, not a massive output error. No tolerance
+changes, outlier removal or fallback. Data: docs/gdn_mega/data/numerical_regimes.json.
