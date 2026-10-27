@@ -128,8 +128,28 @@ def make_audit_inputs(case):
     return inputs, initial, cu
 
 
-def run_audit_case(case, device):
-    inputs, initial, cu = make_audit_inputs(case)
+def make_capture_inputs(record, start=0):
+    """Replay captured tensors in the kernel ABI, with no normalization/clipping.
+
+    For continuation, derive the supplied FP16 state from the independent FP64
+    prefix recurrence. The suffix oracle consumes that same rounded state.
+    """
+    inputs = [record[name].detach().cpu().to(dtype).unsqueeze(0).contiguous()
+              for name, dtype in (("q", torch.float16), ("k", torch.float16),
+                                  ("v", torch.float16), ("g", torch.float32),
+                                  ("beta", torch.float16))]
+    assert 0 <= start < inputs[0].shape[1]
+    initial = None
+    if start:
+        _, initial = recurrent_reference(*(x[:, :start] for x in inputs))
+        initial = initial.half()
+        inputs = [x[:, start:].contiguous() for x in inputs]
+    cu = torch.tensor([0, inputs[0].shape[1]], dtype=torch.int32)
+    return inputs, initial, cu
+
+
+def run_audit_case(case, device, *, prepared_inputs=None):
+    inputs, initial, cu = make_audit_inputs(case) if prepared_inputs is None else prepared_inputs
     digest = hashlib.sha256()
     for tensor in [*inputs, initial, cu]:
         if tensor is not None:
@@ -173,7 +193,7 @@ def run_audit_case(case, device):
                       "scaled_output": error_metrics(actual.double() * D**-.5, expected * D**-.5),
                       "final_state": error_metrics(state, expected_state)})
         diagnostic = {}
-        if "key_correlation" in case:
+        if "key_correlation" in case or case.get("observe_coupling"):
             # Source-specific observation, never an acceptance criterion.
             # With one head per hardware group, production retains a true
             # marker when it exits to the whole-head recurrence. A diagnostic
@@ -190,7 +210,17 @@ def run_audit_case(case, device):
         correlation = {"adjacent_key_cosine_mean": cosine.mean().item(),
                        "adjacent_key_cosine_min": cosine.min().item(),
                        "adjacent_key_cosine_max": cosine.max().item()}
-    return {"case": case, "policy": POLICY, "repeats": metrics, "input_sha256": digest.hexdigest(),
+    per_head = {}
+    if case.get("per_head"):
+        fields = ("passed", "finite", "elements", "max_abs", "pointwise_violations",
+                  "max_tolerance_ratio", "abs_error_at_worst_tolerance", "relative_rmse")
+        per_head["per_head"] = [
+            {"head": head, **{name: {key: value for key, value in error_metrics(a, e).items() if key in fields}
+                              for name, a, e in (
+                                  ("raw_output", actual[:, :, head], expected[:, :, head]),
+                                  ("final_state", state[:, head], expected_state[:, head]))}}
+            for head in range(case["heads"])]
+    return {"case": case, "policy": POLICY, "repeats": metrics, "input_sha256": digest.hexdigest(), **per_head,
             "input_ranges": {
                 **correlation,
                 "beta": [inputs[4].min().item(), inputs[4].max().item()],
@@ -224,6 +254,23 @@ def test_correlation_sweep_preserves_non_key_inputs():
         torch.testing.assert_close(norm, torch.ones_like(norm), rtol=0, atol=5e-4)
         cosine = torch.nn.functional.cosine_similarity(inputs[1][:, 1:].double(), inputs[1][:, :-1].double(), dim=-1)
         assert abs(cosine.mean().item()-rho) < .02
+
+
+def test_capture_replay_preserves_inputs_and_rounds_prefix_state():
+    generator = torch.Generator().manual_seed(27101)
+    record = {name: torch.randn(3, 2, D, generator=generator).half() for name in ("q", "k", "v")}
+    record["g"] = -torch.rand(3, 2, generator=generator) * .01
+    record["beta"] = torch.rand(3, 2, generator=generator)
+    snapshots = {name: value.clone() for name, value in record.items()}
+    inputs, initial, cu = make_capture_inputs(record)
+    assert initial is None and cu.tolist() == [0, 3]
+    for value, name in zip(inputs, ("q", "k", "v", "g", "beta")):
+        assert torch.equal(value[0], record[name].to(value.dtype))
+    _, prefix_state = recurrent_reference(*(x[:, :2] for x in inputs))
+    suffix, initial, cu = make_capture_inputs(record, start=2)
+    assert torch.equal(initial, prefix_state.half()) and cu.tolist() == [0, 1]
+    assert all(torch.equal(a, b[:, 2:]) for a, b in zip(suffix, inputs))
+    assert all(torch.equal(record[name], value) for name, value in snapshots.items())
 
 
 def test_reference_analytic_two_tokens():
