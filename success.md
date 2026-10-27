@@ -761,3 +761,30 @@ complete-grid/policy/library checks, deterministic Markdown regeneration and
 visual inspection pass. Updated JSON/CSV/PNG/SVG/heatmap.md and reproduction
 script; it now freshly measures both libraries and never borrows old error-grid
 failure markers. Error heatmaps retain their historical checkpoint/policy.
+
+2026-10-27 — `9e35bcb`: current-kernel profiling/reporting improvement; no new
+kernel speedup or production change. Added docs/gdn_mega/profile.md with seven
+figures (four explanatory/hardware charts, three traceviz timelines), complete
+hardware CSV contents, diagnostic samples, numerical checks and source hashes.
+Production remains677c0ee/dfb01e1. Fresh hardware task times: H16/Hg4/T4096
+681.299us; H24/Hg8/T4096 715.177us; H48/Hg16/T4096 1362.438us;
+H16/Hg4/T32768 5288.183us. At4K, cube active169.46us (24.9%), cubeMTE2
+167.42us, FIX116.20us, vector239.54us; counters overlap.16/24 groups persist
+atH16. Cube/vector L2 read-hit medians98.97%/97.66%, so GM traffic is not all HBM.
+Isolated clock diagnostic: phase1~22.37us, persistent~641.74us; joins127.18us,
+state-feedback wait106.41us,reload19.76us,RHS wait.02us,output/state products
+140.48us. Instrumented profiler task686.14us is0.7% above production; clocks
+remain approximate and overlap across cube/vector streams. Inverse joins are
+only4.5% of persistent matrix FLOPs. Production simulator T512 passes FP64;
+1,205,863events rendered with sibling traceviz22664d1, separate from hardware.
+All4 production hardware checks, simulator check, first/last diagnostic checks
+and diagnostic profiler check pass approved1e-4+1e-3 elementwise bounds against
+CPU FP64.34 benchmark/report tests pass0.26s. Every clock-scope budget fits its
+per-core phase; Markdown determinism, links, script hashes and unchanged
+production sources/library verified. The full245-test suite was not rerun for
+this report-only change. Reproduce with scripts/profile_gdn_mega.sh collect;
+render regenerates from ignored raw dumps. Diagnostic code is generated only
+under benchmark_data, with no production macros/probe files. Ranked structural
+hypotheses: shorten state feedback, direct blocked RHS solve instead of inverse
+materialization, bounded preparation helpers, affine chunk-state scan. These
+are opportunities, not measured speedups or a claim of2x.
