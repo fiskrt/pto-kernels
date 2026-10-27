@@ -2,8 +2,10 @@
 
 The maintained reports are:
 
-- [Speedup heatmap](heatmap.md): original versus current latency across heads and sequence lengths.
-- [Error heatmaps](error_heatmap.md): maximum absolute output error and worst elementwise tolerance ratio for both implementations.
+- [Sequential fallback removal](#sequential-fallback-removal): latest captured-input speedups, validation and retained failures.
+
+- [Speedup heatmap](heatmap.md): original versus the pre-removal `aac5a4d` checkpoint across heads and sequence lengths.
+- [Error heatmaps](error_heatmap.md): maximum absolute output error and worst elementwise tolerance ratio at that checkpoint.
 - [Input ranges](input_ranges.md): FLA-derived distributions, inverse overflow and cancellation.
 - [Qwen capture replay](#qwen-forward-pass-capture-replay): actual correlated keys and gates, production versus parallel-only accuracy.
 
@@ -14,18 +16,20 @@ of the maintained report set.
 
 ## Current implementation and correctness
 
-**Known precision failures remain in kernel `aac5a4d`, even with beta in [0,1].**
-The additional critical audit passes 33/56 cases and fails 23/56; see
-[the critical precision audit below](#critical-precision-audit-beta-in-01).
+**Production now always uses the parallel chunk pipeline; the sequential
+fallback and its detection overhead have been removed.** The final regression
+run after removal passes **116 tests and fails 2**: `nearly_correlated_beta1`
+and `delayed_nearly_correlated`, both synthetic amplitude-32 cases with beta=1
+and no decay. These failures remain ordinary failing tests, with unchanged
+tolerances; the whole suite is not green.
 
-The existing regression suite now passes **118 tests**; the latest log is in
-[the Qwen capture study](data/qwen_capture.json). The earlier 116-test run
-remains recorded in `data/validation.json`.
-The full FP64 grid passes **63/63 current shapes**, with zero elementwise violations;
-the original fails all63 shapes under this stricter policy.
-[Validation log, source hashes and library fingerprint](data/validation.json).
-Kernel sources and numerical tolerances have not changed during this audit.
-A green ordinary-input suite is not a precision signoff for slow decay.
+Historical results below retain their original library fingerprints. Before
+removal, `aac5a4d` passed 118 regression tests but failed 23/56 additional
+critical cases, even with beta in [0,1]. Its saved FP64 heatmap passes 63/63
+shapes, while the original implementation fails all 63 under this policy.
+Those grids have not been relabeled as measurements of the new kernel.
+[Historical validation evidence](data/validation.json) and
+[critical audit](#critical-precision-audit-beta-in-01).
 The tests include an independent FP64 token oracle, supplied initial state,
 ragged/empty sequences, FLA-derived stress cases and poisoned/repeated workspace.
 
@@ -37,10 +41,11 @@ or a uniform maximum absolute error of 1e-5. Original-kernel failures remain vis
 The current kernel batches independent inverse joins, eliminates vector-solve
 transposes/broadcast copies, starts next-chunk weighting earlier and transfers
 whole attention/Gamma tiles. It retains FP32 state and stable block solves.
-The requested 3× speed target remains unmet.
+The ordinary-input 3× speed target remains unmet; removing the fallback targets
+the additional cost on correlated real inputs.
 
 There is **one launch, two global phases and seven production source files**
-(1302 physical lines at `aac5a4d`, versus 5241 originally). Arguments, tensor dtypes,
+(1171 physical lines after fallback removal, versus 1302 at `aac5a4d` and 5241 originally). Arguments, tensor dtypes,
 output scaling and caller allocation sizes are unchanged. Internal scratch
 layouts and the execution model are documented in the
 [kernel README](../../csrc/kernel/gdn_mega/README.md).
@@ -98,7 +103,8 @@ heatmap uses uniform beta in [0,1) and log-sigmoid Gaussian gates. It is not a
 worst-case performance claim. The independent audit additionally covers zero
 and weak decay, beta=1, doubled sigmoid beta approaching 2, correlated/positive
 keys, large values/states, positive log gates, and packed/empty sequences.
-Strong coupling can trigger the production kernel's slower token recurrence.
+Strong coupling triggered a slower token recurrence in the pre-removal kernel;
+production now keeps every head on the parallel path.
 See [input ranges](input_ranges.md) for the precise distribution limits.
 
 Checking remains exhaustive: finiteness, maximum absolute error, every-element
@@ -169,6 +175,9 @@ an unchanged golden are preferable for frequent optimization iterations.
 
 ## Critical precision audit: beta in [0,1]
 
+This section records the **pre-removal** `aac5a4d` kernel. Its counts and
+fallback-specific diagnosis do not describe the new kernel after removal.
+
 **Outcome: 33 passed, 23 failed out of 56 additional cases**, with five launches
 per case against the independent CPU FP64 recurrence. The original 36-case audit
 also passes; its doubled-beta case is outside the requested beta range and is
@@ -238,6 +247,9 @@ bash scripts/gdn_mega_docker.sh python benchmarking/audit_gdn_mega.py \
 ```
 
 ## How much does key correlation affect precision?
+
+This section records the pre-removal kernel and its isolated parallel-only
+diagnostic. The saved source/library fingerprints identify those versions.
 
 We compared the unchanged production kernel with an isolated build that disables
 only its sequential fallback. Both builds consumed identical input tensors and
@@ -321,7 +333,10 @@ stress-audit failures. No production fallback was removed in this study.
 
 ## Qwen forward-pass capture replay
 
-**Both production and the isolated parallel-only build pass all 126 cases,
+This initial comparison used the pre-removal production library and an isolated
+build with fallback dispatch disabled. Their saved measurements remain unchanged.
+
+**Both pre-removal production and the isolated parallel-only build pass all 126 cases,
 with zero elementwise violations in output and final state.** This study uses
 the user's actual `Qwen/Qwen3.5-0.8B` forward-pass captures, rather than fitting
 a synthetic gate distribution. [Full results and capture provenance](data/qwen_capture.json)
@@ -392,3 +407,109 @@ patch, build commands and loaded-library fingerprint recorded alongside results.
 
 The updated replay tooling passes the complete **118-test regression suite**
 (71.37 seconds); the log and source fingerprints are saved with the results.
+
+## Sequential fallback removal
+
+Commit `677c0ee` makes production always use the parallel chunk algorithm. The sequential
+recompute routine, its private dot-reduction helpers, the per-chunk maximum
+coupling reduction, flag stores, cache invalidation and threshold dispatch are
+removed. No dormant branch or tuning option remains. This removes 131 production
+lines (1302 → 1171), with the same seven source files, one launch and two global
+phases. Input/output types, shapes, caller allocations and numerical tolerances
+are unchanged. Reserved scratch capacity remains allocated for ABI compatibility.
+
+### Captured Qwen performance and accuracy
+
+All **126 cases pass before and after removal**, with zero elementwise output
+or final-state violations, including five poisoned-scratch launches and checks
+after timed graph replay. These are the same 108 full traces and 18 supplied-state
+continuations described above. New output/state numerical metrics exactly match
+the previously audited parallel-only diagnostic on every case.
+
+The **median paired speedup over 108 full traces is 17.00×** (range 12.05–18.23×).
+The 18 continuation cases have median 15.02×; all 126 together have median 16.06×.
+This compares against the immediately preceding production kernel with fallback,
+not the branch's original six-stage algorithm or end-to-end model inference.
+
+Each kernel time is the median of 15 NPU-event trials × 20 allocation-free
+calls in a graph, following five checked warmups. NPU jobs run serially; CPU
+reference, allocation and checking are outside the timed region. The table
+summarizes the 18 layer calls for each full prompt. Its last column is the median
+of paired speedups, which need not equal the ratio of the two displayed medians.
+
+| Captured prompt | Tokens | Before: median total µs | After: median total µs | Median paired speedup |
+|---|---:|---:|---:|---:|
+| prose_wiki_style | 709 | 2567.30 | 167.60 | 15.37× |
+| prose_story | 749 | 2709.21 | 168.88 | 16.06× |
+| chat_qa | 346 | 1285.60 | 105.16 | 12.24× |
+| code_python | 1024 | 3734.57 | 208.46 | 17.93× |
+| code_c | 1024 | 3691.59 | 208.31 | 17.71× |
+| code_rust_ts | 1024 | 3682.41 | 208.43 | 17.66× |
+
+The old threshold triggered fallback on 69.0% of full-trace head instances,
+although the parallel computation passes on those inputs. Removing that path
+eliminates the full-sequence token-by-token recomputation. No new input scaling,
+gate assumptions, clipping or reference adjustment contributes to these speedups.
+
+### Ordinary independent-key controls
+
+All seven shapes pass the same FP64 elementwise checks before/after graph
+replay. These use normalized independent Gaussian Q/K, H16/Hg4, supplied initial
+state and the ordinary benchmark gates/beta. They avoided fallback previously.
+Removing detection overhead gives 1.019–1.095× speedups (1.8–8.6% less time);
+these are seven selected controls, not a regenerated full heatmap.
+
+| Tokens | Before total µs | After total µs | Speedup |
+|---|---:|---:|---:|
+| 256 | 86.31 | 84.57 | 1.021× |
+| 512 | 127.84 | 125.52 | 1.019× |
+| 1024 | 212.22 | 205.98 | 1.030× |
+| 4096 | 721.66 | 693.81 | 1.040× |
+| 8192 | 1433.07 | 1366.83 | 1.048× |
+| 16384 | 2869.37 | 2687.06 | 1.068× |
+| 32768 | 5900.52 | 5390.88 | 1.095× |
+
+### Remaining strict failures
+
+The complete regression suite has **116 passing tests and 2 failing tests**.
+The failures are retained unchanged, without xfail markers or looser bounds:
+
+| Synthetic case | Output violations | State violations | Worst output error / allowance | Worst state error / allowance |
+|---|---:|---:|---:|---:|
+| `nearly_correlated_beta1` | 1 / 526,336 | 0 / 262,144 | 1.0601 | 0.6643 |
+| `delayed_nearly_correlated` | 2 / 394,240 | 1 / 131,072 | 1.5032 | 1.0799 |
+
+Both use amplitude 32, beta=1 and no decay; maximum |V| is 124.9375 and maximum
+initial-state magnitude is about 12.5. The first failing output witness has
+error 1.324e-5 versus allowance 1.249e-5. The delayed case's worst output witness
+has error 2.006e-5 versus allowance 1.334e-5; its failing state witness has error
+1.087e-5 versus allowance 1.006e-5. These are internal arithmetic errors: ideal
+FP16 rounding passes. These cases passed with the old fallback, so removal is
+not an accuracy improvement for every supported input. The user requested
+removal after the real-input audit; the captured-workload results do not justify
+hiding the remaining stress failures or claiming universal precision.
+
+[Matched measurements, source/library fingerprints and failure witnesses](data/fallback_removal.json) ·
+[Captured per-case latency/error CSV](data/fallback_removal.csv).
+Identical numerical dictionaries across five repetitions are stored once in
+this report, after verifying equality, alongside each individual integrity and
+scratch-independence result. All timed replay outputs are checked separately.
+
+Reproduce the current captured accuracy/latency run with the existing script:
+
+```bash
+bash scripts/gdn_mega_docker.sh python benchmarking/audit_gdn_mega.py \
+  --suite capture --timing \
+  --capture benchmark_data/gdn_mega/qwen_capture/gdn_keys.pt \
+  --output benchmark_data/gdn_mega/fallback_removal/capture_after.json
+bash scripts/gdn_mega_docker.sh python benchmarking/gdn_mega.py \
+  --lengths 256 512 1024 4096 8192 16384 32768 \
+  --heads 16 --key-heads 4 --initial-state \
+  --output benchmark_data/gdn_mega/fallback_removal/ordinary_after.json
+```
+
+The old library is preserved locally under
+`benchmark_data/gdn_mega/fallback_removal/before_lib/`; its SHA256 starts `619b7df`.
+Select it through `LD_LIBRARY_PATH` to reproduce the before measurements.
+The current library SHA256 starts `dfb01e1`. The older speed/error heatmaps
+remain explicitly tied to their pre-removal checkpoint.

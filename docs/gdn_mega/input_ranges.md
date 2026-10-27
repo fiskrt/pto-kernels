@@ -31,7 +31,8 @@ Q/K/V/g/beta tensors, retaining correlations between heads, tokens and fields.
 It passes all 108 full-trace and 18 supplied-state continuation cases on both
 production and an isolated build without sequential fallback. All comparisons
 use the unchanged elementwise policy against the independent FP64 recurrence.
-Production nevertheless takes fallback for 69.0% of full-trace head instances.
+The pre-removal production kernel nevertheless took fallback for 69.0% of
+full-trace head instances. Production now always uses the parallel chunk path.
 These measurements are separate from the synthetic speed/error heatmaps and do
 not establish long-context accuracy. [Data and provenance](data/qwen_capture.json).
 

@@ -647,3 +647,30 @@ critical audit section and data/precision_audit.json/csv. Source commits0a1797e,
   are different. Do not extrapolate these up-to1K captures to32K or all models.
 - All guards/inputs/repeats intact;118 regression tests pass71.37s. Evidence
   docs/gdn_mega/data/qwen_capture.json/csv; no production/tolerance/ABI changes.
+
+2026-10-27 — fallback removed on explicit user request, commit677c0ee:
+- Every head uses parallel chunks. Deleted compensated token recurrence,
+  private balanced dot helpers, max-coupling reduction, flag writes/dcci/branch,
+  internal g_raw/control/bool args. No dormant fallback/config remains.
+- Current binarydfb01e1; old619b7df preserved under
+  benchmark_data/gdn_mega/fallback_removal/before_lib. Same ABI/allocations,
+  seven production sources,1171lines vs1302. o_workspace_qk second half now
+  reserved/unused; tests no longer interpret those obsolete scratch markers.
+- Existing audit --timing reuses gdn_mega.time_launch (15x20 graph calls),
+  checks all outputs/states again after timing. No duplicate golden per case.
+- Captures126/126 pass before/after, all five poisoned repetitions and timed
+  graphs. Metrics exactly equal prior isolated parallel-only capture audit.
+  Full108 trace speedup median16.9957x,range12.0518..18.2344x.18 continuation
+  median15.0173x.1Kcode3.68..3.73ms->208us. Not end-to-end model speedup or
+  improvement over original six-stage algorithm; baseline is pre-removal.
+- Ordinary H16/Hg4 with h0,256/512/1K/4K/8K/16K/32K all pass. Speedups
+  1.021/1.019/1.030/1.040/1.048/1.068/1.095x;32K5900.52->5390.88us.
+- Final full regression116pass2fail,74.92s. nearly_correlated_beta1:1 output
+  violation of526336,ratio1.06010,error1.324e-5. delayed_nearly_correlated:
+  2of394240 outputs,ratio1.50320,error2.006e-5;1of131072 state,ratio1.07987,
+  error1.087e-5. Both Vabsmax124.9375,h0max~12.5,beta1,g0; FP16 floors pass.
+  These are real retained strict failures, not xfails or relaxed tests.
+- Historical critical33/56 result was pre-removal; do not present its exact
+  counts or fallback-specific mechanism as current. Heatmaps remain labeled
+  aac5a4d checkpoint, not silently refreshed. Latest report:
+  docs/gdn_mega/data/fallback_removal.json/csv with README section.

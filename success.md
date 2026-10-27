@@ -697,3 +697,21 @@ docs/gdn_mega/data/qwen_capture.json/csv. This improves validation coverage;
 it is not a kernel speedup or proof beyond the captured346..1024-token contexts.
 Production fallback triggers69.0% of captured full-trace head instances despite
 being unnecessary for passing this replay. No production code or tolerances changed.
+
+2026-10-27 — `677c0ee`: remove the sequential fallback and all coupling-detection
+reductions, flag stores/cache reads and dispatch. Captured-workload performance
+improvement with known strict synthetic regressions (not a universally green
+suite):126/126 actual Qwen capture/continuation cases pass all output/state
+bounds on both libraries, including post-timing checks. Median paired speedup
+across108 full traces17.00x (12.05..18.23x);18 continuations15.02x. For1K code,
+roughly3.7ms ->208us per kernel. H16/Hg4 ordinary256..32K controls7/7 pass,
+1.019..1.095x speedup;32K5900.52->5390.88us. Fixed15 trials x20 graph calls,
+five checked warmups, NPU jobs serialized, exact inputs/library hashes matched.
+The complete final regression suite has116 passes and2 failures (74.92s):
+nearly_correlated_beta1 and delayed_nearly_correlated. They expose3 violating
+output elements and1 state element in total, amplitude32,beta1,g0. No tests,
+failures or outliers were removed and no tolerances relaxed. User explicitly
+requested removal based on the measured real-input accuracy; these failures
+remain to be solved in parallel. Source shrinks1302->1171 lines, same7 files,
+2 phases/1 launch, unchanged public inputs/outputs/allocations. Evidence and
+reproduction: docs/gdn_mega/README.md and data/fallback_removal.json/csv.
