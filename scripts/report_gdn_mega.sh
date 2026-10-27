@@ -7,8 +7,7 @@ mkdir -p "$report_dir/data" "$report_dir/figures"
 run() { bash scripts/gdn_mega_docker.sh "$@"; }
 latency_plot() {
     run python benchmarking/plot_gdn_mega.py "$report_dir/data/heatmap.json" \
-        --output "$report_dir/figures/heatmap" --markdown "$report_dir/heatmap.md" \
-        --errors "$report_dir/data/error_heatmap.json"
+        --output "$report_dir/figures/heatmap" --markdown "$report_dir/heatmap.md"
 }
 error_plot() {
     run python benchmarking/plot_gdn_mega_errors.py "$report_dir/data/error_heatmap.json" \
@@ -17,7 +16,7 @@ error_plot() {
 latency() {
     local status=0
     run python benchmarking/gdn_mega_sweep.py \
-        --baseline-report "$report_dir/data/original_latency.json" --current-lib build/lib \
+        --baseline-lib benchmark_data/gdn_mega/baseline_lib --baseline-commit 10748eb --current-lib build/lib \
         --output "$report_dir/data/heatmap.json" || status=$?
     # Numerical failures remain explicit even when their runtimes are measured.
     # The plot rejects incomplete data; current failures still fail this command.

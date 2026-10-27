@@ -56,7 +56,9 @@ Each cell shows three lines: **runtime ratio**, **ours: median total µs**, and
 **base: median total µs**. The times cover the full kernel, not an individual
 stage; allocation and validation are excluded.
 `*` appears only beside a failing implementation's runtime, never on the ratio.
-Passing runtimes stay unmarked. See the [matched error report](error_heatmap.md).
+Passing runtimes stay unmarked. Accuracy checks here belong to these timed
+libraries and the policy below; the [error heatmaps](error_heatmap.md) retain
+their separately labeled checkpoint and policy.
 
 {warning}
 Current passes **{passed}/{len(rows)} shapes**. There are {len(ratios)} measured runtime
@@ -84,7 +86,7 @@ Columns are token counts. Current timings remain available even where the origin
 H/Hg={', '.join(f'{h}/{hg}' for h, hg in configs)}; D=chunk size 128;
 {'nonzero' if data['initial_state'] else 'zero'} initial state; seed {data['seed']}; gate scale{data['gate_scale']}.
 Normalized Gaussian Q/K and ordinary benchmark inputs; this grid does not cover
-all FLA distributions or characterize the slower strong-coupling fallback.
+all FLA distributions or replace the separate correlated-key stress tests.
 
 {data['warmups']} checked warmups, median of {data['trials']} trials ×
 {data['calls_per_trial']} graph calls. Allocation and CPU reference work are outside timing.

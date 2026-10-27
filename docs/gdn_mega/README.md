@@ -4,8 +4,8 @@ The maintained reports are:
 
 - [Sequential fallback removal](#sequential-fallback-removal): latest captured-input speedups, validation and retained failures.
 
-- [Speedup heatmap](heatmap.md): original versus the pre-removal `aac5a4d` checkpoint across heads and sequence lengths.
-- [Error heatmaps](error_heatmap.md): maximum absolute output error and worst elementwise tolerance ratio at that checkpoint.
+- [Speedup heatmap](heatmap.md): freshly timed original versus current fallback-free kernel across heads and sequence lengths.
+- [Error heatmaps](error_heatmap.md): maximum absolute output error and worst elementwise tolerance ratio at the explicitly labeled pre-removal checkpoint, plus current accuracy regimes.
 - [Input ranges](input_ranges.md): FLA-derived distributions, inverse overflow and cancellation.
 - [Qwen capture replay](#qwen-forward-pass-capture-replay): actual correlated keys and gates, production versus parallel-only accuracy.
 
@@ -89,9 +89,9 @@ to regenerate both Markdown pages and all plots from saved data without running
 NPU measurements. Markdown statistics, tables, version labels and figures come
 from the same JSON; do not edit the generated pages by hand.
 
-Latency uses the frozen original timing data in `data/original_latency.json`;
-it explicitly labels the original's older acceptance policy. Fresh matched error
-measurements require the original library at
+Latency freshly measures both libraries under the current acceptance policy;
+its asterisks come from those workers, not the older error heatmaps. Both latency
+and fresh matched error measurements require the original library at
 `benchmark_data/gdn_mega/baseline_lib/libno_workspace_kernel.so` and current at
 `build/lib/libno_workspace_kernel.so`. The scripts verify actual loaded hashes,
 matching inputs/reference results, complete grids and visible failures. NPU jobs
@@ -152,14 +152,13 @@ pairs. To run just those rows, use the same options on either grid script:
 
 ```bash
 bash scripts/gdn_mega_docker.sh python benchmarking/gdn_mega_sweep.py \
-  --baseline-report docs/gdn_mega/data/original_latency.json \
+  --baseline-lib benchmark_data/gdn_mega/baseline_lib --baseline-commit 10748eb \
   --head-configs 24/8 48/16 --output benchmark_data/gdn_mega/pairs_latency.json
 bash scripts/gdn_mega_docker.sh python benchmarking/gdn_mega_errors.py \
   --head-configs 24/8 48/16 --output benchmark_data/gdn_mega/pairs_errors.json
 ```
 
-There were no saved historical original timings for the new rows. The script
-checks and times the original even when accuracy fails, retaining the failed
+The script freshly checks and times the original even when accuracy fails, retaining the failed
 status. Each heatmap cell shows the ratio, our median total µs, and the baseline
 median total µs. Only a failing implementation's runtime gets an asterisk; ratios
 and passing runtimes remain unmarked. Numerical
@@ -539,5 +538,6 @@ bash scripts/gdn_mega_docker.sh python benchmarking/gdn_mega.py \
 The old library is preserved locally under
 `benchmark_data/gdn_mega/fallback_removal/before_lib/`; its SHA256 starts `619b7df`.
 Select it through `LD_LIBRARY_PATH` to reproduce the before measurements.
-The current library SHA256 starts `dfb01e1`. The older speed/error heatmaps
-remain explicitly tied to their pre-removal checkpoint.
+The current library SHA256 starts `dfb01e1`. The speed heatmap now measures this
+library against the original. The error heatmaps remain explicitly tied to their
+pre-removal checkpoint and tighter historical tolerance.

@@ -86,6 +86,7 @@ def main():
     baseline.add_argument("--baseline-lib", type=Path, help="Directory containing original libno_workspace_kernel.so")
     baseline.add_argument("--baseline-report", type=Path,
                           help="Frozen historical-baseline timings; preserves their original validation limitations")
+    parser.add_argument("--baseline-commit", help="Source revision of the supplied baseline library")
     parser.add_argument("--current-lib", type=Path, default=ROOT / "build/lib")
     add_shape_arguments(parser)
     parser.add_argument("--lengths", type=int, nargs="+", default=[128, 256, 1024, 4096, 8192, 16384, 32768])
@@ -129,6 +130,15 @@ def main():
             cwd=ROOT, text=True).strip(),
     }
     historical_cells = {}
+    if args.baseline_commit:
+        if historical:
+            parser.error("--baseline-commit applies only to --baseline-lib")
+        report["baseline_source"] = {
+            "kind": "fresh_latency",
+            "source_commit": subprocess.check_output(
+                ["git", "-c", f"safe.directory={ROOT}", "rev-parse", args.baseline_commit],
+                cwd=ROOT, text=True).strip(),
+        }
     if historical:
         for key in ["gate_scale", "initial_state", "device", "chunk_size", "head_dim",
                     "seed", "warmups", "trials", "calls_per_trial"]:
