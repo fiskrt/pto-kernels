@@ -743,3 +743,21 @@ tolerance-independent error statistics match the older audit; kernel binary
 remainsdfb01e1. Historical figures and failure data retain their old policy.
 Calibration/full log/collection: docs/gdn_mega/data/accepted_precision.json;
 current policy and old diagnostics coexist in error_heatmap.md and README.md.
+
+2026-10-27 — `08d331a`: refreshed the complete speed heatmap against freshly timed
+original10748eb and unchanged current kernel677c0ee (binarydfb01e1). All63 current
+cells pass CPU FP64 output/final-state elementwise checks before/after timing at
+atol1e-4,rtol1e-3 plus finiteness/RMSE. All63 original cells fail that same policy;
+their measured runtimes remain visible, with asterisks only on original runtimes.
+All63 current cells are faster: original/current median1.6321x, range1.2562..4.5306x;
+4K..32K range1.2562..1.7974x. At32K current H16/Hg4=5377.20us,
+H24/Hg8=5699.19us,H48/Hg16=11405.29us,H64/Hg16=16586.58us.
+Nine head pairs including24/8 and48/16, lengths128..32768, nonzero initial state,
+five checked warmups and15x20 graph calls; both library hashes verified. Current
+is median1.0559x faster than the older optimized heatmap's saved timings (a
+cross-run comparison). This is fresh verification/reporting, not a new kernel
+optimization or accuracy improvement.34 benchmark/report tests pass0.28s;
+complete-grid/policy/library checks, deterministic Markdown regeneration and
+visual inspection pass. Updated JSON/CSV/PNG/SVG/heatmap.md and reproduction
+script; it now freshly measures both libraries and never borrows old error-grid
+failure markers. Error heatmaps retain their historical checkpoint/policy.

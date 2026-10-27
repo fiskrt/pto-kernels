@@ -729,3 +729,12 @@ critical audit section and data/precision_audit.json/csv. Source commits0a1797e,
 - Canonical auto-loop test command is the four GDN files in docs/gdn_mega/README.md;
   no old240s timeout (expanded full suite takes~8m21s, mostly CPU FP64 work).
   No new runtime tuning options, fallback, caller allocation or production-code changes.
+
+2026-10-27 speed heatmap refresh (`08d331a`): docs/gdn_mega/heatmap.md now measures
+current677c0ee/dfb01e1 against freshly timed original10748eb/4bf4218, all63 cells.
+Current63/63 pass approved1e-4+1e-3 bound; original0/63 pass (timed regardless).
+Median original/current1.6321x; 4K+range1.2562..1.7974x. Each cell retains medianus.
+scripts/report_gdn_mega.sh latency now freshly measures both libraries; render
+uses the latency workers' own accuracy status. Do not overlay the older error
+heatmap: its current library and tighter policy differ.34 report/benchmark tests
+passed, full grid verified. No production-kernel changes in this refresh.
