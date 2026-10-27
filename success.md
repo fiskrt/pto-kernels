@@ -685,3 +685,15 @@ improvement, NOT a kernel speed or universal precision success: production
 passes60/71 stress cases, parallel-only58/71; all56 unit-amplitude cases in this
 new study pass both. Earlier tiny-decay failures remain unresolved. No production
 kernel, tolerance, interface or allocation changes; failures remain visible.
+
+2026-10-27 — `4ce8af3`: added real captured-input replay to the existing audit
+script, with a regression test that prevents normalization/clipping and verifies
+independently derived continuation state. Full118-test suite passes in71.37s.
+On the user's Qwen3.5-0.8B captures, unchanged production and the isolated
+parallel-only build both pass126/126 cases (108 actual full traces plus18
+supplied-state continuations), five launches each, zero output/state elementwise
+violations. Saved exact fingerprints, headwise metrics and all repeats in
+docs/gdn_mega/data/qwen_capture.json/csv. This improves validation coverage;
+it is not a kernel speedup or proof beyond the captured346..1024-token contexts.
+Production fallback triggers69.0% of captured full-trace head instances despite
+being unnecessary for passing this replay. No production code or tolerances changed.

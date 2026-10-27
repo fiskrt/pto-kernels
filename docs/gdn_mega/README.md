@@ -5,6 +5,7 @@ The maintained reports are:
 - [Speedup heatmap](heatmap.md): original versus current latency across heads and sequence lengths.
 - [Error heatmaps](error_heatmap.md): maximum absolute output error and worst elementwise tolerance ratio for both implementations.
 - [Input ranges](input_ranges.md): FLA-derived distributions, inverse overflow and cancellation.
+- [Qwen capture replay](#qwen-forward-pass-capture-replay): actual correlated keys and gates, production versus parallel-only accuracy.
 
 `data/` contains the measurements and provenance used by these pages; `figures/`
 contains their PNG/SVG plots. Experiment dumps and superseded checkpoint reports
@@ -17,8 +18,8 @@ of the maintained report set.
 The additional critical audit passes 33/56 cases and fails 23/56; see
 [the critical precision audit below](#critical-precision-audit-beta-in-01).
 
-The existing regression suite now passes **117 tests**; the latest log is in
-[the correlation study](data/correlation_risk.json). The earlier 116-test run
+The existing regression suite now passes **118 tests**; the latest log is in
+[the Qwen capture study](data/qwen_capture.json). The earlier 116-test run
 remains recorded in `data/validation.json`.
 The full FP64 grid passes **63/63 current shapes**, with zero elementwise violations;
 the original fails all63 shapes under this stricter policy.
@@ -317,3 +318,77 @@ The three additional existing regressions, isolated diagnostic patch, compiler
 command, library selection and exact case lists are recorded in the JSON. The
 ordinary regression suite passes 117 tests; this does not override the separate
 stress-audit failures. No production fallback was removed in this study.
+
+## Qwen forward-pass capture replay
+
+**Both production and the isolated parallel-only build pass all 126 cases,
+with zero elementwise violations in output and final state.** This study uses
+the user's actual `Qwen/Qwen3.5-0.8B` forward-pass captures, rather than fitting
+a synthetic gate distribution. [Full results and capture provenance](data/qwen_capture.json)
+and [per-case CSV](data/qwen_capture.csv) retain exact input and library hashes,
+headwise gate/correlation/error statistics, all five repeats and the diagnostic
+build patch. Production source, allocations, interfaces and tolerances are unchanged.
+
+Coverage is all six captured prompts and all 18 linear-attention layers:
+**108 full traces, 346–1024 tokens each**. An additional 18 continuation cases
+cover every layer of `code_python`: process its first 512 tokens with the
+independent CPU FP64 recurrence, round the resulting initial state to the
+kernel's FP16 interface, and check the remaining 512 tokens against an FP64
+oracle starting from that same rounded state. No device result supplies the golden.
+There are 16 value and 16 captured key/query heads, each dimension 128.
+
+Captured Q/K/V are already FP16; they are replayed without normalization or
+scaling. Gates remain their captured FP32 values. Beta is converted from FP32
+to FP16 as required by our ABI, before both kernel and golden consume it.
+Thus this measures kernel arithmetic on its actual inputs, not end-to-end
+agreement with the original FP32 model. No gates or beta values are clipped,
+filtered, replaced by constants or shuffled across heads/tokens.
+
+| Build | Cases passing | Output violations | State violations | Max abs output error | Max abs state error | Worst output error / allowance | Worst state error / allowance |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| Production, with fallback | 126/126 | 0 | 0 | 0.00195618 | 0.00337935 | 0.484879 | 0.479069 |
+| Parallel-only diagnostic | 126/126 | 0 | 0 | 0.00195250 | 0.00337935 | 0.484879 | 0.476524 |
+| Ideal FP16 rounding of the FP64 golden | 126/126 | 0 | 0 | 0.00195250 | 0.00337935 | — | — |
+
+The error allowance is unchanged: `1e-5 + 1e-3*abs(reference)` for every raw
+output and state element. The global maximum errors are dominated by final
+FP16 rounding. Each build checks 198,623,232 output and 33,030,144 state elements
+per complete pass, with five launches per case: **1,260 total device launches**.
+All results are finite, inputs/guards remain intact, and scratch-poisoned repeats
+are bitwise identical.
+
+Correlation is substantial in these real inputs: some within-chunk keys are
+identical, and production takes the sequential fallback for **1,192/1,728
+full-trace head instances (69.0%)**. The observed dispatch flags agree with an
+independent FP64 calculation of the coupling trigger in every head. The
+parallel-only build disables that dispatch and still passes every case.
+The fallback was therefore unnecessary for meeting our accuracy policy on
+these captures; it is not a rare path in this workload. No latency measurement
+or fallback removal is included in this audit.
+
+The measured gate median is -0.006174; 36.97% of gates exceed -0.001, and 1.60%
+exceed -1e-6. Weak gates really occur, but these traces retain their natural
+temporal/head structure. They do not impose one tiny constant gate across a
+32K sequence. Beta's median is 0.353 and maximum |V| is 19.40625. See
+[measured ranges](input_ranges.md#measured-qwen-forward-pass-inputs) for details.
+
+These results cover one model checkpoint, six prompts and contexts up to 1024
+tokens. They do not resolve the earlier synthetic long-context failures or
+establish that every correlated workload is safe without fallback.
+
+Reproduce the production audit using the supplied capture file:
+
+```bash
+bash scripts/gdn_mega_docker.sh python benchmarking/audit_gdn_mega.py \
+  --suite capture --capture benchmark_data/gdn_mega/qwen_capture/gdn_keys.pt \
+  --output benchmark_data/gdn_mega/qwen_capture/production.json
+```
+
+The capture is an untracked local copy of the user's `gdn_keys.pt`; its original
+path, SHA256, capture script and source README are recorded in the JSON. The
+large tensor file is not committed. Replaying the parallel-only diagnostic
+uses the isolated library selected through `LD_LIBRARY_PATH`, with its exact
+patch, build commands and loaded-library fingerprint recorded alongside results.
+
+The updated replay tooling passes the complete **118-test regression suite**
+(71.37 seconds); the log and source fingerprints are saved with the results.

@@ -5,6 +5,36 @@ Sources pinned to FLA commit `12cb9d40bae8cd58325d1f8cbec4c8c8c55e9f3e`:
 [comparison helper](https://github.com/fla-org/flash-linear-attention/blob/12cb9d40bae8cd58325d1f8cbec4c8c8c55e9f3e/fla/utils/testing.py),
 [gate activation](https://github.com/fla-org/flash-linear-attention/blob/12cb9d40bae8cd58325d1f8cbec4c8c8c55e9f3e/fla/ops/gated_delta_rule/gate.py).
 
+## Measured Qwen forward-pass inputs
+
+The user's `Qwen/Qwen3.5-0.8B` FP32-model capture contains six prompts,
+346–1024 tokens each, across 18 linear-attention layers and 16 value heads:
+1,404,288 token-head samples. These are observed values, not mathematical
+bounds or a guarantee for other checkpoints/context lengths.
+
+| Captured quantity | Minimum | p1 | Median | p99 | Maximum |
+|---|---:|---:|---:|---:|---:|
+| Log gate g (FP32) | -9.31484 | -3.13377 | -0.006174 | -4.827e-7 | -5.989e-11 |
+| Beta before ABI conversion (FP32) | 1.182e-12 | 0.002551 | 0.352994 | 0.980206 | 0.999992 |
+| Beta consumed by kernel/golden (FP16) | 0 | 0.002550 | 0.353027 | 0.979980 | 1 |
+
+36.97% of gates lie above -0.001, and 1.60% above -1e-6. Very weak decay is
+present in real data; it should not automatically be dismissed as an artificial
+edge case. Per-head and temporal structure matters: a constant tiny gate over
+32K tokens is a different experiment from these captured sequences. Beta can
+round to 0 or 1 in our FP16 interface; 0.00363% of captured beta values round to 1.
+Captured Q/K are already normalized and rounded to FP16, and captured V is FP16
+with maximum absolute value 19.40625. The replay does not renormalize or rescale.
+
+The [capture replay](README.md#qwen-forward-pass-capture-replay) checks all actual
+Q/K/V/g/beta tensors, retaining correlations between heads, tokens and fields.
+It passes all 108 full-trace and 18 supplied-state continuation cases on both
+production and an isolated build without sequential fallback. All comparisons
+use the unchanged elementwise policy against the independent FP64 recurrence.
+Production nevertheless takes fallback for 69.0% of full-trace head instances.
+These measurements are separate from the synthetic speed/error heatmaps and do
+not establish long-context accuracy. [Data and provenance](data/qwen_capture.json).
+
 ## What FLA tests
 
 The main chunk tests normalize positive uniform Q/K; recurrent and FlashQLA

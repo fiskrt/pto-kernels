@@ -624,3 +624,26 @@ critical audit section and data/precision_audit.json/csv. Source commits0a1797e,
   Verified63 saved heatmap inputs never trigger: conservative max bound.3751.
 - Evidence: docs/gdn_mega/data/correlation_risk.json/csv and README section.
   Regression117 pass62.49s; tooling49 pass2.38s. No kernel fix or timing claim.
+
+2026-10-27 — real Qwen capture replay, tooling4ce8af3:
+- User capture directory /tmp/claude-10182/-home-fskogh/27b86c35-f06f-4387-bf22-935eb7e98fff/scratchpad/gdn
+  includes gdn_keys.pt: six prompts x18 layers, T346..1024,H16/Hg16,D128.
+  Local ignored copy: benchmark_data/gdn_mega/qwen_capture/gdn_keys.pt.
+- Use audit_gdn_mega.py --suite capture --capture PATH --output PATH. No extra
+  script or synthetic distribution fit. Q/K/V already FP16; beta cast to ABI
+  FP16 before both golden/kernel; g retained FP32. Never renormalize/clip.
+- 108 full traces +18 code_python suffixes with FP64-derived, FP16-rounded
+  prefix state. Both unchanged production619b7df and isolated parallel3fa652f
+  pass126/126, five launches each (1260total); every output/state checked.
+  198,623,232 output and33,030,144 state elements per full pass per binary.
+- Production output maxabs.00195618 vs parallel.00195250; latter equals ideal
+  FP16 rounding max. State maxabs.00337935 equals floor on both. Worst output
+  allowance ratio.484879 both; state.479069 production/.476524 parallel.
+- Fallback occurs1192/1728 full-trace head instances (69.0%), despite parallel
+  passing all. Flags agree with independent FP64 coupling threshold in all
+  heads. This is not a rare branch on the actual workload! No speed measured.
+- Real g median-.006174,36.97% above-.001,1.60% above-1e-6; beta median.353,
+  Vabsmax19.40625. Preserve head/token patterns; constant tiny gates at32K
+  are different. Do not extrapolate these up-to1K captures to32K or all models.
+- All guards/inputs/repeats intact;118 regression tests pass71.37s. Evidence
+  docs/gdn_mega/data/qwen_capture.json/csv; no production/tolerance/ABI changes.
