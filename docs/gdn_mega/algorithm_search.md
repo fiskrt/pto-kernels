@@ -17,6 +17,21 @@ prepare future chunks. The recurrence stays ordered in time, but its value
 columns are independent: no approximate scan or recurrent-state transfer is
 introduced.
 
+The split follows directly from the recurrence. Write S=[S0 S1] and V=[V0 V1].
+For each value-column slice j, independently:
+
+```
+Rj  = L^-1 [diag(beta) (Vj - diag(exp(G)) K Sj)]
+Oj  = diag(exp(G)) Q Sj + Mqk Rj
+S'j = alpha Sj + Gamma^T Rj
+```
+
+Every reduction still runs over the original key/token dimension. No operation
+reduces across value columns, so splitting that dimension needs no state merge
+and no decay assumption. It does duplicate some operand loads and startup work;
+that tradeoff explains the shape threshold and why already occupied shapes
+retain the ordinary schedule.
+
 ```mermaid
 flowchart LR
     Setup[Shared KK/QK and compensated gates] --> Prep[8 helper groups: chunk/key-head preparation]
@@ -104,6 +119,13 @@ that prototype to about 522 µs, and early RHS release measured about 501–518 
 in subsequent runs. These separate runs establish the combined candidate's
 promise, not a precise isolated estimate of the early-RHS effect. The broad
 final tables above are the promoted result.
+
+A further H8 experiment assigned two immediate 48-column workers per head,
+then reused each preparation helper for the remaining 32 value columns after
+its preparation finished. It passed the nine-case screen, but measured
+**782.02 µs at H8/Hg2/4K**, versus about 520 µs for the promoted schedule.
+The helpers' delayed recurrence became the critical path. Keeping more cores
+busy did not shorten completion time; this implementation is also discarded.
 
 ### Gate rescaling experiment
 

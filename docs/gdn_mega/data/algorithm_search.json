@@ -30599,6 +30599,250 @@
             "after_replay_errors_equal_before": true
           }
         ]
+      },
+      "helper_reuse": {
+        "verification": {
+          "source_sha256": {
+            "common.hpp": "a57c716bf72d22e6439acdb77c1303b8b05c1a7f6371d70881b3d5db28a84a36",
+            "fused_pipeline.hpp": "9af267ba2e121f115e4cbe6455446184d00f078ca499f07a7d24a2ee83b4842e",
+            "gate_scan.hpp": "9ee4bd4dfda1ca6406bc078475ca7088f79fb4cffd734076633d0df9e0f91126",
+            "inverse.hpp": "48dc9208fd6fee3636ac36d7805c64e66cb1bf20f031369f4a1f3fea08c0318f",
+            "kernel_gdn_mega.cpp": "f23d2cfb39f1decac512be991ee59260febfc69887581325298b96ddbf7be55c",
+            "recurrence_pipeline.hpp": "b577c9c28c7fb2a884f3470891d3148fc9b1303eac75478d5d7e7ddfc35e689f",
+            "shared_grams.hpp": "e9a939c158f5d61ef3354b724338d7e70986e0d45327cb863c7acd4253af4a0b"
+          },
+          "heads": [
+            8,
+            16
+          ],
+          "library_sha256": "7a79d33a6943084512a629f32fafa9204d2946361facc13ec0536bbfa605f81a",
+          "build_seconds": 15.928682013880461,
+          "quick": true,
+          "source": "/mounted_home/autokernel_gdn/pto-kernels/benchmark_data/gdn_mega/active_search/helper_reuse",
+          "test_seconds": 4.0988520151004195,
+          "test_exit_code": 0,
+          "coverage": "partial fixed screen"
+        },
+        "schedule": "Two immediate 48-column workers per head; after token preparation each helper computes the remaining 32 columns of one head.",
+        "decision": "Rejected: H8/Hg2/T4096 782.023us, substantially slower than the promoted schedule. Delaying helper recurrence extends the critical path. Partial nine-case precision screen only.",
+        "benchmarks": [
+          {
+            "length": 256,
+            "heads": 8,
+            "key_heads": 2,
+            "median_us": 82.97500014305115,
+            "min_us": 82.56000280380249,
+            "max_us": 89.10999894142151,
+            "trials": 15,
+            "calls_per_trial": 20,
+            "trial_us": [
+              89.10999894142151,
+              83.02299976348877,
+              82.91500210762024,
+              83.0020010471344,
+              82.83299803733826,
+              83.07899832725525,
+              82.60700106620789,
+              82.99800157546997,
+              82.73199796676636,
+              82.7049970626831,
+              83.10199975967407,
+              82.63400197029114,
+              83.18300247192383,
+              82.56000280380249,
+              82.97500014305115
+            ],
+            "status": "passed",
+            "kernel_library_sha256": "7a79d33a6943084512a629f32fafa9204d2946361facc13ec0536bbfa605f81a",
+            "validation_policy": {
+              "atol": 0.0001,
+              "rtol": 0.001,
+              "max_relative_rmse": 0.005,
+              "criterion": "every element: abs(error) <= atol + rtol * abs(reference), AND relative RMSE"
+            },
+            "numerical_errors": {
+              "raw_output": {
+                "passed": true,
+                "finite": true,
+                "max_abs": 0.00024071242661594106,
+                "pointwise_violations": 0,
+                "max_tolerance_ratio": 0.3877776860515258,
+                "relative_rmse": 0.0002066645171734123
+              },
+              "final_state": {
+                "passed": true,
+                "finite": true,
+                "max_abs": 0.00023995407359744814,
+                "pointwise_violations": 0,
+                "max_tolerance_ratio": 0.39428312564408635,
+                "relative_rmse": 0.00020904354472813297
+              }
+            },
+            "after_replay_errors_equal_before": true
+          },
+          {
+            "length": 4096,
+            "heads": 8,
+            "key_heads": 2,
+            "median_us": 782.0230007171631,
+            "min_us": 781.0329914093018,
+            "max_us": 783.2910060882568,
+            "trials": 15,
+            "calls_per_trial": 20,
+            "trial_us": [
+              783.2910060882568,
+              782.0230007171631,
+              782.2440147399902,
+              782.7469825744629,
+              782.9760074615479,
+              781.0329914093018,
+              782.4389934539795,
+              781.9089889526367,
+              782.3910236358643,
+              782.6550006866455,
+              781.8719863891602,
+              782.004976272583,
+              781.60400390625,
+              781.6470146179199,
+              781.279993057251
+            ],
+            "status": "passed",
+            "kernel_library_sha256": "7a79d33a6943084512a629f32fafa9204d2946361facc13ec0536bbfa605f81a",
+            "validation_policy": {
+              "atol": 0.0001,
+              "rtol": 0.001,
+              "max_relative_rmse": 0.005,
+              "criterion": "every element: abs(error) <= atol + rtol * abs(reference), AND relative RMSE"
+            },
+            "numerical_errors": {
+              "raw_output": {
+                "passed": true,
+                "finite": true,
+                "max_abs": 0.00024413586844129753,
+                "pointwise_violations": 0,
+                "max_tolerance_ratio": 0.3937822153001105,
+                "relative_rmse": 0.00020729675604748784
+              },
+              "final_state": {
+                "passed": true,
+                "finite": true,
+                "max_abs": 0.00024316030380033826,
+                "pointwise_violations": 0,
+                "max_tolerance_ratio": 0.38258323520494864,
+                "relative_rmse": 0.00020650515336227603
+              }
+            },
+            "after_replay_errors_equal_before": true
+          },
+          {
+            "length": 256,
+            "heads": 16,
+            "key_heads": 4,
+            "median_us": 79.94300127029419,
+            "min_us": 79.72800135612488,
+            "max_us": 84.89199876785278,
+            "trials": 15,
+            "calls_per_trial": 20,
+            "trial_us": [
+              84.89199876785278,
+              79.85100150108337,
+              79.97300028800964,
+              79.94300127029419,
+              79.86699938774109,
+              79.87599968910217,
+              79.77200150489807,
+              79.96900081634521,
+              79.72800135612488,
+              79.96900081634521,
+              79.91700172424316,
+              79.98600006103516,
+              79.86699938774109,
+              80.06100058555603,
+              82.00299739837646
+            ],
+            "status": "passed",
+            "kernel_library_sha256": "7a79d33a6943084512a629f32fafa9204d2946361facc13ec0536bbfa605f81a",
+            "validation_policy": {
+              "atol": 0.0001,
+              "rtol": 0.001,
+              "max_relative_rmse": 0.005,
+              "criterion": "every element: abs(error) <= atol + rtol * abs(reference), AND relative RMSE"
+            },
+            "numerical_errors": {
+              "raw_output": {
+                "passed": true,
+                "finite": true,
+                "max_abs": 0.00024406970951018625,
+                "pointwise_violations": 0,
+                "max_tolerance_ratio": 0.3987605130949071,
+                "relative_rmse": 0.00020794499764803116
+              },
+              "final_state": {
+                "passed": true,
+                "finite": true,
+                "max_abs": 0.000243420565413488,
+                "pointwise_violations": 0,
+                "max_tolerance_ratio": 0.3909622508890479,
+                "relative_rmse": 0.0002071449442851768
+              }
+            },
+            "after_replay_errors_equal_before": true
+          },
+          {
+            "length": 4096,
+            "heads": 16,
+            "key_heads": 4,
+            "median_us": 674.4530200958252,
+            "min_us": 673.7080097198486,
+            "max_us": 677.0080089569092,
+            "trials": 15,
+            "calls_per_trial": 20,
+            "trial_us": [
+              675.8840084075928,
+              673.9789962768555,
+              674.0230083465576,
+              674.714994430542,
+              674.4170188903809,
+              674.9410152435303,
+              677.0080089569092,
+              675.3550052642822,
+              675.4819869995117,
+              674.6349811553955,
+              674.0059852600098,
+              673.7080097198486,
+              674.045991897583,
+              674.0509986877441,
+              674.4530200958252
+            ],
+            "status": "passed",
+            "kernel_library_sha256": "7a79d33a6943084512a629f32fafa9204d2946361facc13ec0536bbfa605f81a",
+            "validation_policy": {
+              "atol": 0.0001,
+              "rtol": 0.001,
+              "max_relative_rmse": 0.005,
+              "criterion": "every element: abs(error) <= atol + rtol * abs(reference), AND relative RMSE"
+            },
+            "numerical_errors": {
+              "raw_output": {
+                "passed": true,
+                "finite": true,
+                "max_abs": 0.00024390789032102678,
+                "pointwise_violations": 0,
+                "max_tolerance_ratio": 0.4063479647436831,
+                "relative_rmse": 0.00020714568809796895
+              },
+              "final_state": {
+                "passed": true,
+                "finite": true,
+                "max_abs": 0.00024181396705236224,
+                "pointwise_violations": 0,
+                "max_tolerance_ratio": 0.3911688278174855,
+                "relative_rmse": 0.0002086901801042751
+              }
+            },
+            "after_replay_errors_equal_before": true
+          }
+        ]
       }
     },
     "experimental_comparisons": {
@@ -36564,7 +36808,40 @@
         "path": "benchmark_data/gdn_mega/verified_candidate",
         "files": 2,
         "bytes": 19242592
+      },
+      {
+        "path": "build/gdn_final",
+        "files": 35,
+        "bytes": 41382148
+      },
+      {
+        "path": "build/gdn_diagnostic",
+        "files": 18,
+        "bytes": 11581808
+      },
+      {
+        "path": "build/gdn_helper_reuse",
+        "files": 19,
+        "bytes": 15424916
+      },
+      {
+        "path": "/tmp/gdn_mega_sweep_7iqg53g7",
+        "files": 6,
+        "bytes": 451177
+      },
+      {
+        "path": "benchmark_data/gdn_mega/active_search",
+        "files": 79,
+        "bytes": 3538365
       }
-    ]
+    ],
+    "heatmap_refresh": {
+      "kernel_commit": "365b1059cb3e2675faf24d86de53c2e81842dfaa",
+      "cells": 63,
+      "current_passes": 63,
+      "baseline_failures": 63,
+      "data_sha256": "275da5cc4a5beb833b34bf43d14e438181dda72e480ce32e58697724977d3218",
+      "cache": "Integrity-checked CPU FP64 golden reuse enabled in maintained report script; every kernel output check still executes."
+    }
   }
 }

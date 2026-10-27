@@ -874,3 +874,8 @@ Detailed tables, numerical metrics, build/source/library hashes and per-trial
 times live in docs/gdn_mega/algorithm_search.md and its JSON. Rejected source,
 generator, build and log artifacts are removed; the old isolated verified
 candidate is obsolete because its improvement is now production.
+
+Follow-up helper reuse: 48+48 immediate columns plus 32 delayed columns on each
+K1 helper passed the nine-case screen but took 782.02us at H8/4K, versus ~520us
+production. Helpers' combined preparation/recurrence tail dominates. Rejected
+and removed; more busy cores alone does not mean a shorter critical path.

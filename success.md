@@ -848,3 +848,13 @@ shape. Gate-panel rescaling passed the previous 246-test suite but did not
 provide a repeatable speed improvement, so it is not included. Full tables,
 rejected schedules and provenance are recorded in `docs/gdn_mega/algorithm_search.md`
 and its existing JSON companion.
+
+The refreshed original/current heatmap measures all 63 cells with the same
+installed `4dc29f4d` binary: current passes 63/63, with its median total µs in
+every cell. Original runtimes remain visible and are marked only for their
+actual numerical failures. Report scripts now enable the existing validated
+CPU-golden cache without reusing kernel outputs or acceptance decisions.
+The follow-up 48+48 immediate / 32 delayed helper-reuse schedule was slower
+(782.02us at H8/4K) and was discarded after its nine-case screen passed.
+Cleanup removed 556 generated files (340.1 MiB); no experimental build/source
+folders or obsolete candidate libraries remain.
