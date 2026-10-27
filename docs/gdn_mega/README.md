@@ -5,6 +5,7 @@ The maintained reports are:
 - [Sequential fallback removal](#sequential-fallback-removal): latest captured-input speedups, validation and retained failures.
 
 - [Speedup heatmap](heatmap.md): freshly timed original versus current fallback-free kernel across heads and sequence lengths.
+- [Current profile](profile.md): real-device counters, stage clocks, traceviz timelines, and ranked structural optimization opportunities.
 - [Error heatmaps](error_heatmap.md): maximum absolute output error and worst elementwise tolerance ratio at the explicitly labeled pre-removal checkpoint, plus current accuracy regimes.
 - [Input ranges](input_ranges.md): FLA-derived distributions, inverse overflow and cancellation.
 - [Qwen capture replay](#qwen-forward-pass-capture-replay): actual correlated keys and gates, production versus parallel-only accuracy.
@@ -104,6 +105,14 @@ The small entry scripts are `gdn_mega.py` (single-shape timing),
 the two `plot_gdn_mega*.py` renderers. Shared Markdown generation lives in
 `gdn_mega_report_text.py`. `gdn_mega_ranges.py` measures the documented input ranges;
 it contains no experimental solver implementations.
+
+For current-kernel profiling, `bash scripts/profile_gdn_mega.sh collect` runs
+hardware counters and a simulator trace, builds an isolated diagnostic copy,
+then generates `profile.md` and its figures using `../traceviz-mcp`. Use
+`bash scripts/profile_gdn_mega.sh render` to regenerate from the saved raw run.
+Diagnostic sources and libraries stay in ignored `benchmark_data/`; the
+production kernel is not instrumented. See the profile for the distinction
+between hardware timings, diagnostic scope clocks, and simulator timelines.
 
 ## Golden, input coverage and fast checks
 
