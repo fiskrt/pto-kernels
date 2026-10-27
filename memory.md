@@ -774,3 +774,39 @@ precompute/factored64 caveats are in profile.md; no optimization was implemented
   search, not merely the~6% scheduling result. All experiments currently ignored
   under benchmark_data/gdn_mega/optimize_20261027. Keep numerical policy fixed.
 
+
+2026-10-27 — structural search findings, docs/gdn_mega/algorithm_search.md/json:
+- Production unchanged. C128/C_inv16 forward vector A remains best measured.
+  Factored top join + asynchronous independent joins passes246tests; matched4K
+  latest652–666us vsproduction697–700. Long32K gain smaller/variable; no breakthrough.
+- Nine-case fixed screen: C64/inv16 835us, C64/inv32 960us pass9/9. C128/inv32
+  forward A fails large nearly-correlated3011 amp128 with full and factored J;
+  reverse A passes9/9 but843us fullJ/851us factored. C128/inv64forward8/9,untimed.
+  Its initial UB-index-at176KB fault fixed by moving indices168KB; no device fault timed.
+- C256/inv16 retiled prototype868us,8/9 (same high-amplitude case);reversealso8/9.
+  Requires explicit enlarged scratch via ignored large_chunk_worker.py, streamed
+  vector stripes, separate Q/K and output/state products, GM state/base residency.
+  A2 L0C is128KiB, NOT256KiB: initial oversized tiles faulted and were retiled.
+  OnlyH8/16 built. No production allocation or ABI change. Do not generalize its
+  failure/slowness to every C256 schedule.
+- Rotating chunk workers reuse spare KK-upper storage for FP32state and unused
+  wy scratch for readiness counters (H<=16,B1,T>=512,GQA>=2). It passed9/9 but
+  904us4K; reject this implementation, not evidence of numeric shortcut/fallback.
+- CPU polynomial_sweep.py:1920 case/config combinations,8fixeddistributions,
+  C64/128/256,Cinv8/16/32/64,Jfull/factored. Isolates fixedFP32 coefficient solve
+  againstFP64, NOT full recurrence/kernel certificate. Forward/Horner inverse
+  error~3–4e-8; Horner intermediates2.33e17 at64, manydependentmatmuls. Estrin/PS
+  error~2e-4..4e-4 at16,order9..20 at32,~1e10 at64 fromcancellation.
+- New CPU-only promising A: band-limited Newton X<-X(2I-LX),mask to growing
+  known-correct band1->3->7->15...; samples peak<=1, inverse errors~forward.
+  Exact reasoning: residual E has zero bands<=b;E² zero<=2b+1;mask preserves
+  newlycorrectband. No decay truncation. NOT implemented/timed onNPU yet.
+- HF32all onasync candidate fails6/9,then10/13expandedchecks,allfinite/integrity
+  intact. Matched4K620–624vsFP32652–666;32K4948–4981vsFP325155–5363. Required
+  atol atfixedrtol.001:weakg.0003465;identicalbeta1g0state.0039467;nearlycorr
+  amp1 .00234357,amp32 .0749942,amp128 .2999769. Lastnearzero witnessref-.00812336
+  err.124456;176009/1049600outputviolations despiteRMSE.000347. No tolerancechange.
+  All13current/FP32candidatepass. Ordinary timingcellsHF32allfail butstilltimed.
+- Detailed raw scripts/sources/logs ignored under benchmark_data/gdn_mega/optimize_20261027;
+  reusable fastbuild/check tooling committed400151f,successentry57f0593. Latest
+  user asks conclusions across A,C,Cinv,J; emphasize measured vs CPU-only scope.

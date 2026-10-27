@@ -1,5 +1,10 @@
 # GDN mega kernel
 
+The current experimental findings for chunk size, inverse size, leaf algorithm,
+joining and arithmetic are recorded in [the structural search report](algorithm_search.md).
+It distinguishes CPU stability models, partial NPU screens and fully verified
+candidates; production remains unchanged by those experiments.
+
 The maintained reports are:
 
 - [Sequential fallback removal](#sequential-fallback-removal): latest captured-input speedups, validation and retained failures.
