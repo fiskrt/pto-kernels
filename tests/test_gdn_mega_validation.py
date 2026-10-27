@@ -1,0 +1,361 @@
+"""Adversarial correctness checks independent of the chunked GDN algorithm."""
+import hashlib
+import pytest
+import torch
+
+from pto_kernels import pto_gdn_mega
+from gdn_mega_validation import POLICY, assert_numerically_close, error_metrics, recurrent_reference, cached_recurrent_reference
+from test_gdn_mega import D, _expand_kv_heads, _make_inputs, _prepare_gdn_mega, _reference
+
+
+from gdn_mega_cases import AUDIT_CASES
+
+
+READ_ONLY = ("q", "k", "v", "g", "beta", "mask_lower", "mask_full", "minus_identity", "cu_seqlens")
+
+
+def make_audit_inputs(case):
+    inputs = list(_make_inputs(sum(case["lengths"]), case["heads"], case["key_heads"], seed=case["seed"]))
+    q, k, v, g, beta = inputs
+    if "fla" in case:
+        if case["fla"] == "positive":
+            q.copy_(torch.nn.functional.normalize(torch.rand_like(q), dim=-1))
+            k.copy_(torch.nn.functional.normalize(torch.rand_like(k), dim=-1))
+            v.copy_(torch.rand_like(v))
+        beta_source = torch.randn_like(g) if case.get("beta_logits") else torch.rand_like(g)
+        beta.copy_((beta_source.sigmoid() * (2 if case.get("negative_eigenvalues") else 1)).half())
+        gate_source = torch.randn_like(g) if case.get("gate_logits") else torch.rand_like(g)
+        g.copy_(torch.nn.functional.logsigmoid(gate_source) / case.get("gate_normalizer", 1.))
+        if "gate_mask" in case:
+            g.mul_(torch.rand_like(g) > case["gate_mask"])
+        if case.get("gate_activation"):
+            a_log = torch.randn(case["heads"])
+            bias = torch.randn(case["heads"])
+            g.copy_(-a_log.exp() * torch.nn.functional.softplus(torch.randn_like(g) + bias))
+    g.mul_(case.get("gate_scale", 1.))
+    if 'constant_log_gate' in case:
+        g.fill_(case['constant_log_gate'])
+    amplitude = case.get("amplitude", 1.)
+    v.mul_(amplitude)
+    if case.get("correlated"):
+        # Exact unit vectors: stable delta-rule recurrence even with beta=1.
+        k.zero_()
+        k[..., 0] = 1
+    if case.get("correlated_random") or case.get("nearly_correlated"):
+        keys = k[:, :1].float().expand_as(k).clone()
+        if case.get("nearly_correlated"):
+            keys += .01 * torch.randn_like(keys)
+            keys /= keys.norm(dim=-1, keepdim=True)
+        after = case.get("correlated_after", 0)
+        k[:, after:].copy_(keys[:, after:].half())
+    if "key_correlation" in case:
+        # A shared unit direction plus independent orthogonal noise gives
+        # expected inter-token cosine rho. A private RNG keeps Q/V/g/beta and
+        # the initial state identical across the matched correlation sweep.
+        rho = case["key_correlation"]
+        assert 0. <= rho <= 1.
+        generator = torch.Generator().manual_seed(case["seed"] + 17011)
+        common = torch.nn.functional.normalize(torch.randn(1, 1, k.shape[2], D, generator=generator), dim=-1)
+        noise = k.float() - (k.float() * common).sum(-1, keepdim=True) * common
+        noise = torch.nn.functional.normalize(noise, dim=-1)
+        k.copy_((rho**.5 * common + (1-rho)**.5 * noise).half())
+    k.mul_(case.get("key_scale", 1.))
+    if "beta" in case:
+        beta.fill_(case["beta"])
+    if case.get('alternating_beta'):
+        beta[:, ::2] = 0.
+        beta[:, 1::2] = 1.
+    if case.get("zero_query"):
+        q.zero_()
+    if case.get("mixed"):
+        for chunk, start in enumerate(range(0, q.shape[1], 128)):
+            g[:, start:start + 128].mul_([4., .01, 0., 1.][chunk % 4])
+    initial = None
+    if case.get("initial", True):
+        initial = torch.randn(len(case["lengths"]), case["heads"], D, D, dtype=torch.float16) * (case.get("state_scale", .1) * amplitude)
+    cu = torch.tensor([0, *torch.tensor(case["lengths"]).cumsum(0).tolist()], dtype=torch.int32)
+    return inputs, initial, cu
+
+
+def make_capture_inputs(record, start=0):
+    """Replay captured tensors in the kernel ABI, with no normalization/clipping.
+
+    For continuation, derive the supplied FP16 state from the independent FP64
+    prefix recurrence. The suffix oracle consumes that same rounded state.
+    """
+    inputs = [record[name].detach().cpu().to(dtype).unsqueeze(0).contiguous()
+              for name, dtype in (("q", torch.float16), ("k", torch.float16),
+                                  ("v", torch.float16), ("g", torch.float32),
+                                  ("beta", torch.float16))]
+    assert 0 <= start < inputs[0].shape[1]
+    initial = None
+    if start:
+        _, initial = recurrent_reference(*(x[:, :start] for x in inputs))
+        initial = initial.half()
+        inputs = [x[:, start:].contiguous() for x in inputs]
+    cu = torch.tensor([0, inputs[0].shape[1]], dtype=torch.int32)
+    return inputs, initial, cu
+
+
+def run_audit_case(case, device, *, prepared_inputs=None, benchmark=None):
+    inputs, initial, cu = make_audit_inputs(case) if prepared_inputs is None else prepared_inputs
+    digest = hashlib.sha256()
+    for tensor in [*inputs, initial, cu]:
+        if tensor is not None:
+            digest.update(str((tuple(tensor.shape), str(tensor.dtype))).encode())
+            digest.update(memoryview(tensor.contiguous().numpy()).cast("B"))
+    # Reference stays on the CPU and is never passed to the device/launch helper.
+    expected, expected_state = cached_recurrent_reference(*inputs, initial, cu)
+    launch = _prepare_gdn_mega(*(x.to(device) for x in inputs), cu.to(device),
+                               initial.to(device) if initial is not None else None)
+    snapshots = {name: launch[name].clone() for name in READ_ONLY}
+    if initial is not None:
+        snapshots["initial_state"] = launch["initial_state"].clone()
+    guards = []
+    for name in ["out", "final_state"]:
+        old = launch[name]
+        backing = torch.full((old.numel() + 128,), -123.25, dtype=old.dtype, device=device)
+        launch[name] = backing[64:-64].view_as(old)
+        guards.append(backing)
+    if initial is None:
+        launch["initial_state"] = launch["final_state"]  # Deliberately poisoned, must be ignored.
+    metrics, first = [], None
+    for fill in [0., float("nan"), 17., -9., float("nan")]:
+        for name, tensor in launch.items():
+            if isinstance(tensor, torch.Tensor) and name not in snapshots and name != "initial_state":
+                tensor.fill_(fill)
+        pto_gdn_mega(**launch)
+        torch.npu.synchronize()
+        actual = launch["out"].cpu().clone()
+        state = launch["final_state"].cpu().view_as(expected_state).clone()
+        integrity = all(torch.equal(launch[name], before) for name, before in snapshots.items())
+        integrity &= all(bool((x[:64] == -123.25).all() and (x[-64:] == -123.25).all()) for x in guards)
+        if first is None:
+            first = (actual.clone(), state.clone())
+        # Byte comparison remains meaningful even if numerical checks expose NaNs.
+        independent = all(torch.equal(a.view(torch.int16), b.view(torch.int16)) for a, b in zip((actual, state), first))
+        # Reuse statistics only after checking every output/state bit. All five
+        # device launches and all integrity checks still execute independently.
+        numerical = ({key: metrics[0][key] for key in ("raw_output", "scaled_output", "final_state")}
+                     if metrics and independent else
+                     {"raw_output": error_metrics(actual, expected),
+                      "scaled_output": error_metrics(actual.double() * D**-.5, expected * D**-.5),
+                      "final_state": error_metrics(state, expected_state)})
+        metrics.append({**numerical,
+                        "inputs_and_guards_intact": integrity, "scratch_independent": independent})
+    timing = {}
+    if benchmark is not None:
+        timing["timing"] = benchmark(launch)
+        actual = launch["out"].cpu().clone()
+        state = launch["final_state"].cpu().view_as(expected_state).clone()
+        timing["after_replay"] = {
+            "raw_output": error_metrics(actual, expected),
+            "final_state": error_metrics(state, expected_state),
+            "inputs_and_guards_intact": all(torch.equal(launch[name], before) for name, before in snapshots.items())
+                and all(bool((x[:64] == -123.25).all() and (x[-64:] == -123.25).all()) for x in guards),
+        }
+    correlation = {}
+    if "key_correlation" in case:
+        cosine = torch.nn.functional.cosine_similarity(inputs[1][:, 1:].double(), inputs[1][:, :-1].double(), dim=-1)
+        correlation = {"adjacent_key_cosine_mean": cosine.mean().item(),
+                       "adjacent_key_cosine_min": cosine.min().item(),
+                       "adjacent_key_cosine_max": cosine.max().item()}
+    per_head = {}
+    if case.get("per_head"):
+        fields = ("passed", "finite", "elements", "max_abs", "pointwise_violations",
+                  "max_tolerance_ratio", "abs_error_at_worst_tolerance", "relative_rmse")
+        per_head["per_head"] = [
+            {"head": head, **{name: {key: value for key, value in error_metrics(a, e).items() if key in fields}
+                              for name, a, e in (
+                                  ("raw_output", actual[:, :, head], expected[:, :, head]),
+                                  ("final_state", state[:, head], expected_state[:, head]))}}
+            for head in range(case["heads"])]
+    return {"case": case, "policy": POLICY, "repeats": metrics, "input_sha256": digest.hexdigest(), **per_head, **timing,
+            "input_ranges": {
+                **correlation,
+                "beta": [inputs[4].min().item(), inputs[4].max().item()],
+                "log_gate": [inputs[3].min().item(), inputs[3].max().item()],
+                "key_norm_squared": [inputs[1].double().square().sum(-1).min().item(),
+                                     inputs[1].double().square().sum(-1).max().item()],
+                "value_abs_max": inputs[2].abs().max().item(),
+                "initial_state_abs_max": initial.abs().max().item() if initial is not None else 0.,
+            },
+            "fp16_output_rounding_floor": error_metrics(expected.half(), expected),
+            "fp16_state_rounding_floor": error_metrics(expected_state.half(), expected_state),
+            "passed": (not timing or (timing["after_replay"]["raw_output"]["passed"] and
+                       timing["after_replay"]["final_state"]["passed"] and
+                       timing["after_replay"]["inputs_and_guards_intact"])) and all(m["raw_output"]["passed"] and m["final_state"]["passed"] and
+                          m["inputs_and_guards_intact"] and m["scratch_independent"] for m in metrics)}
+
+
+@pytest.mark.parametrize("case", AUDIT_CASES, ids=[c["name"] for c in AUDIT_CASES])
+def test_independent_recurrence_and_memory(case, npu_device):
+    result = run_audit_case(case, npu_device)
+    assert result["passed"], result
+
+
+def test_correlation_sweep_preserves_non_key_inputs():
+    base = dict(seed=3827, lengths=(1024,), heads=8, key_heads=2,
+                beta=1., constant_log_gate=-.001, state_scale=.1)
+    ordinary, initial, cu = make_audit_inputs(base)
+    for rho in (0., .75, 1.):
+        inputs, state, lengths = make_audit_inputs(dict(base, key_correlation=rho))
+        assert all(torch.equal(inputs[i], ordinary[i]) for i in (0, 2, 3, 4))
+        assert torch.equal(state, initial) and torch.equal(lengths, cu)
+        norm = inputs[1].double().norm(dim=-1)
+        torch.testing.assert_close(norm, torch.ones_like(norm), rtol=0, atol=5e-4)
+        cosine = torch.nn.functional.cosine_similarity(inputs[1][:, 1:].double(), inputs[1][:, :-1].double(), dim=-1)
+        assert abs(cosine.mean().item()-rho) < .02
+
+
+def test_capture_replay_preserves_inputs_and_rounds_prefix_state():
+    generator = torch.Generator().manual_seed(27101)
+    record = {name: torch.randn(3, 2, D, generator=generator).half() for name in ("q", "k", "v")}
+    record["g"] = -torch.rand(3, 2, generator=generator) * .01
+    record["beta"] = torch.rand(3, 2, generator=generator)
+    snapshots = {name: value.clone() for name, value in record.items()}
+    inputs, initial, cu = make_capture_inputs(record)
+    assert initial is None and cu.tolist() == [0, 3]
+    for value, name in zip(inputs, ("q", "k", "v", "g", "beta")):
+        assert torch.equal(value[0], record[name].to(value.dtype))
+    _, prefix_state = recurrent_reference(*(x[:, :2] for x in inputs))
+    suffix, initial, cu = make_capture_inputs(record, start=2)
+    assert torch.equal(initial, prefix_state.half()) and cu.tolist() == [0, 1]
+    assert all(torch.equal(a, b[:, 2:]) for a, b in zip(suffix, inputs))
+    assert all(torch.equal(record[name], value) for name, value in snapshots.items())
+
+
+def test_reference_analytic_two_tokens():
+    q = k = torch.tensor([[[[1., 0.]], [[1., 0.]]]])
+    v = torch.tensor([[[[1., 0.]], [[2., 0.]]]])
+    g = torch.zeros(1, 2, 1)
+    beta = torch.full((1, 2, 1), .5)
+    out, state = recurrent_reference(q, k, v, g, beta)
+    torch.testing.assert_close(out, torch.tensor([[[[.5, 0.]], [[1.25, 0.]]]], dtype=torch.float64), rtol=0, atol=0)
+    torch.testing.assert_close(state, torch.tensor([[[[1.25, 0.], [0., 0.]]]], dtype=torch.float64), rtol=0, atol=0)
+
+
+def test_reference_correlated_beta_one_is_stable():
+    case = next(c for c in AUDIT_CASES if c["name"] == "correlated_beta1")
+    inputs, initial, cu = make_audit_inputs(case)
+    out, state = recurrent_reference(*inputs, initial, cu)
+    q, _ = _expand_kv_heads(*inputs[:2], case["heads"])
+    # With k=e_0, beta=1 and g=0, each step replaces precisely the first
+    # state row with v_t; the other rows retain their initial values.
+    analytic = torch.einsum("bthd,hde->bthe", q.double(), initial[0].double())
+    analytic += q[..., :1].double() * (inputs[2].double() - initial[0, :, 0, :].double())
+    final = initial.double().clone()
+    final[0, :, 0, :] = inputs[2][0, -1].double()
+    torch.testing.assert_close(out, analytic, rtol=1e-12, atol=1e-12)
+    torch.testing.assert_close(state, final, rtol=1e-12, atol=1e-12)
+
+
+@pytest.mark.parametrize("seed,gate_scale", [(0, 1.), (42, .01), (93, 0.)])
+def test_chunked_reference_against_recurrence(seed, gate_scale):
+    inputs = list(_make_inputs(257, 8, 2, seed))
+    inputs[3].mul_(gate_scale)
+    initial = torch.randn(1, 8, D, D, dtype=torch.float16) * .1
+    raw, state64 = recurrent_reference(*inputs, initial)
+    q, k = _expand_kv_heads(*inputs[:2], 8)
+    out, state = _reference(q, k, *inputs[2:], initial)
+    torch.testing.assert_close(out.double(), raw * D**-.5, atol=1e-7, rtol=1e-5)
+    torch.testing.assert_close(state.double(), state64, atol=1e-6, rtol=1e-5)
+
+
+def test_checker_rejects_spike_hidden_by_rmse():
+    expected = torch.ones(1_000_000)
+    actual = expected.clone()
+    actual[123] += .1
+    assert error_metrics(actual, expected)["relative_rmse"] < .005
+    with pytest.raises(AssertionError):
+        assert_numerically_close("spike", actual, expected)
+
+
+@pytest.mark.parametrize("bad", [float("nan"), float("inf"), -float("inf")])
+def test_checker_rejects_nonfinite(bad):
+    with pytest.raises(AssertionError):
+        assert_numerically_close("nonfinite", torch.tensor([bad]), torch.zeros(1))
+
+
+def test_checker_rejects_broadcasting():
+    with pytest.raises(AssertionError):
+        assert_numerically_close("shape", torch.ones(8), torch.ones(1))
+
+
+def test_contiguous_views_respect_storage_offset(npu_device):
+    """Regression for storage().data() ignoring a contiguous view's offset.
+
+    Compare identical launches bit for bit; this tests pointer handling, without
+    relying on or relaxing the separate numerical acceptance criterion.
+    """
+    inputs, initial, cu = make_audit_inputs(AUDIT_CASES[0])
+    launch = _prepare_gdn_mega(*(x.to(npu_device) for x in inputs), cu.to(npu_device), initial.to(npu_device))
+    pto_gdn_mega(**launch)
+    torch.npu.synchronize()
+    expected = {name: launch[name].clone() for name in ("out", "final_state")}
+    guards = []
+    for name in (*READ_ONLY[:-1], "initial_state", "out", "final_state"):
+        old = launch[name]
+        backing = torch.full((old.numel() + 128,), -123.25, dtype=old.dtype, device=npu_device)
+        launch[name] = backing[64:-64].view_as(old)
+        launch[name].copy_(old if name not in expected else torch.zeros_like(old))
+        guards.append(backing)
+    for _ in range(5):
+        pto_gdn_mega(**launch)
+        torch.npu.synchronize()
+        for name in expected:
+            assert torch.equal(launch[name], expected[name]), name
+        assert all(bool((x[:64] == -123.25).all() and (x[-64:] == -123.25).all()) for x in guards)
+
+
+def test_changed_inputs_on_reused_workspace(npu_device):
+    """A second request must depend on its inputs, not previous scratch data."""
+    case = AUDIT_CASES[0]
+    inputs, initial, cu = make_audit_inputs(case)
+    launch = _prepare_gdn_mega(*(x.to(npu_device) for x in inputs), cu.to(npu_device), initial.to(npu_device))
+    pto_gdn_mega(**launch)
+    torch.npu.synchronize()
+    inputs2, initial2, _ = make_audit_inputs({**case, "seed": 6599})
+    for name, tensor in zip(("q", "k", "v", "g", "beta"), inputs2):
+        launch[name].copy_(tensor)
+    launch["initial_state"].copy_(initial2)
+    pto_gdn_mega(**launch)
+    torch.npu.synchronize()
+    reused = {name: launch[name].clone() for name in ("out", "final_state")}
+    fresh = _prepare_gdn_mega(*(x.to(npu_device) for x in inputs2), cu.to(npu_device), initial2.to(npu_device))
+    pto_gdn_mega(**fresh)
+    torch.npu.synchronize()
+    for name in reused:
+        assert torch.equal(reused[name], fresh[name]), name
+
+
+@pytest.mark.parametrize('gate,beta_value,initial_supplied', [(1., .9, True), (0., 1., True),
+    (.01, 1.999, True), (0., 1.999, False), (-.01, .5, True)])
+def test_reused_scratch_oracle_against_literal_fp64(gate, beta_value, initial_supplied):
+    """The faster golden must preserve the independent literal recurrence."""
+    inputs = list(_make_inputs(129, 8, 2, seed=185))
+    inputs[3].mul_(gate)
+    inputs[4].fill_(beta_value)
+    initial = torch.randn(3, 8, D, D).half() if initial_supplied else None
+    cu = torch.tensor([0, 63, 63, 129], dtype=torch.int32)
+    snapshots = [x.clone() for x in inputs]
+    initial_snapshot = initial.clone() if initial is not None else None
+    q, k, v, g, beta = [x.double() for x in inputs]
+    q, k = _expand_kv_heads(q, k, 8)
+    expected = torch.empty_like(v)
+    states = []
+    for i, (start, end) in enumerate(zip(cu.tolist(), cu.tolist()[1:])):
+        state = initial[i].double().clone() if initial is not None else torch.zeros(8, D, D, dtype=torch.float64)
+        for t in range(start, end):
+            state = state * g[0, t].exp()[:, None, None]
+            prediction = (k[0, t, :, :, None] * state).sum(1)
+            residual = beta[0, t, :, None] * (v[0, t] - prediction)
+            state = state + k[0, t, :, :, None] * residual[:, None, :]
+            expected[0, t] = (q[0, t, :, :, None] * state).sum(1)
+        states.append(state)
+    actual, final = recurrent_reference(*inputs, initial, cu)
+    torch.testing.assert_close(actual, expected, atol=1e-14, rtol=1e-14)
+    torch.testing.assert_close(final, torch.stack(states), atol=1e-14, rtol=1e-14)
+    assert all(torch.equal(a, b) for a, b in zip(inputs, snapshots))
+    if initial is not None:
+        assert torch.equal(initial, initial_snapshot)
