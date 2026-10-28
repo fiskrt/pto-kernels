@@ -38,7 +38,7 @@ using MegaFloat = Tile<TileType::Mat,float,R,C,BLayout::ColMajor,R,C,SLayout::Ro
 // retain separate accumulators. Export/reload phases are synchronized once
 // per level, with independent DMA and matrix operations queued together.
 template<int B,int C,bool FirstOnly=false,typename Mat>
-AICORE inline void mega_float_join_level(Mat& inverse,__gm__ float* scratch,__gm__ float* prepared=nullptr,int valid=C)
+AICORE inline void mega_float_join_level(Mat& inverse,__gm__ float* scratch)
 {
 #if defined(__DAV_CUBE__)
     constexpr int Groups=C/(2*B),Rows=Groups*B;
@@ -75,12 +75,6 @@ AICORE inline void mega_float_join_level(Mat& inverse,__gm__ float* scratch,__gm
     }
     for(int group=0;group<Groups;++group){
         int offset=group*2*B;
-        int rows=max(0,min(B,valid-offset-B));
-        if(prepared!=nullptr && rows>0){
-            TileAcc<float,B,B,DYNAMIC,B> result(rows);TASSIGN(result,group*B*B*sizeof(float));
-            GlobalTensor<float,Shape<1,1,1,DYNAMIC,B>,pto::Stride<1,1,1,C,1>> out(prepared+(offset+B)*C+offset,{1,1,1,rows,B});
-            TSTORE(out,result);
-        }
         Tile<TileType::Mat,float,C,C,BLayout::ColMajor,B,B,SLayout::RowMajor,512> destination;
         TASSIGN(destination,(uint64_t)inverse.data()+(offset*C+(offset+B)*8)*sizeof(float));
         GlobalTensor<float,Shape<1,1,1,B,B>,pto::Stride<1,1,1,B,1>> block(scratch+group*B*B);
@@ -91,12 +85,12 @@ AICORE inline void mega_float_join_level(Mat& inverse,__gm__ float* scratch,__gm
 }
 
 template<int C,typename Mat>
-AICORE inline void mega_float_inverse(Mat& inverse,__gm__ float* scratch,__gm__ float* prepared=nullptr,int valid=C)
+AICORE inline void mega_float_inverse(Mat& inverse,__gm__ float* scratch)
 {
 #if defined(__DAV_CUBE__)
-    mega_float_join_level<16,C>(inverse,scratch,prepared,valid);
-    mega_float_join_level<32,C>(inverse,scratch,prepared,valid);
-    mega_float_join_level<64,C,true>(inverse,scratch,prepared,valid);
+    mega_float_join_level<16,C>(inverse,scratch);
+    mega_float_join_level<32,C>(inverse,scratch);
+    mega_float_join_level<64,C,true>(inverse,scratch);
 #endif
 }
 
@@ -106,7 +100,7 @@ template<int C,int D,typename Acc,typename Attention,typename Gamma,typename Res
 AICORE inline void mega_combined_residual_products(Acc& result,Attention& attention,Gamma& gamma,Residual& residual)
 {
 #if defined(__DAV_CUBE__)
-
+    static_assert(C==D);
     TileLeft<float,2*C,C/2> left;
     TileLeft<float,C,C/2> top,bottom;
     TileRight<float,C/2,D> right;

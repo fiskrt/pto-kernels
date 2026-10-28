@@ -1,13 +1,63 @@
 # GDN structural search: current findings
 
-The latest change keeps C=128 and C_inv=16, promotes factored/asynchronous
-joining, and adds concurrent token preparation with independent value-column
-workers for underfilled H8 shapes. The caller contract and accuracy policy are
-unchanged. Earlier experiments below retain their historical checkpoint labels;
-none establishes that the search space is exhausted.
+Production keeps C=128, C_inv=16 and factored/asynchronous joining, with one
+head-parallel schedule for all shapes. The H8-specific schedule was removed
+at the user's request after the attempted unifications did not preserve its
+speed benefit. The caller contract and accuracy policy are unchanged.
+Earlier experiments below retain their historical checkpoint labels.
 [Measurements, numerical metrics and source/library hashes](data/algorithm_search.json).
 
-## Token preparation and value-column parallelism: promoted in `365b105`
+## Schedule simplification
+
+The H8-specific helper/value-column path has been removed at the user's
+request. Every shape again uses the same full-width head worker, overlapping
+local next-chunk preparation with recurrence. The factored final join and
+asynchronous independent joins remain. Seven production files now contain
+**1,189 physical lines**, down from **1,342**: 153 fewer lines (11.4%). There
+are no helper queues, readiness flags, shape thresholds, extra allocations or
+new tuning switches. Inputs, outputs and the existing allocation contract are
+unchanged.
+
+The restored sources exactly match the previously verified join-only
+candidate recorded under `retained_improvement` in the JSON. A fresh all-head
+build took 10.53s; **all 264 regression tests pass in 169.30s**, including all 178
+fixed numerical cases. The eighteen H8 cases added during helper scheduling
+remain in the regular suite. Every raw-output and state element is checked
+against independent CPU FP64 under the unchanged `1e-4 + 1e-3*abs(reference)`
+bound, with finiteness, workspace poisoning and integrity checks retained.
+
+Fresh matched H8/Hg2 measurements, nonzero initial state, C=D=128, seed 0;
+median 15 graph trials × 20 calls, both libraries checked before/after replay:
+
+| Tokens | Uniform schedule µs | Removed H8 schedule µs | Custom throughput / uniform |
+|---:|---:|---:|---:|
+| 256 | 79.76 | 82.48 | 0.967× |
+| 4,096 | 658.61 | 502.31 | 1.311× |
+| 8,192 | 1242.03 | 964.54 | 1.288× |
+| 16,384 | 2515.80 | 1829.29 | 1.375× |
+| 32,768 | 4878.08 | 3750.30 | 1.301× |
+
+At 4K–32K the removed custom schedule gives 1.29–1.38× throughput, or 22–27%
+lower latency. This documents the performance intentionally traded for simpler
+code; it is not an improvement of the restored kernel. The refreshed heatmap
+measures the restored uniform kernel against original 10748eb, and preserves
+this scheduling note when regenerated.
+
+Two attempted unifications preceded this decision. Full token preparation
+followed by alternating two pinned heads per group passed the nine-case screen,
+but at 4K took 604.1/860.9/1918.4µs for H8/H16/H48, versus 518.7/675.6/1393.0µs
+with the former production schedule. A local pipeline of two 64-column slices
+per group also passed nine cases; it was roughly tied at 4K/8K for H12/H16/H24/H48,
+but lost 26% at H8/4K and 36% at H8/8K, and was 4–6% slower at 256 tokens.
+All 21 checked benchmark cells across these two prototypes passed. These are
+partial experimental checks, not full-suite acceptance of either prototype.
+A serial-order control was compiled but not run before the user chose rollback.
+
+Both prototypes are rejected. Their generators, sources, binaries and raw
+logs were removed after saving measurements and fingerprints in the existing
+JSON. This does not establish that a faster uniform schedule is impossible.
+
+## Historical token preparation and value-column parallelism (`365b105`, now removed)
 
 **The useful combination is token-parallel preparation plus value-column
 parallel recurrence.** Moving preparation by itself did not improve the full
@@ -439,10 +489,10 @@ bash scripts/gdn_mega_docker.sh bash scripts/check_gdn_mega.sh
 sources, build outputs and raw runs were removed at the user's request. Historical
 paths inside the evidence JSON identify provenance; they are not live dependencies.
 Production still has seven sources and its unchanged allocation contract.
-Its two internal schedules share the same arithmetic and helpers.
+Its single internal schedule uses local next-chunk preparation for every head count.
 
-The factored/overlapped-join improvement is now part of production, together
-with the token-preparation/value-column schedule. Its old isolated library is
+The factored/overlapped-join improvement remains in production. The
+H8 token-preparation/value-column schedule has been removed. Its old isolated library is
 no longer needed. The historical patch remains under `retained_improvement`
 in the JSON, anchored to its recorded **pre-promotion** source hashes; it is
 not a patch to apply to today's source.

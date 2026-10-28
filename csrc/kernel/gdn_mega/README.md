@@ -5,20 +5,10 @@ One launch with shared setup followed by recurrence on Ascend 910B2:
 1. Vector computes compensated gate prefixes and transposes beta while cube
    computes FP32 KKᵀ and QKᵀ, shared by grouped value heads. A global barrier
    joins these independent producers.
-2. Normally each active cube/vector group retains one head across its chunks. Vector
+2. Each active cube/vector group retains one head across its chunks. Vector
    weights the next chunk before waiting for current projections, retains its
    coefficients through RHS preparation, then finishes its inverse while cube
    processes the current chunk. The recurrent state stays in vector-local FP32 storage.
-
-For one sequence with H=8, at least 1024 tokens, and at least two chunk/key-head
-tasks per spare group, the second phase uses a different work partition:
-16 groups retain two independent 64-value-column slices of each head; the
-remaining eight groups prepare future chunks. The helpers share cached KK/QK
-across grouped heads and compute weights, leaf inverses, cube joins and Gamma.
-Consumers form the RHS while waiting for/loading those prepared inverses.
-State never moves between workers. An extra global barrier initializes readiness
-flags before producers and consumers start concurrently. Shorter shapes and
-other head/batch counts use the local preparation schedule above.
 
 The inverse uses stable 16×16 FP32 triangular substitution followed by
 block-triangular joins. The vector solve gathers coefficients directly without
@@ -91,7 +81,7 @@ Only `out` and `final_state` are primary outputs. The existing caller applies
 | `g_t`, `g_sum`, `beta_t` | Head-major high/low gate prefixes and beta |
 | `A`, `w` | Whole FP32 Gamma tiles: first/second halves of heads, head-major |
 | `A_inv`, `u` | Whole FP32 attention tiles: first/second halves of heads, head-major |
-| `A_inv_f32` | FP32 QKᵀ shared by grouped heads; token helpers reuse it for per-head factored inverses and readiness flags after caching QK |
+| `A_inv_f32` | FP32 QKᵀ shared by grouped heads |
 | `v_new`, `s` | Two column halves of FP32 KKᵀ |
 | `wy_workspace_a1/a2` | Reserved compatibility storage |
 | `kkt_workspace` | FP32 output-product exchange |

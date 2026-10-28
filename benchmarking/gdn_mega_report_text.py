@@ -69,6 +69,18 @@ ratios{f", ranging from **{min(ratios):.2f}× to {max(ratios):.2f}×**" if ratio
     text += f'''There are {sum(x < 1 for x in ratios)} ratios below 1×. Gray cells mean
 that a timing is unavailable, not merely that numerical validation failed.
 
+## Scheduling tradeoff
+
+Production was simplified to one head-parallel schedule for all shapes. A custom
+H8 schedule in `365b105` used 16 recurrence groups (two independent value-column
+slices per head) and eight preparation helpers. Matched H8/Hg2 measurements at
+4K–32K showed **22–27% lower latency (1.29–1.38× throughput)**. This is an
+additional gain over the uniform schedule, not over the original baseline.
+We removed it to keep the code simple: one schedule and 153 fewer source lines.
+The shared factored/asynchronous inverse joins remain. The removed schedule
+is available in Git history; it is not a runtime tuning option.
+[Measured comparison and numerical validation](algorithm_search.md#schedule-simplification).
+
 ## Original latency, milliseconds
 
 Columns are token counts. `*` identifies a numerical failure.

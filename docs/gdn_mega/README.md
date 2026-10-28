@@ -2,10 +2,11 @@
 
 The [structural search report](algorithm_search.md) records the latest
 parallelism and gate-rescaling experiments, along with the earlier inverse
-search. Production now combines factored/asynchronous joining with concurrent
-token preparation and two independent value-column workers per head when H8
-would otherwise leave cores idle. Short or already occupied shapes retain local
-preparation. There is no gate-dependent dispatch or sequential fallback.
+search. Production uses one head-parallel schedule for every shape, with local
+next-chunk preparation and factored/asynchronous joining. The H8-specific
+helper/value-column schedule was removed at the user's request to simplify
+the code. Its measured speed benefit remains documented in the
+[speed heatmap](heatmap.md). There is no gate-dependent dispatch or sequential fallback.
 
 Rejected prototypes and debug builds are removed after their numerical and
 performance evidence is saved. The seven production source files share their
@@ -29,12 +30,13 @@ of the maintained report set.
 
 ## Current implementation and correctness
 
-Scheduling commit `365b105` passes **264 tests in 171.38 seconds**, including
-**178 fixed numerical cases**. Eighteen new cases exercise H8/Hg1, H8/Hg4 and
-H8/Hg8 worker layouts with partial chunks, nearly correlated keys, beta=1,
-weak gates, amplitude 32, and supplied/absent state. The existing critical
-cases cover 32K, zero/tiny/strong gates and beta endpoints. The source and
-installed binary fingerprints accompany the [structural search results](algorithm_search.md).
+The restored uniform schedule passes **264 tests in 169.30 seconds**, including
+**178 fixed numerical cases**. The eighteen H8/Hg1, H8/Hg4 and H8/Hg8 cases
+added during scheduling work remain in the regular suite: partial chunks,
+nearly correlated keys, beta=1, weak gates, amplitude 32, and supplied/absent
+state. Existing critical cases cover 32K, zero/tiny/strong gates and beta
+endpoints. Source and installed-binary fingerprints accompany the
+[structural search results](algorithm_search.md#schedule-simplification).
 
 
 **Production always uses the parallel chunk pipeline; the sequential fallback
@@ -84,7 +86,7 @@ The ordinary-input 3× speed target remains unmet; removing the fallback targets
 the additional cost on correlated real inputs.
 
 There is **one launch, two global phases and seven production source files**
-(1171 physical lines after fallback removal, versus 1302 at `aac5a4d` and 5241 originally). Arguments, tensor dtypes,
+(1189 physical lines, down from 1342 with the H8 schedule; 5241 originally). Arguments, tensor dtypes,
 output scaling and caller allocation sizes are unchanged. Internal scratch
 layouts and the execution model are documented in the
 [kernel README](../../csrc/kernel/gdn_mega/README.md).
