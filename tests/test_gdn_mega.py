@@ -151,7 +151,7 @@ def _total_chunks(cu_seqlens) -> int:
 def _run_gdn_mega(q, k, v, g, beta, cu_seqlens, initial_state=None):
     """Allocate every buffer the kernel needs, launch it, return (out, final_state)."""
     device = q.device
-    _, total_tokens, num_key_heads, head_dim = q.shape
+    _, total_tokens, _, head_dim = q.shape
     num_value_heads = v.shape[-2]
 
     q, k, v, beta = (t.half() for t in (q, k, v, beta))
