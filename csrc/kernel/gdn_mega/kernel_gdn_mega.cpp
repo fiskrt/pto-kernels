@@ -1,4 +1,5 @@
-// mega_kernel.cpp — GDN Mega-Kernel (group-value / GQA): all PTO stages in one launch
+// mega_kernel.cpp — GDN Mega-Kernel (group-value / GQA): all PTO stages in one
+// launch
 //
 // Same pipeline as pto_mega_kernel, with value heads (H) and key heads (Hg)
 // passed at runtime. H dispatches to finite compile-time specializations.
@@ -21,7 +22,8 @@
 #ifndef GDN_KERNEL_NAME
 #define GDN_KERNEL_NAME gdn_mega
 #endif
-// Note the codegen parser does not support arguments of form "type *name", only "type* name"
+// Note the codegen parser does not support arguments of form "type *name", only
+// "type* name"
 // clang-format off
 #ifndef GM_ADDR
 #define GM_ADDR __gm__ uint8_t*
