@@ -880,3 +880,19 @@ note about the removed schedule's benefit.
 Fresh full heatmap: **63/63 restored-kernel cells pass**, including 24/8 and
 48/16 through 32K. Figures and tables now compare uniform `f381ae8` with
 original `10748eb`; the removed H8 benefit is documented separately.
+
+## 2026-10-28 — merge preparation and tooling consolidation (`f0bcf32`)
+
+Removed 55 tracked files (~34 MB). GDN now has two Python tools, one test file,
+no dedicated shell wrappers, no documentation data directory, and only the
+speed/error PNGs. Commands live in `docs/gdn_mega/README.md`. Historical profile
+and exploration reports are removed. Production kernel sources and ABI are
+unchanged; this is maintenance work, not a kernel speed claim.
+
+Preserved all 264 test IDs and all 178 fixed case definitions. Oracle, metric,
+input/allocation and audit functions have identical ASTs. All 264 tests pass
+in 540.91s while populating the new oracle-function-keyed cache; the warm nine-case
+screen passes in 2.44s. All seven heads build in 10.40s. Verified standalone and
+matched timing, failure exit status, both report renderers, hardware/simulator
+FP64 checks and traceviz rendering. Temporary builds, copied tools and obsolete
+raw profile artifacts were removed; reusable goldens and user captures remain.

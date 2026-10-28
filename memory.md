@@ -1,3 +1,18 @@
+## Current workflow after merge cleanup (`f0bcf32`, 2026-10-28)
+
+Earlier shell-wrapper commands and separate GDN test/helper modules below are
+historical: they have been removed. Use `benchmarking/gdn_mega.py` subcommands
+`build`, `test [--quick]`, `bench`, `heatmap`, `render`; use
+`benchmarking/profile_gdn_mega.py` for hardware/simulator/render. All 264 test IDs
+and 178 fixed cases now live in `tests/test_gdn_mega.py`. Canonical commands and
+Docker setup are in `docs/gdn_mega/README.md`. No docs/data directory or profile.md
+remains; figures contain only speed/error PNGs. Raw runs go to ignored
+benchmark_data; retained folders are baseline_lib, reference_cache, qwen_capture,
+plus latest heatmap.json. Historical raw profile/experimental builds removed.
+All 264 tests pass (540.91s cold cache), warm quick 9 passes in 2.44s; full build 10.40s.
+Hardware and simulator checks plus traceviz rendering pass. Production kernel
+sources are unchanged from f381ae8. Do not recreate deleted helper files.
+
 # GDN mega optimization notebook
 
 Target: 3x faster than commit `10748eb`, with correctness preserved.
