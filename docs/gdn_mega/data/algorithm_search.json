@@ -22842,7 +22842,7 @@
       "kernel_gdn_mega.cpp": "82ba11c1fec18ff7f912b4d49dc7fecc064b73a17605f86357135adfdda96dfb",
       "fused_pipeline.hpp": "977201c78e70e1c91d3f1eadf49c5843ddacfd5bb9cc61f2a8e648d8be0ce0a1"
     },
-    "status": "Promoted in 365b105; old isolated library removed after verification. Patch remains historical against recorded pre-promotion source hashes."
+    "status": "Factored/asynchronous joins promoted in365b105. Exact join-only source restored in f381ae8 when H8 specialization was removed. Old isolated library remains removed; patch is historical against recorded pre-promotion source hashes."
   },
   "cleanup": {
     "rejected_sources_builds_and_raw_runs_removed": true,
@@ -36842,7 +36842,8 @@
       "baseline_failures": 63,
       "data_sha256": "275da5cc4a5beb833b34bf43d14e438181dda72e480ce32e58697724977d3218",
       "cache": "Integrity-checked CPU FP64 golden reuse enabled in maintained report script; every kernel output check still executes."
-    }
+    },
+    "current_status": "Historical365b105 promotion; H8 specialization subsequently removed in f381ae8. See schedule_simplification for current verification and fresh heatmap."
   },
   "unified_schedule_search": {
     "recorded_utc": "2026-10-28T09:30:13.704048+00:00",
@@ -46413,6 +46414,20 @@
         "generator_sha256": "1735738a8c2cd519d050b711fa6dde6de7e74be386ed33579cdfdb4c565fdb9f"
       }
     },
-    "diagnostic_note": "Updated generator compiles and passes independent FP64 elementwise checks. Existing profile figures remain historical; this is a tooling smoke check, not a new full profile."
+    "diagnostic_note": "Updated generator compiles and passes independent FP64 elementwise checks. Existing profile figures remain historical; this is a tooling smoke check, not a new full profile.",
+    "kernel_commit": "f381ae817dae0094734e1c4fc24b34e2d28d8665",
+    "heatmap_refresh": {
+      "kernel_commit": "f381ae817dae0094734e1c4fc24b34e2d28d8665",
+      "library_sha256": {
+        "current": "0bf6f7832dd1688b55f0962c92cbd42d048a31385a0a36f6d1e2e0a05e628691",
+        "baseline": "4bf4218a7473d3632369a542b45f7c58eb3286069d9e5750e40b01090e660aec"
+      },
+      "cells": 63,
+      "current_passes": 63,
+      "baseline_failures": 63,
+      "source": "docs/gdn_mega/data/heatmap.json",
+      "source_sha256": "cf4193c64fb37c39164f22d39331301694d6eae46a83d01a74d390356060300a",
+      "note": "Fresh original10748eb versus uniform f381ae8; all7 lengths and9 head pairs. Current timings and figures do not include removed H8 specialization. Its measured benefit is retained as a separate note."
+    }
   }
 }

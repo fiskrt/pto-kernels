@@ -858,3 +858,25 @@ The follow-up 48+48 immediate / 32 delayed helper-reuse schedule was slower
 (782.02us at H8/4K) and was discarded after its nine-case screen passed.
 Cleanup removed 556 generated files (340.1 MiB); no experimental build/source
 folders or obsolete candidate libraries remain.
+
+## 2026-10-28 — simplify scheduling (`f381ae8`)
+
+At the user's request, removed the H8-specific token helpers and value-column
+workers. Restored one full-width head schedule for all shapes while retaining
+factored/asynchronous joins. Production shrank from 1,342 to 1,189 lines across
+the same seven files; ABI, allocations, numerical policy and all regression
+cases remain unchanged. This is a code simplification, not a speed improvement:
+the removed H8 schedule reduced 4K–32K latency by 22–27% in matched tests.
+
+All 264 regression tests pass in 169.30s against the independent CPU FP64
+reference, including elementwise output/state bounds, correlated-key cases,
+poisoned scratch and integrity checks. All seven specializations build in
+10.53s. The updated profiler compiles and its measured outputs/states pass;
+35 CPU benchmark/report tests pass. Rejected experiments and diagnostic build
+artifacts were removed. Measurements and fingerprints are in
+`docs/gdn_mega/data/algorithm_search.json`; the heatmap generator preserves a
+note about the removed schedule's benefit.
+
+Fresh full heatmap: **63/63 restored-kernel cells pass**, including 24/8 and
+48/16 through 32K. Figures and tables now compare uniform `f381ae8` with
+original `10748eb`; the removed H8 benefit is documented separately.

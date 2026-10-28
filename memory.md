@@ -879,3 +879,27 @@ Follow-up helper reuse: 48+48 immediate columns plus 32 delayed columns on each
 K1 helper passed the nine-case screen but took 782.02us at H8/4K, versus ~520us
 production. Helpers' combined preparation/recurrence tail dominates. Rejected
 and removed; more busy cores alone does not mean a shorter critical path.
+
+## 2026-10-28 — user requested unified-schedule rollback (`f381ae8`)
+
+Current production has ONE head-parallel schedule, 1,189 physical lines in
+seven sources. H8 helpers, state-column splitting, readiness flags and their
+shape dispatch are removed. Factored/asynchronous joins remain. Sources match
+retained_improvement.verification.source_sha256 exactly. Installed library
+0bf6f7832dd1688b55f0962c92cbd42d048a31385a0a36f6d1e2e0a05e628691;
+fresh 264 tests pass in169.30s, including all178 numerical cases. No ABI,
+allocation or tolerance changes. Keep the18 former helper-layout cases.
+
+Two unification prototypes passed9-case screens but were rejected: global
+preparation plus head interleaving604/861/1918us at4K H8/H16/H48; local two-half
+pipeline658/673/1393us, losing H8 gain and4–6% onshort inputs. Evidence saved in
+existing algorithm_search.json/md; no experimental source/builds retained.
+
+Fresh matched H8/Hg2 uniform vs removed custom at4K/8K/16K/32K:
+658.61/1242.03/2515.80/4878.08 vs502.31/964.54/1829.29/3750.30us.
+Custom gives1.29–1.38x throughput or22–27% lower latency. User explicitly accepts
+this tradeoff for simpler code. Heatmap renderer now includes the historical
+benefit note. Full speed grid is refreshed on installed uniform binary:63/63 current cells
+pass; original10748eb fails63/63 but retains measured runtimes.
+Profiler diagnostic generator adapted and smoke check passes. Old profile and
+error figures retain their explicit historical checkpoint labels.

@@ -1,7 +1,7 @@
 # GDN speedup heatmap
 
-Generated from measurements dated 2026-10-27.
-Original **10748eb**, current **365b105**. [Overview](README.md).
+Generated from measurements dated 2026-10-28.
+Original **10748eb**, current **f381ae8**. [Overview](README.md).
 
 ![Original/current latency](figures/heatmap.png)
 
@@ -17,10 +17,22 @@ Original fails strict numerical checks on **63/63 cells**.
 Ratios involving a starred runtime are **not accuracy-equivalent speedups**.
 
 Current passes **63/63 shapes**. There are 63 measured runtime
-ratios, ranging from **1.29× to 4.26×**.
-For 4K and longer, the range is **1.29× to 1.92×**.
+ratios, ranging from **1.29× to 4.66×**.
+For 4K and longer, the range is **1.29× to 1.87×**.
 There are 0 ratios below 1×. Gray cells mean
 that a timing is unavailable, not merely that numerical validation failed.
+
+## Scheduling tradeoff
+
+Production was simplified to one head-parallel schedule for all shapes. A custom
+H8 schedule in `365b105` used 16 recurrence groups (two independent value-column
+slices per head) and eight preparation helpers. Matched H8/Hg2 measurements at
+4K–32K showed **22–27% lower latency (1.29–1.38× throughput)**. This is an
+additional gain over the uniform schedule, not over the original baseline.
+We removed it to keep the code simple: one schedule and 153 fewer source lines.
+The shared factored/asynchronous inverse joins remain. The removed schedule
+is available in Git history; it is not a runtime tuning option.
+[Measured comparison and numerical validation](algorithm_search.md#schedule-simplification).
 
 ## Original latency, milliseconds
 
@@ -28,15 +40,15 @@ Columns are token counts. `*` identifies a numerical failure.
 
 | H/Hg | 128 | 256 | 1024 | 4096 | 8192 | 16384 | 32768 |
 |---|---:|---:|---:|---:|---:|---:|---:|
-| 8/2 | 0.209* | 0.262* | 0.388* | 0.960* | 1.774* | 3.344* | 6.756* |
-| 12/3 | 0.253* | 0.330* | 0.461* | 1.214* | 2.234* | 4.343* | 8.781* |
-| 16/4 | 0.109* | 0.148* | 0.311* | 0.862* | 1.662* | 3.447* | 6.782* |
-| 24/6 | 0.136* | 0.173* | 0.355* | 1.101* | 2.233* | 4.641* | 9.139* |
-| 24/8 | 0.131* | 0.166* | 0.346* | 1.129* | 2.210* | 4.657* | 9.122* |
-| 32/8 | 0.153* | 0.208* | 0.483* | 1.680* | 3.397* | 6.801* | 13.456* |
-| 48/12 | 0.157* | 0.223* | 0.581* | 2.242* | 4.624* | 9.119* | 18.051* |
-| 48/16 | 0.159* | 0.226* | 0.584* | 2.238* | 4.663* | 9.165* | 18.088* |
-| 64/16 | 0.197* | 0.300* | 0.794* | 3.071* | 6.194* | 12.252* | 24.457* |
+| 8/2 | 0.213* | 0.269* | 0.386* | 0.980* | 1.723* | 3.433* | 6.607* |
+| 12/3 | 0.280* | 0.339* | 0.472* | 1.226* | 2.283* | 4.456* | 8.925* |
+| 16/4 | 0.110* | 0.148* | 0.317* | 0.892* | 1.726* | 3.519* | 6.948* |
+| 24/6 | 0.137* | 0.171* | 0.357* | 1.142* | 2.268* | 4.730* | 9.275* |
+| 24/8 | 0.135* | 0.172* | 0.357* | 1.143* | 2.271* | 4.732* | 9.297* |
+| 32/8 | 0.158* | 0.213* | 0.499* | 1.725* | 3.473* | 6.969* | 13.740* |
+| 48/12 | 0.159* | 0.227* | 0.593* | 2.296* | 4.754* | 9.332* | 18.441* |
+| 48/16 | 0.155* | 0.224* | 0.592* | 2.285* | 4.707* | 9.324* | 18.490* |
+| 64/16 | 0.200* | 0.304* | 0.815* | 3.149* | 6.352* | 12.481* | 25.022* |
 
 ## Current latency, milliseconds
 
@@ -44,15 +56,15 @@ Columns are token counts. Current timings remain available even where the origin
 
 | H/Hg | 128 | 256 | 1024 | 4096 | 8192 | 16384 | 32768 |
 |---|---:|---:|---:|---:|---:|---:|---:|
-| 8/2 | 0.064 | 0.082 | 0.177 | 0.519 | 0.926 | 1.900 | 3.627 |
-| 12/3 | 0.060 | 0.079 | 0.192 | 0.646 | 1.260 | 2.531 | 5.077 |
-| 16/4 | 0.060 | 0.080 | 0.193 | 0.642 | 1.271 | 2.540 | 5.147 |
-| 24/6 | 0.063 | 0.083 | 0.199 | 0.674 | 1.332 | 2.701 | 5.408 |
-| 24/8 | 0.061 | 0.082 | 0.198 | 0.674 | 1.354 | 2.762 | 5.510 |
-| 32/8 | 0.091 | 0.131 | 0.356 | 1.303 | 2.564 | 5.182 | 10.333 |
-| 48/12 | 0.093 | 0.132 | 0.360 | 1.329 | 2.707 | 5.418 | 10.828 |
-| 48/16 | 0.092 | 0.133 | 0.360 | 1.353 | 2.803 | 5.556 | 11.092 |
-| 64/16 | 0.125 | 0.182 | 0.520 | 1.998 | 4.025 | 8.042 | 16.170 |
+| 8/2 | 0.061 | 0.079 | 0.192 | 0.625 | 1.242 | 2.426 | 5.045 |
+| 12/3 | 0.060 | 0.080 | 0.195 | 0.657 | 1.285 | 2.590 | 5.200 |
+| 16/4 | 0.059 | 0.080 | 0.197 | 0.664 | 1.312 | 2.621 | 5.339 |
+| 24/6 | 0.062 | 0.083 | 0.200 | 0.681 | 1.362 | 2.774 | 5.607 |
+| 24/8 | 0.062 | 0.084 | 0.202 | 0.696 | 1.390 | 2.846 | 5.684 |
+| 32/8 | 0.093 | 0.133 | 0.366 | 1.334 | 2.659 | 5.394 | 10.688 |
+| 48/12 | 0.095 | 0.134 | 0.368 | 1.377 | 2.789 | 5.615 | 11.141 |
+| 48/16 | 0.093 | 0.133 | 0.366 | 1.391 | 2.885 | 5.717 | 11.415 |
+| 64/16 | 0.127 | 0.187 | 0.535 | 2.059 | 4.153 | 8.277 | 16.569 |
 
 ## Measurement and acceptance
 
