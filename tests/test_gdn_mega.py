@@ -201,9 +201,7 @@ def _run_gdn_mega(q, k, v, g, beta, cu_seqlens, initial_state=None):
     block_dim = max(
         1, int(getattr(torch.npu.get_device_properties(device), "cube_core_num", 24))
     )
-    kkt_workspace = torch.zeros(
-        block_dim * 2, C, C, device=device, dtype=torch.float16
-    )
+    kkt_workspace = torch.zeros(block_dim * 2, C, C, device=device, dtype=torch.float16)
     wy_workspace_a1 = torch.zeros(block_dim, C, C, device=device, dtype=torch.float16)
     wy_workspace_a2 = torch.zeros_like(wy_workspace_a1)
     h_workspace = torch.zeros(
@@ -274,9 +272,9 @@ def _assert_close(name: str, actual: torch.Tensor, expected: torch.Tensor) -> No
     rmse = torch.sqrt((diff.flatten() ** 2).mean()).item()
     base = torch.sqrt((expected.float().cpu().flatten() ** 2).mean()).item()
     ratio = rmse / max(base, 1e-8)
-    assert ratio < MAX_RMSE_RATIO, (
-        f"{name}: max_abs={max_abs:.6f} rmse_ratio={ratio:.6f}"
-    )
+    assert (
+        ratio < MAX_RMSE_RATIO
+    ), f"{name}: max_abs={max_abs:.6f} rmse_ratio={ratio:.6f}"
 
 
 def _make_inputs(seq_len, num_value_heads, num_key_heads, seed=0):
@@ -355,9 +353,7 @@ def test_gdn_mega_with_initial_state(npu_device):
     num_value_heads = num_key_heads = 16
     q, k, v, g, beta = _make_inputs(seq_len, num_value_heads, num_key_heads)
     cu_seqlens = torch.tensor([0, seq_len], dtype=torch.int32, device=npu_device)
-    initial_state = (
-        torch.randn(1, num_value_heads, D, D, dtype=torch.float16) * 0.1
-    )
+    initial_state = torch.randn(1, num_value_heads, D, D, dtype=torch.float16) * 0.1
 
     actual, actual_final = _run_gdn_mega(
         q.to(npu_device),
