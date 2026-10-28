@@ -51,7 +51,7 @@ or an additional launch. File count does not equal stage count.
 
 | File | Used for |
 |---|---|
-| `kernel_gdn_mega.cpp` | Setup, shape-based worker partition, entry and head dispatch |
+| `kernel_gdn_mega.cpp` | Setup, head-worker loop, entry and head dispatch |
 | `common.hpp` | Synchronization, packed I/O and sequence indexing |
 | `gate_scan.hpp` | Compensated prefix scan and gate/beta layout conversion |
 | `shared_grams.hpp` | Shared FP32 KKᵀ/QKᵀ with pipelined input loads |
@@ -59,7 +59,7 @@ or an additional launch. File count does not equal stage count.
 | `recurrence_pipeline.hpp` | Original-input × paired-state products and native FP32 block joins |
 | `fused_pipeline.hpp` | Preparation overlap, recurrent state and output |
 
-All seven files are used by the entry point. Shape-based scheduling is internal;
+All seven files are used by the entry point. Every shape uses the same head schedule;
 there are no probe kernels, runtime accuracy knobs, or selectable tuning configurations. Compiler architecture and
 cube/vector guards remain necessary. Hardware validation is on Ascend 910B2;
 the inherited A5 synchronization path is not a verified implementation.
@@ -100,26 +100,17 @@ existing shapes, as demonstrated by `_prepare_gdn_mega` in
 
 ## Build and verify
 
+From the repository root in CANN:
+
 ```bash
-bash scripts/gdn_mega_docker.sh bash scripts/build_gdn_mega.sh
-bash scripts/gdn_mega_docker.sh python -m pytest \
-  tests/test_gdn_mega.py tests/test_gdn_mega_validation.py \
-  tests/test_gdn_mega_errors.py tests/test_gdn_mega_benchmark.py -q
-bash scripts/gdn_mega_docker.sh python benchmarking/audit_gdn_mega.py \
-  --suite all --output benchmark_data/gdn_mega/current_accuracy.json
-bash scripts/gdn_mega_docker.sh timeout 600 python benchmarking/gdn_mega.py \
-  --initial-state --lengths 128 4096 8192 16384 32768 \
-  --output benchmark_data/gdn_mega/current_performance.json
+python benchmarking/gdn_mega.py build
+python benchmarking/gdn_mega.py test --library build/gdn_candidate
+python benchmarking/gdn_mega.py bench --library build/gdn_candidate
 ```
 
-The independent oracle is CPU FP64 token recurrence. Acceptance checks every
-raw-output and final-state element against `1e-4 + 1e-3*abs(reference)`, as well
-as relative RMSE < 0.005, finiteness, exact shapes, guarded outputs, unchanged
-inputs, and repeated launches with poisoned scratch. The user approved raising
-atol from1e-5 to1e-4; rtol and the other checks are unchanged. All160 cases run
-by default, with explicit boundary tests rejecting errors beyond the new budget.
-Historical RMSE-only timing results in the
-[report index](../../../docs/gdn_mega/README.md) are not certificates
-for this stricter policy. Current milestones and remaining limitations are
-recorded in [`success.md`](../../../success.md) and
-[`memory.md`](../../../memory.md).
+All 264 tests, including 178 fixed numerical cases, live in
+`tests/test_gdn_mega.py`. Every raw-output and final-state element is checked
+against the independent CPU FP64 recurrence under `1e-4 + 1e-3*abs(reference)`,
+with finiteness, RMSE, memory guards, input integrity and poisoned scratch.
+See the [GDN README](../../../docs/gdn_mega/README.md) for Docker setup,
+quick/full verification, heatmaps and profiling commands.
