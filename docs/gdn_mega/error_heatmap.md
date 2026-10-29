@@ -34,5 +34,5 @@ not a numerical fix. Failures were often small absolute errors near zero;
 maximum error alone can also be dominated by unavoidable FP16 output rounding.
 No clipping or case-specific thresholds are used.
 
-See [README](README.md) for validation/reproduction and [input ranges](input_ranges.md)
-for the captured workload.
+Use the [benchmark tool](../../benchmarking/gdn_mega.py) (`python benchmarking/gdn_mega.py test`)
+for validation. See [input ranges](input_ranges.md) for the captured workload.

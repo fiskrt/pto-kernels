@@ -62,4 +62,4 @@ recurrence with fixed atol=1e-4 and rtol=1e-3, plus finiteness and RMSE checks.
 This is a mixed bound, not a maximum absolute error of 1e-4 for all magnitudes.
 The user approved increasing the historical atol from 1e-5; previously failing
 stress cases remain regular tests. See the [error heatmap](error_heatmap.md)
-for scope and [README](README.md) for exact commands.
+for scope. Run `python benchmarking/gdn_mega.py test` for the full test suite.

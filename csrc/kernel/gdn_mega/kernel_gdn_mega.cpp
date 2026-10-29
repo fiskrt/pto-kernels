@@ -2,7 +2,7 @@
 // Phase 1: gate prefix scan/layout and shared KK/QK products run concurrently.
 // Phase 2: a head-persistent pipeline overlaps next-chunk inverse preparation
 // with residual, state and output products for every input.
-// See README.md for the file map and workspace contract.
+// See csrc/host/torch_gdn_mega.h for the caller workspace contract.
 #ifndef GM_ADDR
 #define GM_ADDR __gm__ uint8_t*
 #endif

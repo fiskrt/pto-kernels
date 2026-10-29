@@ -1,7 +1,7 @@
 """Build, verify, benchmark and plot GDN mega. Run inside the CANN environment.
 
 Raw measurements go to ignored benchmark_data/. Only Markdown and two PNGs
-are published to docs/gdn_mega. See its README for Docker and CLI examples.
+are published to docs/gdn_mega. Use --help for commands and settings.
 """
 
 import argparse
@@ -600,7 +600,7 @@ def render(data, directory):
     import numpy as np
 
     pairs, lengths, cells = validate_report(data)
-    readme_link = os.path.relpath(ROOT / "docs/gdn_mega/README.md", directory)
+    benchmark_link = os.path.relpath(ROOT / "benchmarking/gdn_mega.py", directory)
     ranges_link = os.path.relpath(ROOT / "docs/gdn_mega/input_ranges.md", directory)
     figures = directory / "figures"
     figures.mkdir(parents=True, exist_ok=True)
@@ -792,8 +792,8 @@ It was removed for simplicity, saving 153 source lines; shared factored and
 asynchronous joins remain. This is a historical comparison, not a guarantee
 for arbitrary candidate libraries supplied to this script.
 
-See [README]({readme_link}) for reproduction. Raw run files are intentionally
-excluded from the documentation tree.
+Use the [benchmark tool]({benchmark_link}) (`python benchmarking/gdn_mega.py --help`)
+for reproduction. Raw run files are intentionally excluded from the documentation tree.
 """
     (directory / "heatmap.md").write_text(latency)
     text = f"""# GDN absolute-error heatmap
@@ -827,8 +827,8 @@ not a numerical fix. Failures were often small absolute errors near zero;
 maximum error alone can also be dominated by unavoidable FP16 output rounding.
 No clipping or case-specific thresholds are used.
 
-See [README]({readme_link}) for validation/reproduction and [input ranges]({ranges_link})
-for the captured workload.
+Use the [benchmark tool]({benchmark_link}) (`python benchmarking/gdn_mega.py test`)
+for validation. See [input ranges]({ranges_link}) for the captured workload.
 """
     (directory / "error_heatmap.md").write_text(text)
     print(f"Saved two PNGs and heatmap Markdown to {directory}")

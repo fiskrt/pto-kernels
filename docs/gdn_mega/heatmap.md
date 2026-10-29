@@ -67,5 +67,5 @@ It was removed for simplicity, saving 153 source lines; shared factored and
 asynchronous joins remain. This is a historical comparison, not a guarantee
 for arbitrary candidate libraries supplied to this script.
 
-See [README](README.md) for reproduction. Raw run files are intentionally
-excluded from the documentation tree.
+Use the [benchmark tool](../../benchmarking/gdn_mega.py) (`python benchmarking/gdn_mega.py --help`)
+for reproduction. Raw run files are intentionally excluded from the documentation tree.
