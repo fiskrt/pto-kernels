@@ -91,21 +91,21 @@ def main():
     manifest = args.output / "launch.json"
     manifest.write_text(
         json.dumps(
-            dict(
-                head_configs=[pair],
-                lengths=[length],
-                output=str((args.output / "accuracy.json").resolve()),
-                library_sha256=sha256(args.library / "libno_workspace_kernel.so"),
-                settings=dict(
-                    device=environment["NPU_DEVICE"],
-                    initial_state=True,
-                    gate_scale=1.0,
-                    trials=1,
-                    inner=1,
-                    profile_once=True,
-                    time_failed=False,
-                ),
-            ),
+            {
+                "head_configs": [pair],
+                "lengths": [length],
+                "output": str((args.output / "accuracy.json").resolve()),
+                "library_sha256": sha256(args.library / "libno_workspace_kernel.so"),
+                "settings": {
+                    "device": environment["NPU_DEVICE"],
+                    "initial_state": True,
+                    "gate_scale": 1.0,
+                    "trials": 1,
+                    "inner": 1,
+                    "profile_once": True,
+                    "time_failed": False,
+                },
+            },
             indent=2,
         )
         + "\n"
@@ -143,10 +143,10 @@ def main():
         )
     (args.output / "accuracy.json").write_text(
         json.dumps(
-            dict(
-                library_sha256=sha256(args.library / "libno_workspace_kernel.so"),
-                checks=checks,
-            ),
+            {
+                "library_sha256": sha256(args.library / "libno_workspace_kernel.so"),
+                "checks": checks,
+            },
             indent=2,
         )
         + "\n"

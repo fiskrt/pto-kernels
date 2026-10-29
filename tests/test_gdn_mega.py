@@ -6,6 +6,7 @@ The benchmark imports the same input/ABI helpers and acceptance policy.
 The FP32 chunked reference is retained only as an additional cross-check;
 all 178 adversarial audit cases use the independent FP64 token recurrence.
 """
+from functools import partial
 import hashlib
 import importlib.util
 import inspect
@@ -28,7 +29,7 @@ def verify_selected_kernel():
     if expected:
         libraries = {
             line.split()[-1]
-            for line in Path("/proc/self/maps").read_text().splitlines()
+            for line in Path("/proc/self/maps").read_text(encoding="utf-8").splitlines()
             if line.split()[-1].endswith("/libno_workspace_kernel.so")
         }
         assert len(libraries) == 1
@@ -112,9 +113,11 @@ def shared_reference(path, identity, compute):
             temporary_path = Path(temporary.name)
         try:
             torch.save(
-                dict(
-                    identity=identity, tensors=result, sha256=tensor_fingerprint(result)
-                ),
+                {
+                    "identity": identity,
+                    "tensors": result,
+                    "sha256": tensor_fingerprint(result),
+                },
                 temporary_path,
             )
             os.replace(temporary_path, path)
@@ -132,16 +135,16 @@ def cached_recurrent_reference(*inputs):
     directory = os.environ.get("GDN_REFERENCE_CACHE")
     if not directory:
         return recurrent_reference(*inputs)
-    identity = dict(
-        inputs=tensor_fingerprint(inputs),
-        torch_version=str(torch.__version__),
-        oracle_sha256=hashlib.sha256(
+    identity = {
+        "inputs": tensor_fingerprint(inputs),
+        "torch_version": str(torch.__version__),
+        "oracle_sha256": hashlib.sha256(
             inspect.getsource(recurrent_reference).encode()
         ).hexdigest(),
-    )
+    }
     key = hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()
     return shared_reference(
-        Path(directory) / f"{key}.pt", identity, lambda: recurrent_reference(*inputs)
+        Path(directory) / f"{key}.pt", identity, partial(recurrent_reference, *inputs)
     )
 
 
@@ -369,7 +372,7 @@ def _total_chunks(cu_seqlens) -> int:
 def _prepare_gdn_mega(q, k, v, g, beta, cu_seqlens, initial_state=None):
     """Allocate once; return keyword arguments reusable across kernel launches."""
     device = q.device
-    _, total_tokens, num_key_heads, head_dim = q.shape
+    _, total_tokens, _, head_dim = q.shape
     num_value_heads = v.shape[-2]
 
     q, k, v, beta = (t.half() for t in (q, k, v, beta))
@@ -432,43 +435,43 @@ def _prepare_gdn_mega(q, k, v, g, beta, cu_seqlens, initial_state=None):
     o_workspace_gated = torch.zeros_like(o_workspace_qk)
     out = torch.empty_like(v)
 
-    return dict(
-        q=q,
-        k=k,
-        v=v,
-        g=g,
-        beta=beta,
-        mask_lower=mask_lower,
-        mask_full=mask_full,
-        minus_identity=minus_identity,
-        cu_seqlens=cu32,
-        out=out,
-        g_sum=g_sum,
-        g_t=g_t,
-        beta_t=beta_t,
-        A=A,
-        A_inv_f32=A_inv_f32,
-        A_inv=A_inv,
-        w=w,
-        u=u,
-        s=h,
-        v_new=v_new,
-        final_state=final_state,
-        initial_state=initial_state,
-        has_initial_state=has_initial_state,
-        kkt_workspace=kkt_workspace,
-        wy_workspace_a1=wy_workspace_a1,
-        wy_workspace_a2=wy_workspace_a2,
-        h_workspace=h_workspace,
-        o_workspace_qk=o_workspace_qk,
-        o_workspace_qs=o_workspace_qs,
-        o_workspace_gated=o_workspace_gated,
-        block_dim=block_dim,
-        batch_size=num_sequences,
-        seq_len=total_tokens,
-        total_tokens=total_tokens,
-        num_matrices=num_matrices,
-    )
+    return {
+        "q": q,
+        "k": k,
+        "v": v,
+        "g": g,
+        "beta": beta,
+        "mask_lower": mask_lower,
+        "mask_full": mask_full,
+        "minus_identity": minus_identity,
+        "cu_seqlens": cu32,
+        "out": out,
+        "g_sum": g_sum,
+        "g_t": g_t,
+        "beta_t": beta_t,
+        "A": A,
+        "A_inv_f32": A_inv_f32,
+        "A_inv": A_inv,
+        "w": w,
+        "u": u,
+        "s": h,
+        "v_new": v_new,
+        "final_state": final_state,
+        "initial_state": initial_state,
+        "has_initial_state": has_initial_state,
+        "kkt_workspace": kkt_workspace,
+        "wy_workspace_a1": wy_workspace_a1,
+        "wy_workspace_a2": wy_workspace_a2,
+        "h_workspace": h_workspace,
+        "o_workspace_qk": o_workspace_qk,
+        "o_workspace_qs": o_workspace_qs,
+        "o_workspace_gated": o_workspace_gated,
+        "block_dim": block_dim,
+        "batch_size": num_sequences,
+        "seq_len": total_tokens,
+        "total_tokens": total_tokens,
+        "num_matrices": num_matrices,
+    }
 
 
 def _run_gdn_mega(q, k, v, g, beta, cu_seqlens, initial_state=None):
@@ -669,7 +672,9 @@ def test_gdn_mega_changing_decay(npu_device):
         inputs[3][:, chunk * C : (chunk + 1) * C] *= gate_scale
     initial = torch.randn(1, 16, D, D, dtype=torch.float16) * 0.1
     q, k = _expand_kv_heads(inputs[0], inputs[1], 16)
-    expected, expected_state = _reference(q, k, *inputs[2:], initial_state=initial)
+    expected, expected_state = _reference(
+        q, k, inputs[2], inputs[3], inputs[4], initial_state=initial
+    )
     args = _prepare_gdn_mega(
         *(t.to(npu_device) for t in inputs),
         torch.tensor([0, 512], dtype=torch.int32, device=npu_device),
@@ -687,146 +692,149 @@ def test_gdn_mega_changing_decay(npu_device):
 # Fixed before evaluating the kernel: no tuning the oracle or tolerances to results.
 # fmt: off
 STANDARD_CASES = [
-    dict(name="ordinary_seed2027", seed=2027, lengths=(257,), heads=16, key_heads=4),
-    dict(name="weak_seed119", seed=119, lengths=(513,), heads=16, key_heads=4, gate_scale=.01),
-    dict(name="no_decay", seed=911, lengths=(257,), heads=8, key_heads=8, gate_scale=0.),
-    dict(name="zero_state_tail", seed=1709, lengths=(129,), heads=12, key_heads=3, initial=False),
-    dict(name="packed_empty", seed=31, lengths=(0, 1, 127, 0, 129, 0), heads=16, key_heads=4, gate_scale=.01),
-    dict(name="packed_empty_zero_state", seed=313, lengths=(0, 1, 129, 0), heads=8, key_heads=2, initial=False),
-    dict(name="large_values_and_state", seed=191, lengths=(257,), heads=8, key_heads=2, amplitude=32.),
-    dict(name="tiny_values_and_state", seed=509, lengths=(257,), heads=8, key_heads=2, amplitude=1e-3),
-    dict(name="zero_beta_no_decay", seed=809, lengths=(257,), heads=8, key_heads=2, gate_scale=0., beta=0.),
-    dict(name="zero_query", seed=811, lengths=(257,), heads=8, key_heads=2, zero_query=True),
-    dict(name="zero_values_and_state", seed=821, lengths=(257,), heads=8, key_heads=2, amplitude=0.),
-    dict(name="correlated_beta002", seed=823, lengths=(256,), heads=8, key_heads=2, correlated=True, gate_scale=0., beta=.02),
-    dict(name="correlated_beta05", seed=827, lengths=(256,), heads=8, key_heads=2, correlated=True, gate_scale=0., beta=.5),
-    dict(name="correlated_beta1", seed=829, lengths=(256,), heads=8, key_heads=2, correlated=True, gate_scale=0., beta=1.),
-    dict(name="mixed_decay", seed=839, lengths=(513,), heads=8, key_heads=2, mixed=True),
-    dict(name="equal_heads64", seed=853, lengths=(129,), heads=64, key_heads=64),
-    dict(name="single_key_head", seed=857, lengths=(129,), heads=24, key_heads=1),
-    dict(name="keys_norm2_stable_beta", seed=859, lengths=(257,), heads=8, key_heads=2, key_scale=2., beta=.1),
-    dict(name="long_8k_weak", seed=863, lengths=(8192,), heads=8, key_heads=2, gate_scale=.01),
-    dict(name="long_32k", seed=877, lengths=(32768,), heads=8, key_heads=2),
-    dict(name="correlated_random_beta09", seed=883, lengths=(513,), heads=8, key_heads=2,
-         correlated_random=True, gate_scale=0., beta=.9, amplitude=32.),
-    dict(name="nearly_correlated_beta1", seed=887, lengths=(257,), heads=16, key_heads=4,
-         nearly_correlated=True, gate_scale=0., beta=1., amplitude=32.),
-    dict(name="positive_log_gates", seed=907, lengths=(257,), heads=8, key_heads=2, gate_scale=-.01),
-    dict(name="long_16k_no_decay", seed=919, lengths=(16384,), heads=8, key_heads=2, gate_scale=0.),
-    dict(name="delayed_nearly_correlated", seed=929, lengths=(385,), heads=8, key_heads=2,
-         nearly_correlated=True, correlated_after=128, gate_scale=0., beta=1., amplitude=32.),
-    dict(name="strong_correlated_decay", seed=937, lengths=(257,), heads=8, key_heads=2,
-         nearly_correlated=True, gate_scale=.01, beta=.9, amplitude=32.),
+    {"name": "ordinary_seed2027", "seed": 2027, "lengths": (257,), "heads": 16, "key_heads": 4},
+    {"name": "weak_seed119", "seed": 119, "lengths": (513,), "heads": 16, "key_heads": 4, "gate_scale": .01},
+    {"name": "no_decay", "seed": 911, "lengths": (257,), "heads": 8, "key_heads": 8, "gate_scale": 0.},
+    {"name": "zero_state_tail", "seed": 1709, "lengths": (129,), "heads": 12, "key_heads": 3, "initial": False},
+    {"name": "packed_empty", "seed": 31, "lengths": (0, 1, 127, 0, 129, 0), "heads": 16, "key_heads": 4, "gate_scale": .01},
+    {"name": "packed_empty_zero_state", "seed": 313, "lengths": (0, 1, 129, 0), "heads": 8, "key_heads": 2, "initial": False},
+    {"name": "large_values_and_state", "seed": 191, "lengths": (257,), "heads": 8, "key_heads": 2, "amplitude": 32.},
+    {"name": "tiny_values_and_state", "seed": 509, "lengths": (257,), "heads": 8, "key_heads": 2, "amplitude": 1e-3},
+    {"name": "zero_beta_no_decay", "seed": 809, "lengths": (257,), "heads": 8, "key_heads": 2, "gate_scale": 0., "beta": 0.},
+    {"name": "zero_query", "seed": 811, "lengths": (257,), "heads": 8, "key_heads": 2, "zero_query": True},
+    {"name": "zero_values_and_state", "seed": 821, "lengths": (257,), "heads": 8, "key_heads": 2, "amplitude": 0.},
+    {"name": "correlated_beta002", "seed": 823, "lengths": (256,), "heads": 8, "key_heads": 2,
+     "correlated": True, "gate_scale": 0., "beta": .02},
+    {"name": "correlated_beta05", "seed": 827, "lengths": (256,), "heads": 8, "key_heads": 2,
+     "correlated": True, "gate_scale": 0., "beta": .5},
+    {"name": "correlated_beta1", "seed": 829, "lengths": (256,), "heads": 8, "key_heads": 2,
+     "correlated": True, "gate_scale": 0., "beta": 1.},
+    {"name": "mixed_decay", "seed": 839, "lengths": (513,), "heads": 8, "key_heads": 2, "mixed": True},
+    {"name": "equal_heads64", "seed": 853, "lengths": (129,), "heads": 64, "key_heads": 64},
+    {"name": "single_key_head", "seed": 857, "lengths": (129,), "heads": 24, "key_heads": 1},
+    {"name": "keys_norm2_stable_beta", "seed": 859, "lengths": (257,), "heads": 8, "key_heads": 2, "key_scale": 2., "beta": .1},
+    {"name": "long_8k_weak", "seed": 863, "lengths": (8192,), "heads": 8, "key_heads": 2, "gate_scale": .01},
+    {"name": "long_32k", "seed": 877, "lengths": (32768,), "heads": 8, "key_heads": 2},
+    {"name": "correlated_random_beta09", "seed": 883, "lengths": (513,), "heads": 8, "key_heads": 2,
+         "correlated_random": True, "gate_scale": 0., "beta": .9, "amplitude": 32.},
+    {"name": "nearly_correlated_beta1", "seed": 887, "lengths": (257,), "heads": 16, "key_heads": 4,
+         "nearly_correlated": True, "gate_scale": 0., "beta": 1., "amplitude": 32.},
+    {"name": "positive_log_gates", "seed": 907, "lengths": (257,), "heads": 8, "key_heads": 2, "gate_scale": -.01},
+    {"name": "long_16k_no_decay", "seed": 919, "lengths": (16384,), "heads": 8, "key_heads": 2, "gate_scale": 0.},
+    {"name": "delayed_nearly_correlated", "seed": 929, "lengths": (385,), "heads": 8, "key_heads": 2,
+         "nearly_correlated": True, "correlated_after": 128, "gate_scale": 0., "beta": 1., "amplitude": 32.},
+    {"name": "strong_correlated_decay", "seed": 937, "lengths": (257,), "heads": 8, "key_heads": 2,
+         "nearly_correlated": True, "gate_scale": .01, "beta": .9, "amplitude": 32.},
     # Distribution families from FLA test_gdn.py at 12cb9d4, adapted to our
     # FP16 input/state ABI and D128. Keep our independent FP64 oracle/policy.
-    dict(name="fla_positive_no_decay", seed=42, lengths=(1024,), heads=8, key_heads=2,
-         fla="positive", gate_mask=1., initial=False),
-    dict(name="fla_positive_weak", seed=43, lengths=(1500,), heads=8, key_heads=2,
-         fla="positive", gate_normalizer=10., initial=False),
-    dict(name="fla_positive_strong", seed=44, lengths=(257,), heads=8, key_heads=2,
-         fla="positive", gate_normalizer=.01, initial=False),
-    dict(name="fla_positive_masked", seed=45, lengths=(513,), heads=8, key_heads=2,
-         fla="positive", gate_mask=.5, initial=False),
-    dict(name="fla_gaussian_initial", seed=46, lengths=(1024,), heads=8, key_heads=2,
-         fla="gaussian", gate_normalizer=10., state_scale=1.),
-    dict(name="fla_negative_eigenvalues", seed=47, lengths=(513,), heads=8, key_heads=2,
-         fla="positive", beta_logits=True, negative_eigenvalues=True, initial=False),
-    dict(name="fla_gate_activation", seed=48, lengths=(513,), heads=8, key_heads=2,
-         fla="positive", gate_activation=True, initial=False),
-    dict(name="fla_gaussian_logits", seed=49, lengths=(513,), heads=8, key_heads=2,
-         fla="gaussian", beta_logits=True, gate_logits=True, state_scale=1.),
-    dict(name="fla_positive_strong_tail75", seed=51, lengths=(75,), heads=8, key_heads=2,
-         fla="positive", gate_normalizer=.01, initial=False),
-    dict(name="strong_decay_tail92", seed=53, lengths=(92,), heads=8, key_heads=2, gate_scale=4.),
+    {"name": "fla_positive_no_decay", "seed": 42, "lengths": (1024,), "heads": 8, "key_heads": 2,
+         "fla": "positive", "gate_mask": 1., "initial": False},
+    {"name": "fla_positive_weak", "seed": 43, "lengths": (1500,), "heads": 8, "key_heads": 2,
+         "fla": "positive", "gate_normalizer": 10., "initial": False},
+    {"name": "fla_positive_strong", "seed": 44, "lengths": (257,), "heads": 8, "key_heads": 2,
+         "fla": "positive", "gate_normalizer": .01, "initial": False},
+    {"name": "fla_positive_masked", "seed": 45, "lengths": (513,), "heads": 8, "key_heads": 2,
+         "fla": "positive", "gate_mask": .5, "initial": False},
+    {"name": "fla_gaussian_initial", "seed": 46, "lengths": (1024,), "heads": 8, "key_heads": 2,
+         "fla": "gaussian", "gate_normalizer": 10., "state_scale": 1.},
+    {"name": "fla_negative_eigenvalues", "seed": 47, "lengths": (513,), "heads": 8, "key_heads": 2,
+         "fla": "positive", "beta_logits": True, "negative_eigenvalues": True, "initial": False},
+    {"name": "fla_gate_activation", "seed": 48, "lengths": (513,), "heads": 8, "key_heads": 2,
+         "fla": "positive", "gate_activation": True, "initial": False},
+    {"name": "fla_gaussian_logits", "seed": 49, "lengths": (513,), "heads": 8, "key_heads": 2,
+         "fla": "gaussian", "beta_logits": True, "gate_logits": True, "state_scale": 1.},
+    {"name": "fla_positive_strong_tail75", "seed": 51, "lengths": (75,), "heads": 8, "key_heads": 2,
+         "fla": "positive", "gate_normalizer": .01, "initial": False},
+    {"name": "strong_decay_tail92", "seed": 53, "lengths": (92,), "heads": 8, "key_heads": 2, "gate_scale": 4.},
 ]
 
 # Fixed before evaluation. All critical cases obey the user's beta range [0,1].
 # Named groups allow standalone audit subsets; ordinary pytest runs all groups.
 CRITICAL_CASES = [
-    dict(name=f'critical_boundary_{rate}_{amplitude}', seed=3001, lengths=(513,), heads=8, key_heads=2,
-         correlated=True, beta=rate, gate_scale=0., amplitude=amplitude, state_scale=1.)
+    {"name": f'critical_boundary_{rate}_{amplitude}', "seed": 3001, "lengths": (513,), "heads": 8, "key_heads": 2,
+         "correlated": True, "beta": rate, "gate_scale": 0., "amplitude": amplitude, "state_scale": 1.}
     for rate in (.499755859375, .5, .50048828125, 1.) for amplitude in (1., 32.)
 ] + [
-    dict(name=f'critical_tiny_gate_{gate}_{length}', seed=3007, lengths=(length,), heads=8, key_heads=2,
-         correlated=True, beta=1., constant_log_gate=gate, state_scale=1.)
+    {"name": f'critical_tiny_gate_{gate}_{length}', "seed": 3007, "lengths": (length,), "heads": 8, "key_heads": 2,
+         "correlated": True, "beta": 1., "constant_log_gate": gate, "state_scale": 1.}
     for gate in (-1e-8, -1e-7, -1e-6) for length in (4097, 32768)
 ] + [
-    dict(name=f'critical_nearly_correlated_{seed}_{amplitude}', seed=seed, lengths=(1025,), heads=8, key_heads=2,
-         nearly_correlated=True, beta=1., constant_log_gate=-1e-6, amplitude=amplitude, state_scale=1.)
+    {"name": f'critical_nearly_correlated_{seed}_{amplitude}', "seed": seed, "lengths": (1025,), "heads": 8, "key_heads": 2,
+         "nearly_correlated": True, "beta": 1., "constant_log_gate": -1e-6, "amplitude": amplitude, "state_scale": 1.}
     for seed in (3011, 3019, 3023) for amplitude in (1., 32., 128.)
 ] + [
-    dict(name=f'critical_gaussian_{rate}_{gate}', seed=3037, lengths=(4097,), heads=8, key_heads=2,
-         beta=rate, constant_log_gate=gate, state_scale=1.)
+    {"name": f'critical_gaussian_{rate}_{gate}', "seed": 3037, "lengths": (4097,), "heads": 8, "key_heads": 2,
+         "beta": rate, "constant_log_gate": gate, "state_scale": 1.}
     for rate in (0., .5, 1.) for gate in (0., -1e-6, -80.)
 ] + [
-    dict(name=f'critical_group_{heads}_{keys}', seed=3041, lengths=(1025,), heads=heads, key_heads=keys,
-         beta=1., constant_log_gate=-1e-6, state_scale=1.)
+    {"name": f'critical_group_{heads}_{keys}', "seed": 3041, "lengths": (1025,), "heads": heads, "key_heads": keys,
+         "beta": 1., "constant_log_gate": -1e-6, "state_scale": 1.}
     for heads, keys in ((24, 8), (48, 16), (64, 16))
 ] + [
-    dict(name=f'critical_positive_{seed}', seed=seed, lengths=(4097,), heads=8, key_heads=2,
-         fla='positive', beta=1., constant_log_gate=-1e-6, state_scale=1.)
+    {"name": f'critical_positive_{seed}', "seed": seed, "lengths": (4097,), "heads": 8, "key_heads": 2,
+         "fla": 'positive', "beta": 1., "constant_log_gate": -1e-6, "state_scale": 1.}
     for seed in (3049, 3061)
 ] + [
-    dict(name='critical_random_beta_32k', seed=3067, lengths=(32768,), heads=8, key_heads=2,
-         constant_log_gate=-1e-6, state_scale=1.),
-    dict(name='critical_alternating_beta', seed=3079, lengths=(4097,), heads=8, key_heads=2,
-         nearly_correlated=True, alternating_beta=True, constant_log_gate=-1e-7, state_scale=1.),
-    dict(name='critical_packed', seed=3083, lengths=(0, 127, 128, 129, 0, 513), heads=24, key_heads=8,
-         beta=1., constant_log_gate=-1e-6, state_scale=1.),
-    dict(name='critical_zero_initial', seed=3089, lengths=(4097,), heads=8, key_heads=2,
-         nearly_correlated=True, beta=1., constant_log_gate=-1e-6, initial=False),
-    dict(name='critical_large_static_state', seed=3109, lengths=(1025,), heads=8, key_heads=2,
-         beta=0., gate_scale=0., state_scale=128.),
+    {"name": 'critical_random_beta_32k', "seed": 3067, "lengths": (32768,), "heads": 8, "key_heads": 2,
+         "constant_log_gate": -1e-6, "state_scale": 1.},
+    {"name": 'critical_alternating_beta', "seed": 3079, "lengths": (4097,), "heads": 8, "key_heads": 2,
+         "nearly_correlated": True, "alternating_beta": True, "constant_log_gate": -1e-7, "state_scale": 1.},
+    {"name": 'critical_packed', "seed": 3083, "lengths": (0, 127, 128, 129, 0, 513), "heads": 24, "key_heads": 8,
+         "beta": 1., "constant_log_gate": -1e-6, "state_scale": 1.},
+    {"name": 'critical_zero_initial', "seed": 3089, "lengths": (4097,), "heads": 8, "key_heads": 2,
+         "nearly_correlated": True, "beta": 1., "constant_log_gate": -1e-6, "initial": False},
+    {"name": 'critical_large_static_state', "seed": 3109, "lengths": (1025,), "heads": 8, "key_heads": 2,
+         "beta": 0., "gate_scale": 0., "state_scale": 128.},
 ]
 
 
 # Matched controls added after the initial critical sweep to isolate failures.
 CRITICAL_CASES += [
-    dict(name='control_nearly_correlated_no_decay', seed=3011, lengths=(1025,), heads=8, key_heads=2,
-         nearly_correlated=True, beta=1., constant_log_gate=0., state_scale=1.),
-    dict(name='control_zero_initial_no_decay', seed=3089, lengths=(4097,), heads=8, key_heads=2,
-         nearly_correlated=True, beta=1., constant_log_gate=0., initial=False),
-    dict(name='control_coordinate_zero_initial', seed=3007, lengths=(32768,), heads=8, key_heads=2,
-         correlated=True, beta=1., constant_log_gate=-1e-7, initial=False),
-    dict(name='control_coordinate_beta_zero', seed=3007, lengths=(32768,), heads=8, key_heads=2,
-         correlated=True, beta=0., constant_log_gate=-1e-7, state_scale=1.),
-    dict(name='control_coordinate_no_decay', seed=3007, lengths=(32768,), heads=8, key_heads=2,
-         correlated=True, beta=1., constant_log_gate=0., state_scale=1.),
+    {"name": 'control_nearly_correlated_no_decay', "seed": 3011, "lengths": (1025,), "heads": 8, "key_heads": 2,
+         "nearly_correlated": True, "beta": 1., "constant_log_gate": 0., "state_scale": 1.},
+    {"name": 'control_zero_initial_no_decay', "seed": 3089, "lengths": (4097,), "heads": 8, "key_heads": 2,
+         "nearly_correlated": True, "beta": 1., "constant_log_gate": 0., "initial": False},
+    {"name": 'control_coordinate_zero_initial', "seed": 3007, "lengths": (32768,), "heads": 8, "key_heads": 2,
+         "correlated": True, "beta": 1., "constant_log_gate": -1e-7, "initial": False},
+    {"name": 'control_coordinate_beta_zero', "seed": 3007, "lengths": (32768,), "heads": 8, "key_heads": 2,
+         "correlated": True, "beta": 0., "constant_log_gate": -1e-7, "state_scale": 1.},
+    {"name": 'control_coordinate_no_decay', "seed": 3007, "lengths": (32768,), "heads": 8, "key_heads": 2,
+         "correlated": True, "beta": 1., "constant_log_gate": 0., "state_scale": 1.},
 ]
 
 
 # Interior rates distinguish endpoint behavior from the supported interval.
 CRITICAL_CASES += [
-    dict(name=f'interior_beta_{rate}_{kind}', seed=3163, lengths=(4097,), heads=8, key_heads=2,
-         **{kind: True}, beta=rate, constant_log_gate=-1e-7, state_scale=1.)
+    {"name": f'interior_beta_{rate}_{kind}', "seed": 3163, "lengths": (4097,), "heads": 8, "key_heads": 2,
+         kind: True, "beta": rate, "constant_log_gate": -1e-7, "state_scale": 1.}
     for rate in (.25, .5, .6, .9) for kind in ('correlated', 'nearly_correlated')
 ] + [
-    dict(name='interior_random_beta_correlated', seed=3163, lengths=(4097,), heads=8, key_heads=2,
-         correlated=True, constant_log_gate=-1e-7, state_scale=1.)
+    {"name": 'interior_random_beta_correlated', "seed": 3163, "lengths": (4097,), "heads": 8, "key_heads": 2,
+         "correlated": True, "constant_log_gate": -1e-7, "state_scale": 1.}
 ]
 
 
 # Matched unit-scale sweep: correlation is varied without changing Q/V/h0.
 # These are synthetic sensitivity measurements, not measured model inputs.
 CORRELATION_CASES = [
-    dict(name=f"correlation_rho{rho}_beta{rate}_g{gate}", seed=3827,
-         lengths=(4096,), heads=8, key_heads=2, key_correlation=rho,
-         beta=rate, constant_log_gate=gate, state_scale=.1)
+    {"name": f"correlation_rho{rho}_beta{rate}_g{gate}", "seed": 3827,
+         "lengths": (4096,), "heads": 8, "key_heads": 2, "key_correlation": rho,
+         "beta": rate, "constant_log_gate": gate, "state_scale": .1}
     for rho in (0., .25, .5, .75, .95, 1.)
     for rate in (.5, 1.) for gate in (0., -.001, -.1, -1.)
 ] + [
-    dict(name=f"correlation_long_rho{rho}", seed=3827, lengths=(32768,),
-         heads=8, key_heads=2, key_correlation=rho, beta=1., constant_log_gate=0., state_scale=.1)
+    {"name": f"correlation_long_rho{rho}", "seed": 3827, "lengths": (32768,),
+         "heads": 8, "key_heads": 2, "key_correlation": rho, "beta": 1., "constant_log_gate": 0., "state_scale": .1}
     for rho in (.95, 1.)
 ] + [
-    dict(name=f"correlation_large_rho{rho}_g{gate}", seed=3827, lengths=(4096,),
-         heads=8, key_heads=2, key_correlation=rho, beta=1., constant_log_gate=gate,
-         amplitude=32., state_scale=.1)
+    {"name": f"correlation_large_rho{rho}_g{gate}", "seed": 3827, "lengths": (4096,),
+         "heads": 8, "key_heads": 2, "key_correlation": rho, "beta": 1., "constant_log_gate": gate,
+         "amplitude": 32., "state_scale": .1}
     for rho in (0., .25, .5, .75, .95, 1.) for gate in (0., -.001)
 ] + [
-    dict(name=f"correlation_initial_rho{rho}_g{gate}", seed=3827, lengths=(4096,),
-         heads=8, key_heads=2, key_correlation=rho, beta=1., constant_log_gate=gate,
-         state_scale=1.)
+    {"name": f"correlation_initial_rho{rho}_g{gate}", "seed": 3827, "lengths": (4096,),
+         "heads": 8, "key_heads": 2, "key_correlation": rho, "beta": 1., "constant_log_gate": gate,
+         "state_scale": 1.}
     for rho in (.75, .95, 1.) for gate in (0., -.001)
 ]
 
@@ -835,10 +843,10 @@ CORRELATION_CASES = [
 # partial tiles, from the former value-column scheduling implementation.
 # Existing critical cases cover H8/Hg2 at 1K–32K with extreme gates and beta.
 SCHEDULING_CASES = [
-    dict(name=f'parallel_columns_hg{keys}_t{length}_initial{initial}',
-         seed=4111, lengths=(length,), heads=8, key_heads=keys,
-         nearly_correlated=True, beta=1., constant_log_gate=-1e-6,
-         amplitude=32., initial=initial)
+    {"name": f'parallel_columns_hg{keys}_t{length}_initial{initial}',
+         "seed": 4111, "lengths": (length,), "heads": 8, "key_heads": keys,
+         "nearly_correlated": True, "beta": 1., "constant_log_gate": -1e-6,
+         "amplitude": 32., "initial": initial}
     for keys in (1, 4, 8) for length in (1024, 2048, 2139) for initial in (False, True)
 ]
 
@@ -859,41 +867,35 @@ READ_ONLY = (
 )
 
 
-def make_audit_inputs(case):
-    inputs = list(
-        _make_inputs(
-            sum(case["lengths"]), case["heads"], case["key_heads"], seed=case["seed"]
-        )
+def apply_fla_inputs(case, q, k, v, g, beta):
+    """Apply the FLA input distribution, preserving RNG call order."""
+    if case["fla"] == "positive":
+        q.copy_(torch.nn.functional.normalize(torch.rand_like(q), dim=-1))
+        k.copy_(torch.nn.functional.normalize(torch.rand_like(k), dim=-1))
+        v.copy_(torch.rand_like(v))
+    beta_source = torch.randn_like(g) if case.get("beta_logits") else torch.rand_like(g)
+    beta.copy_(
+        (beta_source.sigmoid() * (2 if case.get("negative_eigenvalues") else 1)).half()
     )
-    q, k, v, g, beta = inputs
+    gate_source = torch.randn_like(g) if case.get("gate_logits") else torch.rand_like(g)
+    g.copy_(
+        torch.nn.functional.logsigmoid(gate_source) / case.get("gate_normalizer", 1.0)
+    )
+    if "gate_mask" in case:
+        g.mul_(torch.rand_like(g) > case["gate_mask"])
+    if case.get("gate_activation"):
+        a_log = torch.randn(case["heads"])
+        bias = torch.randn(case["heads"])
+        g.copy_(-a_log.exp() * torch.nn.functional.softplus(torch.randn_like(g) + bias))
+
+
+def make_audit_inputs(case):
+    q, k, v, g, beta = _make_inputs(
+        sum(case["lengths"]), case["heads"], case["key_heads"], seed=case["seed"]
+    )
+    inputs = [q, k, v, g, beta]
     if "fla" in case:
-        if case["fla"] == "positive":
-            q.copy_(torch.nn.functional.normalize(torch.rand_like(q), dim=-1))
-            k.copy_(torch.nn.functional.normalize(torch.rand_like(k), dim=-1))
-            v.copy_(torch.rand_like(v))
-        beta_source = (
-            torch.randn_like(g) if case.get("beta_logits") else torch.rand_like(g)
-        )
-        beta.copy_(
-            (
-                beta_source.sigmoid() * (2 if case.get("negative_eigenvalues") else 1)
-            ).half()
-        )
-        gate_source = (
-            torch.randn_like(g) if case.get("gate_logits") else torch.rand_like(g)
-        )
-        g.copy_(
-            torch.nn.functional.logsigmoid(gate_source)
-            / case.get("gate_normalizer", 1.0)
-        )
-        if "gate_mask" in case:
-            g.mul_(torch.rand_like(g) > case["gate_mask"])
-        if case.get("gate_activation"):
-            a_log = torch.randn(case["heads"])
-            bias = torch.randn(case["heads"])
-            g.copy_(
-                -a_log.exp() * torch.nn.functional.softplus(torch.randn_like(g) + bias)
-            )
+        apply_fla_inputs(case, q, k, v, g, beta)
     g.mul_(case.get("gate_scale", 1.0))
     if "constant_log_gate" in case:
         g.fill_(case["constant_log_gate"])
@@ -981,7 +983,9 @@ def run_audit_case(case, device, *, prepared_inputs=None, benchmark=None):
             digest.update(str((tuple(tensor.shape), str(tensor.dtype))).encode())
             digest.update(memoryview(tensor.contiguous().numpy()).cast("B"))
     # Reference stays on the CPU and is never passed to the device/launch helper.
-    expected, expected_state = cached_recurrent_reference(*inputs, initial, cu)
+    expected, expected_state = cached_recurrent_reference(
+        inputs[0], inputs[1], inputs[2], inputs[3], inputs[4], initial, cu
+    )
     launch = _prepare_gdn_mega(
         *(x.to(device) for x in inputs),
         cu.to(device),
@@ -1156,15 +1160,15 @@ def test_independent_recurrence_and_memory(case, npu_device):
 
 
 def test_correlation_sweep_preserves_non_key_inputs():
-    base = dict(
-        seed=3827,
-        lengths=(1024,),
-        heads=8,
-        key_heads=2,
-        beta=1.0,
-        constant_log_gate=-0.001,
-        state_scale=0.1,
-    )
+    base = {
+        "seed": 3827,
+        "lengths": (1024,),
+        "heads": 8,
+        "key_heads": 2,
+        "beta": 1.0,
+        "constant_log_gate": -0.001,
+        "state_scale": 0.1,
+    }
     ordinary, initial, cu = make_audit_inputs(base)
     for rho in (0.0, 0.75, 1.0):
         inputs, state, lengths = make_audit_inputs(dict(base, key_correlation=rho))
@@ -1221,8 +1225,10 @@ def test_reference_analytic_two_tokens():
 def test_reference_correlated_beta_one_is_stable():
     case = next(c for c in AUDIT_CASES if c["name"] == "correlated_beta1")
     inputs, initial, cu = make_audit_inputs(case)
-    out, state = recurrent_reference(*inputs, initial, cu)
-    q, _ = _expand_kv_heads(*inputs[:2], case["heads"])
+    out, state = recurrent_reference(
+        inputs[0], inputs[1], inputs[2], inputs[3], inputs[4], initial, cu
+    )
+    q, _ = _expand_kv_heads(inputs[0], inputs[1], case["heads"])
     # With k=e_0, beta=1 and g=0, each step replaces precisely the first
     # state row with v_t; the other rows retain their initial values.
     analytic = torch.einsum("bthd,hde->bthe", q.double(), initial[0].double())
@@ -1240,9 +1246,11 @@ def test_chunked_reference_against_recurrence(seed, gate_scale):
     inputs = list(_make_inputs(257, 8, 2, seed))
     inputs[3].mul_(gate_scale)
     initial = torch.randn(1, 8, D, D, dtype=torch.float16) * 0.1
-    raw, state64 = recurrent_reference(*inputs, initial)
-    q, k = _expand_kv_heads(*inputs[:2], 8)
-    out, state = _reference(q, k, *inputs[2:], initial)
+    raw, state64 = recurrent_reference(
+        inputs[0], inputs[1], inputs[2], inputs[3], inputs[4], initial
+    )
+    q, k = _expand_kv_heads(inputs[0], inputs[1], 8)
+    out, state = _reference(q, k, inputs[2], inputs[3], inputs[4], initial)
     torch.testing.assert_close(out.double(), raw * D**-0.5, atol=1e-7, rtol=1e-5)
     torch.testing.assert_close(state.double(), state64, atol=1e-6, rtol=1e-5)
 
@@ -1361,7 +1369,9 @@ def test_reused_scratch_oracle_against_literal_fp64(gate, beta_value, initial_su
             state = state + k[0, t, :, :, None] * residual[:, None, :]
             expected[0, t] = (q[0, t, :, :, None] * state).sum(1)
         states.append(state)
-    actual, final = recurrent_reference(*inputs, initial, cu)
+    actual, final = recurrent_reference(
+        inputs[0], inputs[1], inputs[2], inputs[3], inputs[4], initial, cu
+    )
     torch.testing.assert_close(actual, expected, atol=1e-14, rtol=1e-14)
     torch.testing.assert_close(final, torch.stack(states), atol=1e-14, rtol=1e-14)
     assert all(torch.equal(a, b) for a, b in zip(inputs, snapshots))
@@ -1507,8 +1517,6 @@ def test_shared_golden_requires_matching_inputs_source_and_contents(
 def test_regression_golden_cache_invalidates_and_rejects_corruption(
     monkeypatch, tmp_path
 ):
-    import test_gdn_mega as validation
-
     monkeypatch.setenv("GDN_REFERENCE_CACHE", str(tmp_path))
     calls = []
 
@@ -1519,22 +1527,22 @@ def test_regression_golden_cache_invalidates_and_rejects_corruption(
             value.double().sum(),
         )
 
-    monkeypatch.setattr(validation, "recurrent_reference", compute)
+    monkeypatch.setitem(globals(), "recurrent_reference", compute)
     value = torch.arange(8, dtype=torch.float16)
-    first = validation.cached_recurrent_reference(value, None)
-    second = validation.cached_recurrent_reference(value.clone(), None)
+    first = cached_recurrent_reference(value, None)
+    second = cached_recurrent_reference(value.clone(), None)
     assert len(calls) == 1 and all(torch.equal(a, b) for a, b in zip(first, second))
-    validation.cached_recurrent_reference(value + 1, None)
-    validation.cached_recurrent_reference(value, torch.tensor(0.0))
+    cached_recurrent_reference(value + 1, None)
+    cached_recurrent_reference(value, torch.tensor(0.0))
     assert len(calls) == 3
     for path in tmp_path.glob("*.pt"):
         saved = torch.load(path, weights_only=True)
         saved["tensors"][0][0] += 1
         torch.save(saved, path)
     with pytest.raises(RuntimeError, match="mismatch"):
-        validation.cached_recurrent_reference(value, None)
+        cached_recurrent_reference(value, None)
     monkeypatch.delenv("GDN_REFERENCE_CACHE")
-    validation.cached_recurrent_reference(value, None)
+    cached_recurrent_reference(value, None)
     assert len(calls) == 4
 
 

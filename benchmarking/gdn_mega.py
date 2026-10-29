@@ -206,12 +206,12 @@ def build(source, destination, heads):
         ],
         check=True,
     )
-    return dict(
-        source_sha256=hashes,
-        heads=heads,
-        library_sha256=sha256(library),
-        build_seconds=time.perf_counter() - started,
-    )
+    return {
+        "source_sha256": hashes,
+        "heads": heads,
+        "library_sha256": sha256(library),
+        "build_seconds": time.perf_counter() - started,
+    }
 
 
 class AccuracyFailure(AssertionError):
@@ -229,11 +229,17 @@ def check_outputs(
     # Keep independent snapshots: even CPU test inputs may be mutated in place.
     raw = launch["out"].cpu().clone()
     state = launch["final_state"].cpu().view_as(expected_state).clone()
+    # Mutation counters prevent reusing metrics after in-place oracle changes.
+    # PyTorch exposes this counter only through Tensor._version.
+    versions = (
+        expected._version,  # pylint: disable=protected-access
+        expected_state._version,  # pylint: disable=protected-access
+    )
     if (
         previous is not None
         and previous[3] is expected
         and previous[4] is expected_state
-        and previous[5:] == (expected._version, expected_state._version)
+        and previous[5:] == versions
         and all(
             a.shape == b.shape
             and a.dtype == b.dtype
@@ -258,8 +264,7 @@ def check_outputs(
         metrics,
         expected,
         expected_state,
-        expected._version,
-        expected_state._version,
+        *versions,
     )
 
 
@@ -282,14 +287,14 @@ def time_launch(launch, *, trials=15, inner=20):
         end.record()
         end.synchronize()
         times.append(start.elapsed_time(end) * 1000 / inner)
-    return dict(
-        median_us=statistics.median(times),
-        min_us=min(times),
-        max_us=max(times),
-        trials=trials,
-        calls_per_trial=inner,
-        trial_us=times,
-    )
+    return {
+        "median_us": statistics.median(times),
+        "min_us": min(times),
+        "max_us": max(times),
+        "trials": trials,
+        "calls_per_trial": inner,
+        "trial_us": times,
+    }
 
 
 def benchmark_case(args, length):
@@ -336,22 +341,26 @@ def benchmark_case(args, length):
     if args.profile_once:
         print(
             json.dumps(
-                dict(length=length, numerical_errors=metrics, validation_policy=POLICY)
+                {
+                    "length": length,
+                    "numerical_errors": metrics,
+                    "validation_policy": POLICY,
+                }
             ),
             flush=True,
         )
         return None
     # Capture launches so Python dispatch cannot leave gaps between kernels.
     timing = time_launch(launch, trials=args.trials, inner=args.inner)
-    record = dict(
-        length=length,
-        heads=args.heads,
-        key_heads=args.key_heads,
-        initial_state=args.initial_state,
-        gate_scale=args.gate_scale,
+    record = {
+        "length": length,
+        "heads": args.heads,
+        "key_heads": args.key_heads,
+        "initial_state": args.initial_state,
+        "gate_scale": args.gate_scale,
         **timing,
-        numerical_errors=metrics,
-    )
+        "numerical_errors": metrics,
+    }
     record["input_sha256"] = tensor_fingerprint([*inputs, initial, cu])
     record["reference_sha256"] = tensor_fingerprint([expected, expected_state])
     record["validation_policy"] = POLICY
@@ -372,9 +381,10 @@ def benchmark_case(args, length):
             "Runtime measured despite numerical failure; not an accuracy-equivalent result"
         )
     check_seconds += time.perf_counter() - check_start
-    record["validation_seconds"] = dict(
-        inputs_and_fp64_reference=reference_seconds, all_output_checks=check_seconds
-    )
+    record["validation_seconds"] = {
+        "inputs_and_fp64_reference": reference_seconds,
+        "all_output_checks": check_seconds,
+    }
     record["validation_reuse"] = (
         "Statistics reused only after byte equality of every output/state element"
     )
@@ -414,19 +424,19 @@ def worker(spec_path):
     torch.npu.config.allow_internal_format = False
     libraries = {
         line.split()[-1]
-        for line in Path("/proc/self/maps").read_text().splitlines()
+        for line in Path("/proc/self/maps").read_text(encoding="utf-8").splitlines()
         if line.split()[-1].endswith("/libno_workspace_kernel.so")
     }
     if len(libraries) != 1 or sha256(libraries.pop()) != spec["library_sha256"]:
         raise RuntimeError("Loaded library differs from requested library")
     props = torch.npu.get_device_properties(args.device)
-    environment = dict(
-        device_name=props.name,
-        cube_cores=props.cube_core_num,
-        vector_cores=props.vector_core_num,
-        torch_version=str(torch.__version__),
-        torch_npu_version=str(torch_npu.__version__),
-    )
+    environment = {
+        "device_name": props.name,
+        "cube_cores": props.cube_core_num,
+        "vector_cores": props.vector_core_num,
+        "torch_version": str(torch.__version__),
+        "torch_npu_version": str(torch_npu.__version__),
+    }
     records = []
     for args.heads, args.key_heads in spec["head_configs"]:
         for length in spec["lengths"]:
@@ -441,7 +451,9 @@ def worker(spec_path):
                 ).hexdigest(),
             )
             records.append(record)
-            Path(spec["output"]).write_text(json.dumps(records, indent=2) + "\n")
+            Path(spec["output"]).write_text(
+                json.dumps(records, indent=2) + "\n", encoding="utf-8"
+            )
             print(
                 f"H{args.heads}/Hg{args.key_heads} T{length}: {record['median_us']:.2f} us; {record['status']}",
                 flush=True,
@@ -462,28 +474,28 @@ def run_measurements(args):
     libraries = {"current": args.library.resolve()}
     if args.command == "heatmap":
         libraries["baseline"] = args.baseline_lib.resolve()
-    report = dict(
-        created_utc=datetime.now(timezone.utc).isoformat(),
-        head_configs=pairs,
-        lengths=lengths,
-        library_sha256={
+    report = {
+        "created_utc": datetime.now(timezone.utc).isoformat(),
+        "head_configs": pairs,
+        "lengths": lengths,
+        "library_sha256": {
             v: sha256(p / "libno_workspace_kernel.so") for v, p in libraries.items()
         },
-        working_tree_source_sha256={
+        "working_tree_source_sha256": {
             p.name: sha256(p)
             for p in (ROOT / "csrc/kernel/gdn_mega").iterdir()
             if p.suffix in (".cpp", ".hpp")
         },
-        working_tree_commit=subprocess.check_output(
+        "working_tree_commit": subprocess.check_output(
             ["git", "-c", f"safe.directory={ROOT}", "rev-parse", "HEAD"],
             cwd=ROOT,
             text=True,
         ).strip(),
-        seed=0,
-        initial_state=args.initial_state,
-        gate_scale=args.gate_scale,
-        records=[],
-    )
+        "seed": 0,
+        "initial_state": args.initial_state,
+        "gate_scale": args.gate_scale,
+        "records": [],
+    }
     args.output.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="gdn_mega_") as temporary:
         directory = Path(temporary)
@@ -491,27 +503,28 @@ def run_measurements(args):
             results = {}
             for variant in list(libraries) if index % 2 else list(libraries)[::-1]:
                 path = directory / f"{variant}.json"
-                spec = dict(
-                    head_configs=[pair],
-                    lengths=lengths,
-                    output=str(path),
-                    library_sha256=report["library_sha256"][variant],
-                    settings=dict(
-                        device=args.device,
-                        initial_state=args.initial_state,
-                        gate_scale=args.gate_scale,
-                        trials=args.trials,
-                        inner=args.inner,
-                        profile_once=False,
-                        time_failed=True,
-                    ),
-                )
+                spec = {
+                    "head_configs": [pair],
+                    "lengths": lengths,
+                    "output": str(path),
+                    "library_sha256": report["library_sha256"][variant],
+                    "settings": {
+                        "device": args.device,
+                        "initial_state": args.initial_state,
+                        "gate_scale": args.gate_scale,
+                        "trials": args.trials,
+                        "inner": args.inner,
+                        "profile_once": False,
+                        "time_failed": True,
+                    },
+                }
                 manifest = directory / "worker.json"
                 manifest.write_text(json.dumps(spec))
                 result = subprocess.run(
                     [sys.executable, __file__, "_worker", str(manifest)],
                     cwd=ROOT,
                     env=library_env(libraries[variant]),
+                    check=False,
                 )
                 if result.returncode not in (0, 1) or not path.exists():
                     raise RuntimeError(
@@ -525,14 +538,14 @@ def run_measurements(args):
                 results[variant] = {r["length"]: r for r in rows}
             for length in lengths:
                 current = results["current"][length]
-                row = dict(
-                    heads=pair[0],
-                    key_heads=pair[1],
-                    length=length,
-                    current=current,
-                    current_ms=current["median_us"] / 1000,
-                    status=current["status"],
-                )
+                row = {
+                    "heads": pair[0],
+                    "key_heads": pair[1],
+                    "length": length,
+                    "current": current,
+                    "current_ms": current["median_us"] / 1000,
+                    "status": current["status"],
+                }
                 if "baseline" in results:
                     baseline = results["baseline"][length]
                     for key in (
@@ -623,10 +636,13 @@ def render(data, directory):
         for j, n in enumerate(lengths):
             row = cells[h, k, n]
 
-            def mark(v):
-                return "*" if numerical_failure(row, v) else ""
-
-            label = f"{row['speedup']:.2f}×\nours: {row['current_ms']*1000:,.1f} µs{mark('current')}\nbase: {row['baseline_ms']*1000:,.1f} µs{mark('baseline')}"
+            current_mark = "*" if numerical_failure(row, "current") else ""
+            baseline_mark = "*" if numerical_failure(row, "baseline") else ""
+            label = (
+                f"{row['speedup']:.2f}×\n"
+                f"ours: {row['current_ms']*1000:,.1f} µs{current_mark}\n"
+                f"base: {row['baseline_ms']*1000:,.1f} µs{baseline_mark}"
+            )
             axis.text(
                 j,
                 i,
@@ -645,7 +661,8 @@ def render(data, directory):
 
     labels(axis)
     axis.set_title(
-        f"GDN mega: baseline / current runtime — {data['created_utc'][:10]}\n* Only the runtime of an implementation failing numerical checks is marked"
+        f"GDN mega: baseline / current runtime — {data['created_utc'][:10]}\n"
+        "* Only the runtime of an implementation failing numerical checks is marked"
     )
     fig.colorbar(mesh, ax=axis, label="Runtime ratio (higher is faster)")
     fig.savefig(figures / "heatmap.png", dpi=160)
@@ -715,11 +732,23 @@ def render(data, directory):
     fig.savefig(figures / "error_heatmap_max_abs.png", dpi=160)
     plt.close(fig)
     policy = data["records"][0]["current"]["validation_policy"]
-    scope = f"Measured {data['created_utc'][:10]}; baseline library `{data['library_sha256']['baseline'][:12]}`, current `{data['library_sha256']['current'][:12]}`.\n"
+    scope = (
+        f"Measured {data['created_utc'][:10]}; "
+        f"baseline library `{data['library_sha256']['baseline'][:12]}`, "
+        f"current `{data['library_sha256']['current'][:12]}`.\n"
+    )
     scope += f"Nonzero initial state: {data['initial_state']}; seed 0; gate scale {data['gate_scale']}; D=C=128.\n"
     scope += "Independent CPU FP64 token recurrence on actual rounded inputs. Every output/state element must satisfy\n"
-    scope += f"`abs(error) <= {policy['atol']:g} + {policy['rtol']:g}*abs(reference)`, plus finiteness and relative RMSE < {policy['max_relative_rmse']:g}.\n"
-    scope += f"Current passes {sum(r['current']['status']=='passed' for r in cells.values())}/{len(cells)} shapes; baseline passes {sum(r['baseline']['status']=='passed' for r in cells.values())}/{len(cells)}.\n"
+    scope += (
+        f"`abs(error) <= {policy['atol']:g} + {policy['rtol']:g}*abs(reference)`, "
+        f"plus finiteness and relative RMSE < {policy['max_relative_rmse']:g}.\n"
+    )
+    current_passes = sum(r["current"]["status"] == "passed" for r in cells.values())
+    baseline_passes = sum(r["baseline"]["status"] == "passed" for r in cells.values())
+    scope += (
+        f"Current passes {current_passes}/{len(cells)} shapes; "
+        f"baseline passes {baseline_passes}/{len(cells)}.\n"
+    )
     table = (
         "| H/Hg | "
         + " | ".join(map(str, lengths))
