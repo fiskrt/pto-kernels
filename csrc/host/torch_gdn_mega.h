@@ -16,9 +16,7 @@ for the full License text.
 
 #include "utils.h"
 
-extern "C" {
-
-void pto_launch_gdn_mega(
+extern "C" void pto_launch_gdn_mega(
     uint32_t blockDim, void* stream, void* q, void* k, void* v, void* g_in,
     void* beta, void* msk_lower, void* msk_full, void* minus_id,
     void* cu_seqlens, void* o, void* g_sum, void* g_t, void* beta_t, void* A,
@@ -28,15 +26,14 @@ void pto_launch_gdn_mega(
     uint32_t num_heads, uint32_t num_key_heads, int64_t batch_size,
     int64_t seq_len, int64_t total_tokens, uint32_t num_matrices);
 
-}  // extern "C"
-
 namespace pto_isa_ops {
 
 namespace {
 
 constexpr int64_t kGdnMegaHeadDim = 128;
 
-bool gdn_mega_is_supported_head_pair(int64_t value_heads, int64_t key_heads) {
+constexpr bool gdn_mega_is_supported_head_pair(int64_t value_heads,
+                                               int64_t key_heads) {
   return key_heads > 0 && value_heads % key_heads == 0 &&
          (value_heads == 8 || value_heads == 12 || value_heads == 16 ||
           value_heads == 24 || value_heads == 32 || value_heads == 48 ||
