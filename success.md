@@ -914,3 +914,22 @@ Allocation, input copies, graph capture and checks are excluded; no cache
 flush or external scratch clearing occurs between calls. Median current
 latency is 2.3% below yesterday's grid; this is run variation, not a kernel
 optimization. Timing and validation functions are unchanged.
+
+## 2026-10-29 — upstream merge and lint compatibility
+
+Merged upstream/main `13a6870` into the optimization branch. Resolved the five
+overlapping GDN conflicts by retaining the optimized kernel, FP64/elementwise
+suite and current documentation; removed six superseded original stage files.
+Preserved upstream's host declaration cleanup, triangular-inverse binding
+arguments and all unrelated upstream changes. The GDN ABI is unchanged.
+
+Applied repository Black/clang-format/CMake formatting. Made the fast-build
+dispatch parser whitespace-independent and added explicit pipeline header
+dependencies so sorted includes compile. Removed one unused Python import and
+rewrote the report-label lambda for Ruff. No kernel arithmetic, test cases,
+oracle, tolerances or timing behavior changed (verified by token/AST checks).
+
+All 264 GDN tests pass in 167.11s on the rebuilt CMake library. All seven fast
+build specializations compile in 10.48s. The full Python binding type-checks
+with GDN_MEGA_ONLY disabled. Repository-wide pre-commit and CI-pinned Ruff
+0.15.22 pass. This is merge/lint maintenance, not a performance improvement.

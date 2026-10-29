@@ -16,22 +16,15 @@ for the full License text.
 
 #include "utils.h"
 
-extern "C" {
-
-void pto_launch_gdn_mega(uint32_t blockDim, void* stream, void* q, void* k,
-                         void* v, void* g_in, void* beta, void* msk_lower,
-                         void* msk_full, void* minus_id, void* cu_seqlens,
-                         void* o, void* g_sum, void* g_t, void* beta_t, void* A,
-                         void* A_inv_f32, void* A_inv, void* w, void* u,
-                         void* s, void* v_new, void* fs, void* h0,
-                         int64_t has_initial_state, void* kkt_ws,
-                         void* wy_ws_a1, void* wy_ws_a2, void* h_ws,
-                         void* o_ws_qk, void* o_ws_qs, void* o_ws_gated,
-                         uint32_t num_heads, uint32_t num_key_heads,
-                         int64_t batch_size, int64_t seq_len,
-                         int64_t total_tokens, uint32_t num_matrices);
-
-}  // extern "C"
+extern "C" void pto_launch_gdn_mega(
+    uint32_t blockDim, void* stream, void* q, void* k, void* v, void* g_in,
+    void* beta, void* msk_lower, void* msk_full, void* minus_id,
+    void* cu_seqlens, void* o, void* g_sum, void* g_t, void* beta_t, void* A,
+    void* A_inv_f32, void* A_inv, void* w, void* u, void* s, void* v_new,
+    void* fs, void* h0, int64_t has_initial_state, void* kkt_ws, void* wy_ws_a1,
+    void* wy_ws_a2, void* h_ws, void* o_ws_qk, void* o_ws_qs, void* o_ws_gated,
+    uint32_t num_heads, uint32_t num_key_heads, int64_t batch_size,
+    int64_t seq_len, int64_t total_tokens, uint32_t num_matrices);
 
 namespace pto_isa_ops {
 
@@ -39,7 +32,8 @@ namespace {
 
 constexpr int64_t kGdnMegaHeadDim = 128;
 
-bool gdn_mega_is_supported_head_pair(int64_t value_heads, int64_t key_heads) {
+constexpr bool gdn_mega_is_supported_head_pair(int64_t value_heads,
+                                               int64_t key_heads) {
   return key_heads > 0 && value_heads % key_heads == 0 &&
          (value_heads == 8 || value_heads == 12 || value_heads == 16 ||
           value_heads == 24 || value_heads == 32 || value_heads == 48 ||
@@ -150,10 +144,12 @@ void gdn_mega_check_shape(const at::Tensor& q, const at::Tensor& k,
  *                                 when has_initial_state is false; pass any
  *                                 correctly typed tensor in that case.
  * @param [in]     has_initial_state Whether initial_state carries real data.
- * @param [in,out] kkt_workspace   Control metadata [block_dim*2, C, C] fp16 storage.
+ * @param [in,out] kkt_workspace   Control metadata [block_dim*2, C, C] fp16
+ * storage.
  * @param [in,out] wy_workspace_a1 Reserved scratch [block_dim, C, C] fp16.
  * @param [in,out] wy_workspace_a2 Reserved scratch [block_dim, C, C] fp16.
- * @param [in,out] h_workspace     Two attention/decay slots [block_dim*4, D, D] fp16.
+ * @param [in,out] h_workspace     Two attention/decay slots [block_dim*4, D, D]
+ * fp16.
  * @param [in,out] o_workspace_qk  Reserved scratch [block_dim, C, C] fp16.
  * @param [in,out] o_workspace_qs  Reserved scratch [block_dim, C, D] fp16.
  * @param [in,out] o_workspace_gated Reserved scratch [block_dim, C, C] fp16.
@@ -200,14 +196,13 @@ void run_gdn_mega(const at::Tensor& q, const at::Tensor& k, const at::Tensor& v,
   const uint32_t num_matrices_u32 = static_cast<uint32_t>(num_matrices);
   const int64_t has_initial_state_i64 = has_initial_state ? 1 : 0;
 
-  EXEC_KERNEL_CMD(gdn_mega, block_dim_u32, q, k, v, g, beta, mask_lower,
-                  mask_full, minus_identity, cu_seqlens, out, g_sum, g_t,
-                  beta_t, a, a_inv_f32, a_inv, w, u, s, v_new, final_state,
-                  initial_state, has_initial_state_i64, kkt_workspace,
-                  wy_workspace_a1, wy_workspace_a2, h_workspace,
-                  o_workspace_qk, o_workspace_qs, o_workspace_gated,
-                  num_heads_u32, num_key_heads_u32, batch_size, seq_len,
-                  total_tokens, num_matrices_u32);
+  EXEC_KERNEL_CMD(
+      gdn_mega, block_dim_u32, q, k, v, g, beta, mask_lower, mask_full,
+      minus_identity, cu_seqlens, out, g_sum, g_t, beta_t, a, a_inv_f32, a_inv,
+      w, u, s, v_new, final_state, initial_state, has_initial_state_i64,
+      kkt_workspace, wy_workspace_a1, wy_workspace_a2, h_workspace,
+      o_workspace_qk, o_workspace_qs, o_workspace_gated, num_heads_u32,
+      num_key_heads_u32, batch_size, seq_len, total_tokens, num_matrices_u32);
 }
 
 }  // namespace pto_isa_ops

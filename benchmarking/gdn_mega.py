@@ -22,7 +22,17 @@ import time
 
 ROOT = Path(__file__).resolve().parents[1]
 HEADS = (8, 12, 16, 24, 32, 48, 64)
-DEFAULT_PAIRS = [(8, 2), (12, 3), (16, 4), (24, 6), (24, 8), (32, 8), (48, 12), (48, 16), (64, 16)]
+DEFAULT_PAIRS = [
+    (8, 2),
+    (12, 3),
+    (16, 4),
+    (24, 6),
+    (24, 8),
+    (32, 8),
+    (48, 12),
+    (48, 16),
+    (64, 16),
+]
 LENGTHS = [128, 256, 1024, 4096, 8192, 16384, 32768]
 sys.path.insert(0, str(ROOT / "tests"))
 
@@ -39,27 +49,44 @@ def error_metrics(*args, **kwargs):
 
 def parse_head_configs(values):
     try:
-        pairs = [tuple(map(int, v.split("/"))) for v in values] if values else DEFAULT_PAIRS.copy()
-        if any(len(p) != 2 or p[0] not in HEADS or p[1] <= 0 or p[0] % p[1] for p in pairs):
+        pairs = (
+            [tuple(map(int, v.split("/"))) for v in values]
+            if values
+            else DEFAULT_PAIRS.copy()
+        )
+        if any(
+            len(p) != 2 or p[0] not in HEADS or p[1] <= 0 or p[0] % p[1] for p in pairs
+        ):
             raise ValueError()
         if len(set(pairs)) != len(pairs):
             raise ValueError()
         return pairs
     except (ValueError, ZeroDivisionError):
-        raise ValueError("Use distinct H/Hg pairs with supported H and positive Hg dividing H") from None
+        raise ValueError(
+            "Use distinct H/Hg pairs with supported H and positive Hg dividing H"
+        ) from None
 
 
 def numerical_failure(row, variant):
-    return row[variant]["status"] == "failed" or row.get(f"{variant}_accuracy_status") == "failed"
+    return (
+        row[variant]["status"] == "failed"
+        or row.get(f"{variant}_accuracy_status") == "failed"
+    )
 
 
 def library_env(directory):
     environment = dict(os.environ)
-    environment["LD_LIBRARY_PATH"] = f"{Path(directory).resolve()}:{environment.get('LD_LIBRARY_PATH', '')}"
+    environment["LD_LIBRARY_PATH"] = (
+        f"{Path(directory).resolve()}:{environment.get('LD_LIBRARY_PATH', '')}"
+    )
     environment["PYTHONPATH"] = f"{ROOT / 'python'}:{environment.get('PYTHONPATH', '')}"
     environment.setdefault("NPU_DEVICE", "npu:0")
-    environment.setdefault("GDN_REFERENCE_CACHE", str(ROOT / "benchmark_data/gdn_mega/reference_cache"))
-    environment["GDN_EXPECTED_LIBRARY_SHA256"] = sha256(Path(directory) / "libno_workspace_kernel.so")
+    environment.setdefault(
+        "GDN_REFERENCE_CACHE", str(ROOT / "benchmark_data/gdn_mega/reference_cache")
+    )
+    environment["GDN_EXPECTED_LIBRARY_SHA256"] = sha256(
+        Path(directory) / "libno_workspace_kernel.so"
+    )
     return environment
 
 
@@ -101,22 +128,29 @@ def build(source, destination, heads):
     for path in sources:
         shutil.copyfile(path, destination / path.name)
     source_text = (source / "kernel_gdn_mega.cpp").read_text()
-    signature = re.search(r'extern "C" void pto_launch_gdn_mega\([\s\S]*?\)\s*{', source_text)
+    signature = re.search(
+        r'extern "C" void pto_launch_gdn_mega\([\s\S]*?\)\s*{', source_text
+    )
     if signature is None:
         raise ValueError("Cannot identify the production launch signature")
     declaration = signature.group()[:-1].strip()
-    arguments = [p.strip().split()[-1].lstrip("*") for p in declaration.split("(", 1)[1][:-1].split(",")]
-    calls = re.findall(r"    case (\d+): LAUNCH_MEGA\(\1\); break;", source_text)
+    arguments = [
+        p.strip().split()[-1].lstrip("*")
+        for p in declaration.split("(", 1)[1][:-1].split(",")
+    ]
+    dispatch = re.compile(r"case\s+(\d+):\s*LAUNCH_MEGA\(\1\);\s*break;")
+    calls = dispatch.findall(source_text)
     if tuple(map(int, calls)) != HEADS:
         raise ValueError("Expected the complete production head dispatch")
 
     def compile_head(head):
-        text = re.sub(
-            r"    case (\d+): LAUNCH_MEGA\(\1\); break;\n",
+        text = dispatch.sub(
             lambda m: m.group() if int(m[1]) == head else "",
             source_text,
         )
-        text = text.replace("void pto_launch_gdn_mega(", f"void pto_launch_gdn_mega_{head}(")
+        text = text.replace(
+            "void pto_launch_gdn_mega(", f"void pto_launch_gdn_mega_{head}("
+        )
         path = destination / f"head_{head}.cpp"
         path.write_text(text)
         with (destination / f"head_{head}.log").open("w") as log:
@@ -131,11 +165,17 @@ def build(source, destination, heads):
     with ThreadPoolExecutor(max_workers=len(heads)) as executor:
         list(executor.map(compile_head, heads))
     shim = "#include <cstdint>\n" + "\n".join(
-        declaration.replace("void pto_launch_gdn_mega(", f"void pto_launch_gdn_mega_{h}(") + ";"
+        declaration.replace(
+            "void pto_launch_gdn_mega(", f"void pto_launch_gdn_mega_{h}("
+        )
+        + ";"
         for h in heads
     )
     shim += "\n" + declaration + "{\n switch(num_heads){\n"
-    shim += "\n".join(f' case {h}: pto_launch_gdn_mega_{h}({", ".join(arguments)}); break;' for h in heads)
+    shim += "\n".join(
+        f' case {h}: pto_launch_gdn_mega_{h}({", ".join(arguments)}); break;'
+        for h in heads
+    )
     shim += "\n }\n}\n"
     (destination / "launch.cpp").write_text(shim)
     subprocess.run(
@@ -180,7 +220,9 @@ class AccuracyFailure(AssertionError):
         super().__init__("Pointwise/RMSE acceptance failed; see numerical_errors")
 
 
-def check_outputs(launch, expected, expected_state, previous=None, *, allow_failed=False):
+def check_outputs(
+    launch, expected, expected_state, previous=None, *, allow_failed=False
+):
     """Check raw output against FP64 raw goldens; reuse only unchanged results."""
     import torch
 
@@ -210,7 +252,15 @@ def check_outputs(launch, expected, expected_state, previous=None, *, allow_fail
     }
     if not allow_failed and not all(value["passed"] for value in metrics.values()):
         raise AccuracyFailure(metrics)
-    return raw, state, metrics, expected, expected_state, expected._version, expected_state._version
+    return (
+        raw,
+        state,
+        metrics,
+        expected,
+        expected_state,
+        expected._version,
+        expected_state._version,
+    )
 
 
 def time_launch(launch, *, trials=15, inner=20):
@@ -257,7 +307,11 @@ def benchmark_case(args, length):
     reference_start = time.perf_counter()
     inputs = _make_inputs(length, args.heads, args.key_heads)
     inputs[3].mul_(args.gate_scale)
-    initial = torch.randn(1, args.heads, 128, 128, dtype=torch.float16) * 0.1 if args.initial_state else None
+    initial = (
+        torch.randn(1, args.heads, 128, 128, dtype=torch.float16) * 0.1
+        if args.initial_state
+        else None
+    )
     expected, expected_state = cached_recurrent_reference(*inputs, initial)
     cu = torch.tensor([0, length], dtype=torch.int32)
     reference_seconds = time.perf_counter() - reference_start
@@ -273,12 +327,19 @@ def benchmark_case(args, length):
         pto_gdn_mega(**launch)
         torch.npu.synchronize()
         check_start = time.perf_counter()
-        checked = check_outputs(launch, expected, expected_state, checked, allow_failed=args.time_failed)
+        checked = check_outputs(
+            launch, expected, expected_state, checked, allow_failed=args.time_failed
+        )
         warmup_errors.append(checked[2])
         check_seconds += time.perf_counter() - check_start
     metrics = checked[2]
     if args.profile_once:
-        print(json.dumps(dict(length=length, numerical_errors=metrics, validation_policy=POLICY)), flush=True)
+        print(
+            json.dumps(
+                dict(length=length, numerical_errors=metrics, validation_policy=POLICY)
+            ),
+            flush=True,
+        )
         return None
     # Capture launches so Python dispatch cannot leave gaps between kernels.
     timing = time_launch(launch, trials=args.trials, inner=args.inner)
@@ -300,7 +361,9 @@ def benchmark_case(args, length):
         launch, expected, expected_state, checked, allow_failed=args.time_failed
     )[2]
     passed = all(
-        m["passed"] for phase in [*warmup_errors, record["after_replay_errors"]] for m in phase.values()
+        m["passed"]
+        for phase in [*warmup_errors, record["after_replay_errors"]]
+        for m in phase.values()
     )
     record["status"] = "passed" if passed else "failed"
     record["warmup_errors"] = warmup_errors
@@ -312,7 +375,9 @@ def benchmark_case(args, length):
     record["validation_seconds"] = dict(
         inputs_and_fp64_reference=reference_seconds, all_output_checks=check_seconds
     )
-    record["validation_reuse"] = "Statistics reused only after byte equality of every output/state element"
+    record["validation_reuse"] = (
+        "Statistics reused only after byte equality of every output/state element"
+    )
     return record
 
 
@@ -324,9 +389,15 @@ def summarize(repeats, name):
         "passed": all(m["passed"] for m in metrics),
         "elements": metrics[0]["elements"],
         "max_abs": max(m["max_abs"] for m in metrics) if finite else None,
-        "max_tolerance_ratio": max(m["max_tolerance_ratio"] for m in metrics) if finite else None,
-        "pointwise_violations_max": max(m["pointwise_violations"] for m in metrics) if finite else None,
-        "relative_rmse_max": max(m["relative_rmse"] for m in metrics) if finite else None,
+        "max_tolerance_ratio": (
+            max(m["max_tolerance_ratio"] for m in metrics) if finite else None
+        ),
+        "pointwise_violations_max": (
+            max(m["pointwise_violations"] for m in metrics) if finite else None
+        ),
+        "relative_rmse_max": (
+            max(m["relative_rmse"] for m in metrics) if finite else None
+        ),
         "actual_nonfinite_max": max(m.get("actual_nonfinite", 0) for m in metrics),
     }
 
@@ -365,7 +436,9 @@ def worker(spec_path):
             record.update(
                 kernel_library_sha256=spec["library_sha256"],
                 environment=environment,
-                oracle_sha256=hashlib.sha256(inspect.getsource(recurrent_reference).encode()).hexdigest(),
+                oracle_sha256=hashlib.sha256(
+                    inspect.getsource(recurrent_reference).encode()
+                ).hexdigest(),
             )
             records.append(record)
             Path(spec["output"]).write_text(json.dumps(records, indent=2) + "\n")
@@ -393,14 +466,18 @@ def run_measurements(args):
         created_utc=datetime.now(timezone.utc).isoformat(),
         head_configs=pairs,
         lengths=lengths,
-        library_sha256={v: sha256(p / "libno_workspace_kernel.so") for v, p in libraries.items()},
+        library_sha256={
+            v: sha256(p / "libno_workspace_kernel.so") for v, p in libraries.items()
+        },
         working_tree_source_sha256={
             p.name: sha256(p)
             for p in (ROOT / "csrc/kernel/gdn_mega").iterdir()
             if p.suffix in (".cpp", ".hpp")
         },
         working_tree_commit=subprocess.check_output(
-            ["git", "-c", f"safe.directory={ROOT}", "rev-parse", "HEAD"], cwd=ROOT, text=True
+            ["git", "-c", f"safe.directory={ROOT}", "rev-parse", "HEAD"],
+            cwd=ROOT,
+            text=True,
         ).strip(),
         seed=0,
         initial_state=args.initial_state,
@@ -437,7 +514,9 @@ def run_measurements(args):
                     env=library_env(libraries[variant]),
                 )
                 if result.returncode not in (0, 1) or not path.exists():
-                    raise RuntimeError(f"{variant} worker failed with exit code {result.returncode}")
+                    raise RuntimeError(
+                        f"{variant} worker failed with exit code {result.returncode}"
+                    )
                 rows = json.loads(path.read_text())
                 if len(rows) != len(lengths) or any(
                     r["kernel_library_sha256"] != spec["library_sha256"] for r in rows
@@ -481,7 +560,9 @@ def validate_report(data):
     pairs = [tuple(p) for p in data["head_configs"]]
     lengths = data["lengths"]
     cells = {(r["heads"], r["key_heads"], r["length"]): r for r in data["records"]}
-    if len(cells) != len(data["records"]) or set(cells) != {(h, k, n) for h, k in pairs for n in lengths}:
+    if len(cells) != len(data["records"]) or set(cells) != {
+        (h, k, n) for h, k in pairs for n in lengths
+    }:
         raise ValueError("Heatmaps require one complete matched grid")
     for row in cells.values():
         for variant in ("baseline", "current"):
@@ -525,18 +606,26 @@ def render(data, directory):
     figures.mkdir(parents=True, exist_ok=True)
     values = np.array([[cells[h, k, n]["speedup"] for n in lengths] for h, k in pairs])
     fig, axis = plt.subplots(
-        figsize=(max(9, 2 * len(lengths)), max(4, len(pairs) * 1.1)), layout="constrained"
+        figsize=(max(9, 2 * len(lengths)), max(4, len(pairs) * 1.1)),
+        layout="constrained",
     )
     mesh = axis.imshow(
         values,
         cmap="RdYlGn",
-        norm=TwoSlopeNorm(vmin=min(0.5, float(values.min())), vcenter=1, vmax=max(1.01, float(values.max()))),
+        norm=TwoSlopeNorm(
+            vmin=min(0.5, float(values.min())),
+            vcenter=1,
+            vmax=max(1.01, float(values.max())),
+        ),
         aspect="auto",
     )
     for i, (h, k) in enumerate(pairs):
         for j, n in enumerate(lengths):
             row = cells[h, k, n]
-            mark = lambda v: "*" if numerical_failure(row, v) else ""
+
+            def mark(v):
+                return "*" if numerical_failure(row, v) else ""
+
             label = f"{row['speedup']:.2f}×\nours: {row['current_ms']*1000:,.1f} µs{mark('current')}\nbase: {row['baseline_ms']*1000:,.1f} µs{mark('baseline')}"
             axis.text(
                 j,
@@ -565,13 +654,19 @@ def render(data, directory):
     for key, row in cells.items():
         for variant in ("baseline", "current"):
             r = row[variant]
-            phases = r.get("warmup_errors", [r["numerical_errors"]]) + [r["after_replay_errors"]]
+            phases = r.get("warmup_errors", [r["numerical_errors"]]) + [
+                r["after_replay_errors"]
+            ]
             metrics[key, variant] = summarize(phases, "raw_output")
     errors = np.array(
         [
             [
                 [
-                    metrics[(h, k, n), v]["max_abs"] if metrics[(h, k, n), v]["finite"] else np.nan
+                    (
+                        metrics[(h, k, n), v]["max_abs"]
+                        if metrics[(h, k, n), v]["finite"]
+                        else np.nan
+                    )
                     for n in lengths
                 ]
                 for h, k in pairs
@@ -583,12 +678,17 @@ def render(data, directory):
     lo = float(positive.min()) if positive.size else 1e-8
     hi = max(float(positive.max()), lo * 1.01) if positive.size else 1.0
     fig, axes = plt.subplots(
-        1, 2, figsize=(max(12, 3 * len(lengths)), max(4, len(pairs) * 0.7)), layout="constrained"
+        1,
+        2,
+        figsize=(max(12, 3 * len(lengths)), max(4, len(pairs) * 0.7)),
+        layout="constrained",
     )
     cmap = plt.get_cmap("magma").copy()
     cmap.set_bad("#d9dde3")
     for i, (axis, v) in enumerate(zip(axes, ("baseline", "current"))):
-        mesh = axis.imshow(np.maximum(errors[i], lo), norm=LogNorm(lo, hi), cmap=cmap, aspect="auto")
+        mesh = axis.imshow(
+            np.maximum(errors[i], lo), norm=LogNorm(lo, hi), cmap=cmap, aspect="auto"
+        )
         labels(axis)
         axis.set_title(f"{v}: {data['library_sha256'][v][:10]}")
         for r in range(len(pairs)):
@@ -602,7 +702,11 @@ def render(data, directory):
                     ha="center",
                     va="center",
                     fontsize=8,
-                    color="white" if not np.isfinite(value) or mesh.norm(max(value, lo)) < 0.7 else "#17202a",
+                    color=(
+                        "white"
+                        if not np.isfinite(value) or mesh.norm(max(value, lo)) < 0.7
+                        else "#17202a"
+                    ),
                 )
     fig.suptitle(
         f"Maximum absolute raw-output error against CPU FP64 — {data['created_utc'][:10]} (all checked launches)"
@@ -612,13 +716,17 @@ def render(data, directory):
     plt.close(fig)
     policy = data["records"][0]["current"]["validation_policy"]
     scope = f"Measured {data['created_utc'][:10]}; baseline library `{data['library_sha256']['baseline'][:12]}`, current `{data['library_sha256']['current'][:12]}`.\n"
-    scope += (
-        f"Nonzero initial state: {data['initial_state']}; seed 0; gate scale {data['gate_scale']}; D=C=128.\n"
-    )
+    scope += f"Nonzero initial state: {data['initial_state']}; seed 0; gate scale {data['gate_scale']}; D=C=128.\n"
     scope += "Independent CPU FP64 token recurrence on actual rounded inputs. Every output/state element must satisfy\n"
     scope += f"`abs(error) <= {policy['atol']:g} + {policy['rtol']:g}*abs(reference)`, plus finiteness and relative RMSE < {policy['max_relative_rmse']:g}.\n"
     scope += f"Current passes {sum(r['current']['status']=='passed' for r in cells.values())}/{len(cells)} shapes; baseline passes {sum(r['baseline']['status']=='passed' for r in cells.values())}/{len(cells)}.\n"
-    table = "| H/Hg | " + " | ".join(map(str, lengths)) + " |\n|---|" + "---:|" * len(lengths) + "\n"
+    table = (
+        "| H/Hg | "
+        + " | ".join(map(str, lengths))
+        + " |\n|---|"
+        + "---:|" * len(lengths)
+        + "\n"
+    )
     for h, k in pairs:
         table += (
             f"| {h}/{k} | "
@@ -731,11 +839,15 @@ def main():
     commands = parser.add_subparsers(
         dest="command", required=True, metavar="{build,test,bench,heatmap,render}"
     )
-    p = commands.add_parser("build", help="Fast isolated compilation; does not install or run the kernel")
+    p = commands.add_parser(
+        "build", help="Fast isolated compilation; does not install or run the kernel"
+    )
     p.add_argument("--source", type=Path, default=ROOT / "csrc/kernel/gdn_mega")
     p.add_argument("--output", type=Path, default=ROOT / "build/gdn_candidate")
     p.add_argument("--quick", action="store_true", help="Compile H8/H16 only")
-    p = commands.add_parser("test", help="Run the full suite, or nine selected numerical cases")
+    p = commands.add_parser(
+        "test", help="Run the full suite, or nine selected numerical cases"
+    )
     p.add_argument("--library", type=Path, default=ROOT / "build/lib")
     p.add_argument("--quick", action="store_true")
     for name in ("bench", "heatmap"):
@@ -743,16 +855,22 @@ def main():
         p.add_argument("--library", type=Path, default=ROOT / "build/lib")
         p.add_argument("--head-configs", nargs="+", metavar="H/Hg")
         p.add_argument("--lengths", type=int, nargs="+")
-        p.add_argument("--initial-state", action=argparse.BooleanOptionalAction, default=True)
+        p.add_argument(
+            "--initial-state", action=argparse.BooleanOptionalAction, default=True
+        )
         p.add_argument("--gate-scale", type=float, default=1.0)
         p.add_argument("--trials", type=int, default=15)
         p.add_argument("--inner", type=int, default=20)
         p.add_argument("--device", default=os.environ.get("NPU_DEVICE", "npu:0"))
-        p.add_argument("--output", type=Path, default=ROOT / f"benchmark_data/gdn_mega/{name}.json")
+        p.add_argument(
+            "--output", type=Path, default=ROOT / f"benchmark_data/gdn_mega/{name}.json"
+        )
         if name == "heatmap":
             p.add_argument("--baseline-lib", type=Path, required=True)
             p.add_argument("--report-dir", type=Path, default=ROOT / "docs/gdn_mega")
-    p = commands.add_parser("render", help="Regenerate the two reports from saved heatmap JSON")
+    p = commands.add_parser(
+        "render", help="Regenerate the two reports from saved heatmap JSON"
+    )
     p.add_argument("input", type=Path)
     p.add_argument("--report-dir", type=Path, default=ROOT / "docs/gdn_mega")
     p = commands.add_parser("_worker")
@@ -765,7 +883,9 @@ def main():
             raise ValueError("Build outside the source directory")
         report = build(source, output, (8, 16) if args.quick else HEADS)
         (output / "build.json").write_text(json.dumps(report, indent=2) + "\n")
-        print(f"Built {len(report['heads'])} specializations in {report['build_seconds']:.2f}s: {output}")
+        print(
+            f"Built {len(report['heads'])} specializations in {report['build_seconds']:.2f}s: {output}"
+        )
     elif args.command == "test":
         selected = (
             [
@@ -776,7 +896,9 @@ def main():
             else ["tests/test_gdn_mega.py"]
         )
         return subprocess.call(
-            [sys.executable, "-m", "pytest", *selected, "-q"], cwd=ROOT, env=library_env(args.library)
+            [sys.executable, "-m", "pytest", *selected, "-q"],
+            cwd=ROOT,
+            env=library_env(args.library),
         )
     elif args.command == "_worker":
         return worker(args.manifest)

@@ -933,3 +933,17 @@ No external clearing or cache flush between calls. Final timed output/state
 are checked outside timing. README and generated heatmap.md explain this.
 Current medians differ from the October 28 run by -4.6% to +2.0% across cells
 (median -2.3%); do not attribute these variations to an optimization.
+
+## 2026-10-29 — merged upstream/main 13a6870
+
+Upstream added the original mega kernel independently, causing add/add
+conflicts. Keep the optimized seven-source implementation and consolidated
+264-test suite; the six original stage .cpp files are superseded. Preserve
+upstream tri_inv_col_sweep's is_bsnd_format/cu_seqlens binding arguments.
+
+All repository lint passes with upstream defaults. clang-format sorts includes:
+fused_pipeline.hpp now explicitly includes inverse.hpp and recurrence_pipeline.hpp.
+The fast builder matches dispatch whitespace independently. Kernel tokens
+(apart from include dependencies) and numerical/timing ASTs are unchanged.
+Fresh CMake build, full host binding type check, seven-head fast build (10.48s)
+and 264 tests (167.11s) pass. No ABI, numerical-policy or schedule change.

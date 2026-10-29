@@ -10,8 +10,8 @@ operations remain FP32; projections use two FP16 components of state.
 [Speed heatmap](heatmap.md) · [Absolute-error heatmap](error_heatmap.md) ·
 [Input ranges](input_ranges.md)
 
-The caller ABI, output scaling and allocation sizes are unchanged. Seven kernel
-sources contain 1,189 physical lines. Hardware validation is on Ascend 910B2
+The caller ABI, output scaling and allocation sizes are unchanged. The kernel
+is split across seven source files. Hardware validation is on Ascend 910B2
 (24 cube/48 vector cores); other architectures are not certified by these runs.
 
 ## Files
@@ -61,7 +61,7 @@ binding compilation, if they have not already been done:
 ```bash
 source /usr/local/Ascend/cann/set_env.sh
 python -m pip install torch==2.10.0 torch-npu==2.10.0 pytest pybind11 cmake ninja matplotlib numpy
-cmake -S . -B build -G Ninja -DGDN_MEGA_ONLY=ON -DSOC_VERSION=Ascend 910B2 \
+cmake -S . -B build -G Ninja -DGDN_MEGA_ONLY=ON -DSOC_VERSION=Ascend910B2 \
   -DCMAKE_PREFIX_PATH="$(python -c 'import torch, pybind11; print(torch.utils.cmake_prefix_path + ";" + pybind11.get_cmake_dir())')"
 cmake --build build -j4
 gdn_extension_suffix=$(python -c 'import sysconfig; print(sysconfig.get_config_var("EXT_SUFFIX"))')

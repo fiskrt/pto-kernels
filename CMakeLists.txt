@@ -22,7 +22,8 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_LINK_DEPENDS_USE_LINKER OFF)
 
 option(PIP_INSTALL "True if building via pip" OFF)
-option(GDN_MEGA_ONLY "Build only the fused GDN kernel and its Python binding" OFF)
+option(GDN_MEGA_ONLY "Build only the fused GDN kernel and its Python binding"
+       OFF)
 
 # Kernel toolchain selection.
 #
@@ -165,28 +166,28 @@ message("* TORCH_LIBRARIES          : ${TORCH_LIBRARIES}")
 message("***********************************************************")
 
 set(PTO_KERNEL_SOURCES
-  csrc/kernel/kernel_tri_inv_col_sweep.cpp
-  csrc/kernel/kernel_abs.cpp
-  csrc/kernel/kernel_gdn_chunk_cumsum.cpp
-  csrc/kernel/kernel_csr_gather.cpp
-  csrc/kernel/kernel_kda_chunk_h.cpp
-  csrc/kernel/kernel_kda_chunk_o.cpp
-  csrc/kernel/kernel_gdn_chunk_h.cpp
-  csrc/kernel/kernel_gdn_scaled_dot_kkt.cpp
-  csrc/kernel/kernel_gdn_chunk_o.cpp
-  csrc/kernel/kernel_gdn_wy_fast.cpp
-  csrc/kernel/gdn_mega/kernel_gdn_mega.cpp
-  csrc/kernel/kernel_scan_ul1.cpp
-  csrc/kernel/kernel_simple_matmul.cpp
-  csrc/kernel/kernel_batch_matrix_square.cpp
-  csrc/kernel/kernel_tri_inv_ns.cpp
-  csrc/kernel/kernel_tri_inv_rec_unroll.cpp
-  csrc/kernel/kernel_tri_inv_trick.cpp
-  csrc/kernel/kernel_swiglu.cpp
-  csrc/kernel/kernel_kda_gate_cumsum.cpp
-  csrc/kernel/kernel_kda_wy.cpp
-  csrc/kernel/kernel_kda_kkt.cpp
-  csrc/kernel/kernel_flash_attention.cpp)
+    csrc/kernel/kernel_tri_inv_col_sweep.cpp
+    csrc/kernel/kernel_abs.cpp
+    csrc/kernel/kernel_gdn_chunk_cumsum.cpp
+    csrc/kernel/kernel_csr_gather.cpp
+    csrc/kernel/kernel_kda_chunk_h.cpp
+    csrc/kernel/kernel_kda_chunk_o.cpp
+    csrc/kernel/kernel_gdn_chunk_h.cpp
+    csrc/kernel/kernel_gdn_scaled_dot_kkt.cpp
+    csrc/kernel/kernel_gdn_chunk_o.cpp
+    csrc/kernel/kernel_gdn_wy_fast.cpp
+    csrc/kernel/gdn_mega/kernel_gdn_mega.cpp
+    csrc/kernel/kernel_scan_ul1.cpp
+    csrc/kernel/kernel_simple_matmul.cpp
+    csrc/kernel/kernel_batch_matrix_square.cpp
+    csrc/kernel/kernel_tri_inv_ns.cpp
+    csrc/kernel/kernel_tri_inv_rec_unroll.cpp
+    csrc/kernel/kernel_tri_inv_trick.cpp
+    csrc/kernel/kernel_swiglu.cpp
+    csrc/kernel/kernel_kda_gate_cumsum.cpp
+    csrc/kernel/kernel_kda_wy.cpp
+    csrc/kernel/kernel_kda_kkt.cpp
+    csrc/kernel/kernel_flash_attention.cpp)
 
 if(GDN_MEGA_ONLY)
   set(PTO_KERNEL_SOURCES csrc/kernel/gdn_mega/kernel_gdn_mega.cpp)
@@ -230,8 +231,7 @@ target_link_directories(pto_kernels_ops PRIVATE ${TORCH_INSTALL_PREFIX}/lib
 target_include_directories(
   pto_kernels_ops
   PRIVATE ${TORCH_NPU_PATH}/include ${TORCH_INCLUDE_DIRS}
-          ${ASCEND_CANN_PACKAGE_PATH}/include
-          ${TORCH_INSTALL_PREFIX}/include
+          ${ASCEND_CANN_PACKAGE_PATH}/include ${TORCH_INSTALL_PREFIX}/include
           ${TORCH_INSTALL_PREFIX}/include/torch/csrc/api/include)
 
 if(PIP_INSTALL)
