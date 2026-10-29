@@ -33,6 +33,10 @@
 #include <pto/pto-inst.hpp>
 #include "acl/acl.h"
 #include <type_traits>
+// Match kernel_utils.h's fallback for the legacy single-kernel toolchain.
+#ifndef KERNEL_TASK_TYPE_DEFAULT
+#define KERNEL_TASK_TYPE_DEFAULT(kernel_type) ((void)0)
+#endif
 using namespace pto;
 
 // ===================================================================
