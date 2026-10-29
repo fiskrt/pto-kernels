@@ -146,11 +146,28 @@ as `--baseline-lib`. That historical binary is not shipped in the repository;
 it must be built from the historical source. Any other compatible library can
 be supplied, and both hashes are recorded. Rendering does not require an NPU.
 
-Default timing is the median of 15 trials × 20 device-graph calls, after five
-checked warmups. Allocation and CPU oracle/check time are excluded. Shape,
-initial state, gate scale and timing repetitions are CLI arguments; see `--help`.
-Each worker verifies its loaded binary and records input/oracle identities.
-Matched workers must agree on inputs, reference, environment and policy.
+For **each shape and each implementation**, inputs are generated/transferred
+and all outputs, masks, intermediates and workspace are allocated once using
+the same caller helper. Five calls warm the kernel, with FP64 output/state
+checks after each. The benchmark then captures 20 calls in an NPU graph, performs
+one untimed replay and synchronizes. It times 15 graph replays with NPU events,
+divides each elapsed graph time by 20, and reports the median of those 15 averages
+(300 timed calls). Output/state are checked again after the final replay.
+
+Every call reuses the same allocations and input values. The original supplied
+initial state is reused, not the previous call's final state. Outputs and scratch
+are not externally cleared between calls; caller-required initialization happens
+before warmup. Kernel-internal computation, transfers and synchronization are
+timed. Allocation, input transfer, CPU oracle/checks, graph capture and the
+caller's output scaling are excluded. Graph execution overhead remains, but
+per-call Python dispatch is avoided. There is no cache flush, so this measures
+warmed repeated-buffer device performance rather than end-to-end request latency.
+
+Current and original use separate serial worker processes; their order alternates
+by head pair. Both are freshly timed. Workers verify loaded-library hashes and
+must agree on input/reference hashes, environment and policy. Shape, initial
+state, gate scale and repetitions are CLI arguments; see `--help` and the
+[heatmap's benchmark procedure](heatmap.md#benchmark-procedure-identical-for-both-libraries).
 
 Both figures use the same checked runs. Error cells show the maximum over all
 checked warmups and the post-timing check; raw output and final state are both

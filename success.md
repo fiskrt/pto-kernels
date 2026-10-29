@@ -896,3 +896,21 @@ screen passes in 2.44s. All seven heads build in 10.40s. Verified standalone and
 matched timing, failure exit status, both report renderers, hardware/simulator
 FP64 checks and traceviz rendering. Temporary builds, copied tools and obsolete
 raw profile artifacts were removed; reusable goldens and user captures remain.
+
+## 2026-10-29 — fresh full heatmap and timing documentation
+
+Reran all 63 matched shapes (nine head pairs, 128–32K tokens) on the unchanged
+uniform kernel `f381ae8`. Current passes every output/state elementwise check
+after five warmups and the final timed replay; original `10748eb` passes 0/63
+under the current policy, with its measured runtimes retained and marked.
+Maximum current raw-output error is 4.846e-4 (worst tolerance ratio 0.440);
+maximum final-state error is 2.441e-4. Library and input/oracle fingerprints,
+environment, trial counts and all checked phases were verified.
+
+Regenerated both PNGs and reports, dated 2026-10-29. Documented identical
+preallocation, buffer/state reuse, five warmups, 20-call graph capture, one
+untimed replay and 15 event-timed replays (median per-call batch average).
+Allocation, input copies, graph capture and checks are excluded; no cache
+flush or external scratch clearing occurs between calls. Median current
+latency is 2.3% below yesterday's grid; this is run variation, not a kernel
+optimization. Timing and validation functions are unchanged.

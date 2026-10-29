@@ -918,3 +918,18 @@ benefit note. Full speed grid is refreshed on installed uniform binary:63/63 cur
 pass; original10748eb fails63/63 but retains measured runtimes.
 Profiler diagnostic generator adapted and smoke check passes. Old profile and
 error figures retain their explicit historical checkpoint labels.
+
+## 2026-10-29 — heatmap rerun and timing contract
+
+Fresh full grid is in ignored `benchmark_data/gdn_mega/heatmap.json`; both
+committed PNGs/Markdown reports now show 2026-10-29. Current library
+`0bf6f7832dd1` passes 63/63; original `4bf4218a7473` fails 63/63 but is timed.
+All input/reference/environment identities match. No kernel or timing changes.
+
+Timing uses preallocated/reused inputs, outputs and workspace, the same initial
+state on every call, five checked warmups, a 20-call graph and one untimed
+replay, then 15 NPU-event timings divided by 20; report their median.
+No external clearing or cache flush between calls. Final timed output/state
+are checked outside timing. README and generated heatmap.md explain this.
+Current medians differ from the October 28 run by -4.6% to +2.0% across cells
+(median -2.3%); do not attribute these variations to an optimization.

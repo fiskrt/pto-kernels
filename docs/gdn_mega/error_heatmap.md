@@ -1,6 +1,6 @@
 # GDN absolute-error heatmap
 
-Measured 2026-10-28; baseline library `4bf4218a7473`, current `0bf6f7832dd1`.
+Measured 2026-10-29; baseline library `4bf4218a7473`, current `0bf6f7832dd1`.
 Nonzero initial state: True; seed 0; gate scale 1.0; D=C=128.
 Independent CPU FP64 token recurrence on actual rounded inputs. Every output/state element must satisfy
 `abs(error) <= 0.0001 + 0.001*abs(reference)`, plus finiteness and relative RMSE < 0.005.

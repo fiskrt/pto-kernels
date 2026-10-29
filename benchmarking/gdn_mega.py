@@ -556,7 +556,7 @@ def render(data, directory):
 
     labels(axis)
     axis.set_title(
-        "GDN mega: baseline / current runtime\n* Only the runtime of an implementation failing numerical checks is marked"
+        f"GDN mega: baseline / current runtime — {data['created_utc'][:10]}\n* Only the runtime of an implementation failing numerical checks is marked"
     )
     fig.colorbar(mesh, ax=axis, label="Runtime ratio (higher is faster)")
     fig.savefig(figures / "heatmap.png", dpi=160)
@@ -604,7 +604,9 @@ def render(data, directory):
                     fontsize=8,
                     color="white" if not np.isfinite(value) or mesh.norm(max(value, lo)) < 0.7 else "#17202a",
                 )
-    fig.suptitle("Maximum absolute raw-output error against CPU FP64 (all checked launches)")
+    fig.suptitle(
+        f"Maximum absolute raw-output error against CPU FP64 — {data['created_utc'][:10]} (all checked launches)"
+    )
     fig.colorbar(mesh, ax=axes, label="max |out − reference|; shared log scale")
     fig.savefig(figures / "error_heatmap_max_abs.png", dpi=160)
     plt.close(fig)
@@ -627,6 +629,8 @@ def render(data, directory):
             )
             + " |\n"
         )
+    trials = data["records"][0]["current"]["trials"]
+    calls = data["records"][0]["current"]["calls_per_trial"]
     latency = f"""# GDN speed heatmap
 
 {scope}
@@ -635,6 +639,38 @@ def render(data, directory):
 Each cell shows runtime ratio and total median µs for both kernels. Asterisks
 mark only failed implementations; those ratios are not accuracy-equivalent
 speedups.
+
+## Benchmark procedure (identical for both libraries)
+
+1. For each shape, generate identical seed-0 inputs and the CPU FP64 reference.
+   Copy inputs to the NPU and allocate outputs, masks, intermediates and all
+   workspace **once**, using the same caller allocation helper for both libraries.
+2. Run five warmup calls, checking raw output and final state after each call.
+3. Capture an NPU graph containing **{calls} consecutive full kernel calls**.
+   Replay that graph once without timing, then synchronize.
+4. Measure **{trials} graph replays** with NPU start/end events. Divide each graph
+   duration by {calls}; report the median of these {trials} per-call averages.
+   This is {trials*calls} timed calls, not individually timed Python-loop calls.
+5. Check output and final state after the final timed replay, outside timing.
+
+All calls reuse the same device addresses and input values. Each starts from
+that shape's original supplied state (or zero when initial state is disabled);
+final state is a separate output and is not fed into the next call. Scratch and
+outputs are reused without external clearing between calls; initialization
+required by the caller contract occurs before warmup.
+
+The timed region covers the complete device kernel and graph execution overhead,
+including the kernel's internal transfers and synchronization. It excludes
+allocation/initialization, host-device input copies, CPU reference computation,
+validation, graph capture and caller-side output scaling. Graph replay amortizes
+submission overhead and avoids per-kernel Python dispatch gaps. No cache flush
+is performed: these are warmed, repeated-buffer timings, not end-to-end request
+latencies or guaranteed cold-cache timings.
+
+Current and baseline run serially in separate processes. Their order alternates
+between head configurations. Loaded-library hashes are verified, and matched
+workers must agree on input/reference hashes, environment and accuracy policy.
+Both libraries are freshly timed, including the original when it fails checks.
 
 ## Current median total microseconds
 

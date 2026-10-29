@@ -1,6 +1,6 @@
 # GDN speed heatmap
 
-Measured 2026-10-28; baseline library `4bf4218a7473`, current `0bf6f7832dd1`.
+Measured 2026-10-29; baseline library `4bf4218a7473`, current `0bf6f7832dd1`.
 Nonzero initial state: True; seed 0; gate scale 1.0; D=C=128.
 Independent CPU FP64 token recurrence on actual rounded inputs. Every output/state element must satisfy
 `abs(error) <= 0.0001 + 0.001*abs(reference)`, plus finiteness and relative RMSE < 0.005.
@@ -12,19 +12,51 @@ Each cell shows runtime ratio and total median µs for both kernels. Asterisks
 mark only failed implementations; those ratios are not accuracy-equivalent
 speedups.
 
+## Benchmark procedure (identical for both libraries)
+
+1. For each shape, generate identical seed-0 inputs and the CPU FP64 reference.
+   Copy inputs to the NPU and allocate outputs, masks, intermediates and all
+   workspace **once**, using the same caller allocation helper for both libraries.
+2. Run five warmup calls, checking raw output and final state after each call.
+3. Capture an NPU graph containing **20 consecutive full kernel calls**.
+   Replay that graph once without timing, then synchronize.
+4. Measure **15 graph replays** with NPU start/end events. Divide each graph
+   duration by 20; report the median of these 15 per-call averages.
+   This is 300 timed calls, not individually timed Python-loop calls.
+5. Check output and final state after the final timed replay, outside timing.
+
+All calls reuse the same device addresses and input values. Each starts from
+that shape's original supplied state (or zero when initial state is disabled);
+final state is a separate output and is not fed into the next call. Scratch and
+outputs are reused without external clearing between calls; initialization
+required by the caller contract occurs before warmup.
+
+The timed region covers the complete device kernel and graph execution overhead,
+including the kernel's internal transfers and synchronization. It excludes
+allocation/initialization, host-device input copies, CPU reference computation,
+validation, graph capture and caller-side output scaling. Graph replay amortizes
+submission overhead and avoids per-kernel Python dispatch gaps. No cache flush
+is performed: these are warmed, repeated-buffer timings, not end-to-end request
+latencies or guaranteed cold-cache timings.
+
+Current and baseline run serially in separate processes. Their order alternates
+between head configurations. Loaded-library hashes are verified, and matched
+workers must agree on input/reference hashes, environment and accuracy policy.
+Both libraries are freshly timed, including the original when it fails checks.
+
 ## Current median total microseconds
 
 | H/Hg | 128 | 256 | 1024 | 4096 | 8192 | 16384 | 32768 |
 |---|---:|---:|---:|---:|---:|---:|---:|
-| 8/2 | 61.3 | 79.0 | 192.2 | 625.0 | 1242.1 | 2425.9 | 5044.9 |
-| 12/3 | 60.2 | 79.9 | 194.5 | 657.1 | 1285.5 | 2590.4 | 5200.4 |
-| 16/4 | 59.1 | 79.6 | 197.0 | 663.8 | 1311.7 | 2621.0 | 5339.3 |
-| 24/6 | 62.3 | 82.7 | 200.2 | 681.2 | 1362.4 | 2773.6 | 5606.8 |
-| 24/8 | 62.4 | 83.6 | 201.9 | 695.6 | 1390.1 | 2846.0 | 5683.8 |
-| 32/8 | 92.6 | 132.5 | 366.0 | 1334.5 | 2659.1 | 5394.4 | 10688.3 |
-| 48/12 | 94.9 | 134.5 | 368.4 | 1376.8 | 2789.4 | 5615.4 | 11140.7 |
-| 48/16 | 92.9 | 133.2 | 366.3 | 1390.9 | 2884.8 | 5717.4 | 11415.2 |
-| 64/16 | 126.5 | 186.6 | 535.1 | 2058.8 | 4153.1 | 8277.0 | 16569.2 |
+| 8/2 | 60.2 | 78.4 | 186.7 | 637.0 | 1194.9 | 2470.4 | 4872.8 |
+| 12/3 | 61.4 | 81.0 | 196.1 | 652.9 | 1269.2 | 2534.6 | 5108.2 |
+| 16/4 | 58.4 | 77.9 | 191.6 | 648.6 | 1286.3 | 2548.4 | 5172.0 |
+| 24/6 | 62.0 | 83.3 | 199.0 | 671.3 | 1330.2 | 2699.6 | 5420.6 |
+| 24/8 | 61.3 | 81.9 | 196.7 | 675.5 | 1346.6 | 2766.3 | 5496.4 |
+| 32/8 | 92.1 | 129.5 | 352.8 | 1272.9 | 2557.6 | 5165.6 | 10337.8 |
+| 48/12 | 93.9 | 132.9 | 359.3 | 1336.9 | 2711.0 | 5443.2 | 10889.0 |
+| 48/16 | 94.3 | 134.2 | 362.0 | 1361.3 | 2801.4 | 5556.4 | 11045.9 |
+| 64/16 | 124.6 | 182.4 | 522.0 | 1993.1 | 4033.4 | 8044.4 | 16161.0 |
 
 ## Scheduling tradeoff
 
