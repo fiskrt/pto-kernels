@@ -9,7 +9,6 @@ for the full License text.
 #include <pybind11/pybind11.h>
 #include <torch/extension.h>
 
-#include "torch_gdn_mega.h"
 #include "torch_abs.h"
 #include "torch_batch_matrix_square.h"
 #include "torch_csr_gather.h"
@@ -17,6 +16,7 @@ for the full License text.
 #include "torch_gdn_chunk_cumsum.h"
 #include "torch_gdn_chunk_h.h"
 #include "torch_gdn_chunk_o.h"
+#include "torch_gdn_mega.h"
 #include "torch_gdn_scaled_dot_kkt.h"
 #include "torch_gdn_wy_fast.h"
 #include "torch_kda_chunk_h.h"
