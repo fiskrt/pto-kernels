@@ -10,6 +10,11 @@
 #include <pto/pto-inst.hpp>
 
 #include "acl/acl.h"
+
+// The legacy ccec compiler does not provide the ASC task-type annotation.
+#ifndef KERNEL_TASK_TYPE_DEFAULT
+#define KERNEL_TASK_TYPE_DEFAULT(kernel_type) ((void)0)
+#endif
 using namespace pto;
 
 #include "common.hpp"

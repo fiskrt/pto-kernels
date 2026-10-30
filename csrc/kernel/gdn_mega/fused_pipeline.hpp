@@ -500,13 +500,18 @@ AICORE inline void mega_fused_pipeline(
   set_vector_mask(-1, -1);
   Tile<TileType::Vec, uint32_t, 1, 16 * (C / 2)> indices;
   TASSIGN(indices, 176 * 1024);
-  // Byte offsets gather coefficients directly from the untransposed stripe.
+  // A2/A3 vgather takes byte offsets; A5 TGATHER takes element indices.
+#if __CCE_AICORE__ == 220
+  constexpr int gather_scale = sizeof(float);
+#else
+  constexpr int gather_scale = 1;
+#endif
   for (int j = 0; j < 16; ++j)
     for (int col = 0; col < C / 2; ++col)
       indices.SetValue(j * (C / 2) + col,
                        (((col / 16) * 16 + j) * C + get_subblockid() * (C / 2) +
                         (col / 16) * 16) *
-                           sizeof(float));
+                           gather_scale);
   pipe_barrier(PIPE_ALL);
 #endif
 #if defined(__DAV_CUBE__)
@@ -552,38 +557,38 @@ AICORE inline void mega_fused_pipeline(
 #endif
     if (start == end) continue;
 #if defined(__DAV_VEC__)
-    ffts_cross_core_sync(PIPE_MTE3, 1 | (2 << 4) | (1 << 8));
+    mega_signal<PIPE_MTE3>(1);
 #endif
 #if defined(__DAV_CUBE__)
-    wait_flag_dev(1);
+    mega_wait(1);
     auto sh = reinterpret_cast<__gm__ half*>(exchange);
     mega_load_pair<D, D>(state, sh, sh + D, D, 2 * D);
-    ffts_cross_core_sync(PIPE_MTE2, 1 | (2 << 4) | (7 << 8));
+    mega_signal<PIPE_MTE2>(7);
 #endif
     for (int64_t pos = start; pos < end; pos += C) {
       int valid = min(static_cast<int64_t>(C), end - pos);
 #if defined(__DAV_VEC__)
-      wait_flag_dev(7);
+      mega_wait(7);
       if (pos + C < end)
         mega_prepare_weights<H, C>(g, glow, beta, kk, kk_upper, qk, lower, full,
                                    att_high, att_low, pos + C,
                                    min(static_cast<int64_t>(C), end - pos - C),
                                    head, kh, tokens);
-      wait_flag_dev(5);
+      mega_wait(5);
       float alpha = mega_prepare_rhs<H, C, D>(
           v, g, glow, beta, exchange, local_output, pos, valid, head, tokens);
-      ffts_cross_core_sync(PIPE_MTE3, 1 | (2 << 4) | (6 << 8));
+      mega_signal<PIPE_MTE3>(6);
       if (pos + C < end)
         mega_finish_inverse<H, C>(g, glow, lower, full, weighted_first, pos + C,
                                   min(static_cast<int64_t>(C), end - pos - C),
                                   head, kh, tokens, first, second, k,
                                   weighted_second);
-      wait_flag_dev(9);
+      mega_wait(9);
       mega_finish_output<H, C, D>(local_output, output + (pos * H + head) * D,
                                   valid);
       mega_update_state<D>(exchange, alpha, final_state + work * D * D,
                            pos + C >= end);
-      ffts_cross_core_sync(PIPE_MTE3, 1 | (2 << 4) | (6 << 8));
+      mega_signal<PIPE_MTE3>(6);
 #endif
 #if defined(__DAV_CUBE__)
       Tail ktail(valid), qtail(valid);
@@ -622,7 +627,7 @@ AICORE inline void mega_fused_pipeline(
       TLOAD(first_half, fg);
       TLOAD(second_half, sg);
       pipe_barrier(PIPE_ALL);
-      ffts_cross_core_sync(PIPE_FIX, 1 | (2 << 4) | (5 << 8));
+      mega_signal<PIPE_FIX>(5);
       mega_float_inverse<C>(inverse, solve_scratch);
       {
         auto storage =
@@ -642,7 +647,7 @@ AICORE inline void mega_fused_pipeline(
           pipe_barrier(PIPE_ALL);
         }
       }
-      wait_flag_dev(6);
+      mega_wait(6);
       GlobalTensor<float, Shape<1, 1, 1, C, D>, pto::Stride<1, 1, 1, D, 1>> bg(
           exchange + C * D);
       TLOAD(native_rhs, bg);
@@ -677,14 +682,14 @@ AICORE inline void mega_fused_pipeline(
       TSTORE(og, first_product);
       TSTORE(ex, second_product);
       pipe_barrier(PIPE_ALL);
-      ffts_cross_core_sync(PIPE_FIX, 1 | (2 << 4) | (9 << 8));
-      wait_flag_dev(6);
+      mega_signal<PIPE_FIX>(9);
+      mega_wait(6);
       mega_load_pair<D, D>(state, sh, sh + D, D, 2 * D);
-      ffts_cross_core_sync(PIPE_MTE2, 1 | (2 << 4) | (7 << 8));
+      mega_signal<PIPE_MTE2>(7);
 #endif
     }
 #if defined(__DAV_VEC__)
-    wait_flag_dev(7);
+    mega_wait(7);
 #endif
   }
   pipe_barrier(PIPE_ALL);

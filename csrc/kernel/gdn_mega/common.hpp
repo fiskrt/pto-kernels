@@ -50,6 +50,35 @@ AICORE inline uint16_t GetffstMsg(uint16_t mode, uint16_t flagId) {
           ((flagId & 0xf) << SYNC_FLAG_SHIFT_VALUE));
 }
 
+// Preserve the producer pipe on A2/A3. A5 intra-block events require
+// explicit completion ordering and a flag for each Vec sub-block.
+template <pipe_t Pipe>
+AICORE inline void mega_signal(uint16_t flag) {
+#if __CCE_AICORE__ == 220
+  ffts_cross_core_sync(Pipe, GetffstMsg(0x2, flag));
+#else
+  pipe_barrier(PIPE_ALL);
+#if defined(__DAV_CUBE__)
+  GdnSignalBothVec<PIPE_FIX>(flag);
+#elif defined(__DAV_VEC__)
+  set_intra_block(Pipe, flag);
+#endif
+#endif
+}
+
+AICORE inline void mega_wait(uint16_t flag) {
+#if __CCE_AICORE__ == 220
+  wait_flag_dev(flag);
+#else
+#if defined(__DAV_CUBE__)
+  GdnWaitBothVec<PIPE_MTE2>(flag);
+#elif defined(__DAV_VEC__)
+  wait_intra_block(PIPE_MTE3, flag);
+#endif
+  pipe_barrier(PIPE_ALL);
+#endif
+}
+
 AICORE inline void mega_sync_all() {
   pipe_barrier(PIPE_ALL);
 #if __CCE_AICORE__ == 220
@@ -63,25 +92,18 @@ AICORE inline void mega_sync_all() {
   wait_flag_dev(GDN_SYNC_AIC_AIV_FLAG);
 #endif
 #else
-  // TODO(A5): REVIEW BEFORE RUNNING ON HARDWARE.
-  // On A5 the Cube and both Vec sub-blocks share one core, so the Cube<->Vec
-  // half of this barrier becomes an intra-block handshake (below). The
-  // middle step on A2/A3 is a *cross-block* Cube barrier driven by
-  // GDN_SYNC_AIC_FLAG; wait_flag_dev does not exist on A5, and the correct
-  // device-wide replacement has not been established. This version omits
-  // that step, so it synchronises Cube with Vec within a block but does NOT
-  // provide the cross-block guarantee the A2/A3 path does. If any caller
-  // relies on an all-block barrier here, this will be wrong.
+  // Join both Vec sub-blocks before the device-wide Cube barrier, then
+  // release both only after every block has finished the shared products.
 #if defined(__DAV_CUBE__)
-  GdnWaitBothVec<PIPE_MTE2>(GDN_SYNC_AIV_FLAG);
-  pipe_barrier(PIPE_ALL);
-  GdnSignalBothVec<PIPE_FIX>(GDN_SYNC_AIC_AIV_FLAG);
+  GdnWaitBothVec<PIPE_S>(GDN_SYNC_AIV_FLAG);
+  ffts_cross_core_sync(PIPE_FIX, GetffstMsg(0x0, GDN_SYNC_AIC_FLAG));
+  wait_flag_dev(PIPE_S, GDN_SYNC_AIC_FLAG);
+  GdnSignalBothVec<PIPE_S>(GDN_SYNC_AIC_AIV_FLAG);
 #elif defined(__DAV_VEC__)
-  pipe_barrier(PIPE_ALL);
   set_intra_block(PIPE_MTE3, GDN_SYNC_AIV_FLAG);
-  wait_intra_block(PIPE_MTE3, GDN_SYNC_AIC_AIV_FLAG);
-  pipe_barrier(PIPE_ALL);
+  wait_intra_block(PIPE_S, GDN_SYNC_AIC_AIV_FLAG);
 #endif
+  pipe_barrier(PIPE_ALL);
 #endif
 }
 
