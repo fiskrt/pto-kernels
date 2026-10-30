@@ -22,8 +22,6 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_LINK_DEPENDS_USE_LINKER OFF)
 
 option(PIP_INSTALL "True if building via pip" OFF)
-option(GDN_MEGA_ONLY "Build only the fused GDN kernel and its Python binding"
-       OFF)
 
 # Kernel toolchain selection.
 #
@@ -189,9 +187,6 @@ set(PTO_KERNEL_SOURCES
     csrc/kernel/kernel_kda_kkt.cpp
     csrc/kernel/kernel_flash_attention.cpp)
 
-if(GDN_MEGA_ONLY)
-  set(PTO_KERNEL_SOURCES csrc/kernel/gdn_mega/kernel_gdn_mega.cpp)
-endif()
 ascendc_library(no_workspace_kernel SHARED ${PTO_KERNEL_SOURCES})
 
 if(USE_ASC_LANGUAGE)
@@ -215,9 +210,6 @@ else()
 endif()
 
 pybind11_add_module(pto_kernels_ops csrc/host/pybind11.cpp)
-if(GDN_MEGA_ONLY)
-  target_compile_definitions(pto_kernels_ops PRIVATE GDN_MEGA_ONLY)
-endif()
 # pybind11 does not work with C++20, so we set C++17 for the pybind11 module
 # target
 set_target_properties(pto_kernels_ops PROPERTIES CXX_STANDARD 17)
